@@ -14,7 +14,7 @@ from afc.supportlab.repository import build_seed_repository
 from afc.supportlab.scenarios import build_scenarios
 from afc.supportlab.tools import SupportTools
 from afc.trace_ir.mapper import map_spans
-from afc.trace_ir.models import TraceIR
+from afc.trace_ir.models import TraceIR, TraceSpan
 
 
 class DatasetManifest(BaseModel):
@@ -36,14 +36,69 @@ def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> str:
     return hashlib.sha256(content.encode()).hexdigest()
 
 
+def _order_span_tree(trace: TraceIR) -> tuple[list[TraceSpan], dict[str, list[TraceSpan]]]:
+    spans_by_id = {span.span_id: span for span in trace.spans}
+    children_by_parent: dict[str, list[TraceSpan]] = {}
+    roots: list[TraceSpan] = []
+
+    for span in trace.spans:
+        if span.parent_span_id is None:
+            roots.append(span)
+            continue
+        if span.parent_span_id not in spans_by_id:
+            raise ValueError(f"missing parent span: {span.parent_span_id}")
+        children_by_parent.setdefault(span.parent_span_id, []).append(span)
+
+    visit_state: dict[str, int] = {}
+
+    def check_acyclic(span: TraceSpan) -> None:
+        state = visit_state.get(span.span_id, 0)
+        if state == 1:
+            raise ValueError(f"parent cycle detected at span: {span.span_id}")
+        if state == 2:
+            return
+        visit_state[span.span_id] = 1
+        if span.parent_span_id is not None:
+            check_acyclic(spans_by_id[span.parent_span_id])
+        visit_state[span.span_id] = 2
+
+    for span in trace.spans:
+        check_acyclic(span)
+
+    if len(roots) != 1:
+        raise ValueError(f"trace must contain exactly one root span; found {len(roots)}")
+
+    ordered: list[TraceSpan] = []
+
+    def append_subtree(span: TraceSpan) -> None:
+        ordered.append(span)
+        for child in children_by_parent.get(span.span_id, []):
+            append_subtree(child)
+
+    append_subtree(roots[0])
+    return ordered, children_by_parent
+
+
 def _normalize_trace(trace: TraceIR, sequence: int) -> TraceIR:
-    ordered = sorted(trace.spans, key=lambda span: span.parent_span_id is not None)
+    # Children retain their source-list order, which is the exporter's stable finish order.
+    ordered, children_by_parent = _order_span_tree(trace)
     id_map = {span.span_id: f"span-{index:03d}" for index, span in enumerate(ordered)}
     trace_id = f"supportlab-trace-{sequence:03d}"
     base_time = datetime(2026, 7, 15, tzinfo=UTC) + timedelta(seconds=sequence)
+    start_times = {
+        span.span_id: base_time + timedelta(milliseconds=index * 10)
+        for index, span in enumerate(ordered)
+    }
+    end_times: dict[str, datetime] = {}
+    for span in reversed(ordered):
+        own_end = start_times[span.span_id] + timedelta(milliseconds=5)
+        child_ends = [
+            end_times[child.span_id] for child in children_by_parent.get(span.span_id, [])
+        ]
+        end_times[span.span_id] = max([own_end, *child_ends])
+
     normalized = []
-    for index, span in enumerate(ordered):
-        started_at = base_time + timedelta(milliseconds=index * 10)
+    for span in ordered:
         normalized.append(
             span.model_copy(
                 update={
@@ -52,8 +107,8 @@ def _normalize_trace(trace: TraceIR, sequence: int) -> TraceIR:
                     "parent_span_id": (
                         id_map[span.parent_span_id] if span.parent_span_id is not None else None
                     ),
-                    "started_at": started_at,
-                    "ended_at": started_at + timedelta(milliseconds=5),
+                    "started_at": start_times[span.span_id],
+                    "ended_at": end_times[span.span_id],
                 }
             )
         )
