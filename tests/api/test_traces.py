@@ -3,7 +3,16 @@ from datetime import UTC, datetime
 from fastapi.testclient import TestClient
 
 from afc.api.app import create_app
+from afc.trace_ir.models import TraceIR
 from afc.trace_ir.repository import InMemoryTraceRepository
+
+
+class ValueErrorTraceRepository:
+    async def save(self, trace: TraceIR) -> TraceIR:
+        raise ValueError("unexpected repository failure")
+
+    async def get(self, trace_id: str) -> TraceIR:
+        raise KeyError(trace_id)
 
 
 def valid_trace_payload() -> dict[str, object]:
@@ -40,6 +49,43 @@ def test_trace_ingestion_returns_created_summary() -> None:
         "run_id": "run-api-1",
         "span_count": 1,
     }
+
+
+def test_trace_ingestion_allows_idempotent_retry() -> None:
+    client = TestClient(create_app(trace_repository=InMemoryTraceRepository()))
+    payload = valid_trace_payload()
+
+    first_response = client.post("/v1/traces", json=payload)
+    retry_response = client.post("/v1/traces", json=payload)
+
+    assert first_response.status_code == 201
+    assert retry_response.status_code == 201
+    assert retry_response.json() == first_response.json()
+
+
+def test_trace_ingestion_returns_conflict_for_different_content_with_same_id() -> None:
+    client = TestClient(create_app(trace_repository=InMemoryTraceRepository()))
+    first_payload = valid_trace_payload()
+    conflicting_payload = valid_trace_payload()
+    conflicting_payload["run_id"] = "run-api-2"
+
+    first_response = client.post("/v1/traces", json=first_payload)
+    conflict_response = client.post("/v1/traces", json=conflicting_payload)
+
+    assert first_response.status_code == 201
+    assert conflict_response.status_code == 409
+    assert conflict_response.json() == {"detail": "trace_id conflict: trace-api-1"}
+
+
+def test_trace_ingestion_does_not_map_unrelated_value_error_to_conflict() -> None:
+    client = TestClient(
+        create_app(trace_repository=ValueErrorTraceRepository()),
+        raise_server_exceptions=False,
+    )
+
+    response = client.post("/v1/traces", json=valid_trace_payload())
+
+    assert response.status_code == 500
 
 
 def test_trace_ingestion_rejects_orphan_span() -> None:

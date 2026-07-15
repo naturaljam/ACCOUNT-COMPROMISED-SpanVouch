@@ -1,8 +1,8 @@
-from fastapi import APIRouter, status
+from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, ConfigDict
 
 from afc.trace_ir.models import TraceIR
-from afc.trace_ir.repository import TraceRepository
+from afc.trace_ir.repository import TraceConflictError, TraceRepository
 
 
 class TraceCreated(BaseModel):
@@ -17,7 +17,13 @@ def build_trace_router(repository: TraceRepository) -> APIRouter:
 
     @router.post("", response_model=TraceCreated, status_code=status.HTTP_201_CREATED)
     async def create_trace(trace: TraceIR) -> TraceCreated:
-        saved = await repository.save(trace)
+        try:
+            saved = await repository.save(trace)
+        except TraceConflictError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=str(exc),
+            ) from exc
         return TraceCreated(
             trace_id=saved.trace_id,
             run_id=saved.run_id,
