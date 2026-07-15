@@ -8,6 +8,39 @@ from afc.supportlab.tools import RefundRejected, SupportTools
 
 
 @pytest.mark.asyncio
+async def test_submit_refund_requires_item_skus() -> None:
+    tools = SupportTools(build_seed_repository())
+
+    with pytest.raises(TypeError, match="item_skus"):
+        await tools.submit_refund(
+            customer_id="cust-001",
+            order_id="order-001",
+            amount=Decimal("19.99"),
+            calculated_amount=Decimal("19.99"),
+            reason="damaged item",
+            idempotency_key="missing-item-selection",
+            approval=Approval(approved_by="reviewer@example.test"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_submit_refund_does_not_require_deprecated_calculated_amount() -> None:
+    tools = SupportTools(build_seed_repository())
+
+    refund = await tools.submit_refund(
+        customer_id="cust-001",
+        order_id="order-001",
+        amount=Decimal("19.99"),
+        item_skus=("sku-red",),
+        reason="damaged item",
+        idempotency_key="no-deprecated-calculation",
+        approval=Approval(approved_by="reviewer@example.test"),
+    )
+
+    assert refund.amount == Decimal("19.99")
+
+
+@pytest.mark.asyncio
 async def test_submit_refund_rejects_missing_approval() -> None:
     tools = SupportTools(build_seed_repository())
 
@@ -17,6 +50,7 @@ async def test_submit_refund_rejects_missing_approval() -> None:
             order_id="order-001",
             amount=Decimal("19.99"),
             calculated_amount=Decimal("19.99"),
+            item_skus=("sku-red",),
             reason="damaged item",
             idempotency_key="run-1-refund",
             approval=None,
@@ -34,6 +68,7 @@ async def test_submit_refund_is_idempotent_after_approval() -> None:
         "order_id": "order-001",
         "amount": Decimal("19.99"),
         "calculated_amount": Decimal("19.99"),
+        "item_skus": ("sku-red",),
         "reason": "damaged item",
         "idempotency_key": "run-1-refund",
         "approval": Approval(approved_by="reviewer@example.test"),
@@ -82,6 +117,7 @@ async def test_idempotency_key_is_scoped_to_the_order() -> None:
         "customer_id": "cust-001",
         "amount": Decimal("19.99"),
         "calculated_amount": Decimal("19.99"),
+        "item_skus": ("sku-red",),
         "reason": "damaged item",
         "idempotency_key": "shared-refund-key",
         "approval": Approval(approved_by="reviewer@example.test"),
@@ -95,6 +131,38 @@ async def test_idempotency_key_is_scoped_to_the_order() -> None:
     assert first.refund_id != second.refund_id
     assert len(await repository.list_refunds("order-001")) == 1
     assert len(await repository.list_refunds("order-002")) == 1
+
+
+@pytest.mark.asyncio
+async def test_refund_id_uses_unambiguous_order_and_key_structure() -> None:
+    seed_repository = build_seed_repository()
+    customer = await seed_repository.get_customer("cust-001")
+    seed_order = await seed_repository.get_order("order-001")
+    colon_order = seed_order.model_copy(update={"order_id": "a:b"})
+    plain_order = seed_order.model_copy(update={"order_id": "a"})
+    policy = await seed_repository.get_policy(seed_order.policy_id)
+    repository = InMemorySupportRepository(
+        [customer], [colon_order, plain_order], [policy]
+    )
+    tools = SupportTools(repository)
+    shared_arguments = {
+        "customer_id": "cust-001",
+        "amount": Decimal("19.99"),
+        "item_skus": ("sku-red",),
+        "reason": "damaged item",
+        "approval": Approval(approved_by="reviewer@example.test"),
+    }
+
+    first = await tools.submit_refund(
+        order_id="a:b", idempotency_key="c", **shared_arguments
+    )
+    second = await tools.submit_refund(
+        order_id="a", idempotency_key="b:c", **shared_arguments
+    )
+
+    assert first.refund_id != second.refund_id
+    assert len(await repository.list_refunds("a:b")) == 1
+    assert len(await repository.list_refunds("a")) == 1
 
 
 @pytest.mark.asyncio
@@ -113,6 +181,7 @@ async def test_submit_refund_allows_policy_without_approval() -> None:
         order_id="order-001",
         amount=Decimal("19.99"),
         calculated_amount=Decimal("19.99"),
+        item_skus=("sku-red",),
         reason="damaged item",
         idempotency_key="approval-waived",
         approval=None,

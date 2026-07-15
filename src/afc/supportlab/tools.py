@@ -44,24 +44,21 @@ class SupportTools:
         customer_id: str,
         order_id: str,
         amount: Decimal,
-        calculated_amount: Decimal,
+        item_skus: tuple[str, ...],
         reason: str,
         idempotency_key: str,
         approval: Approval | None,
-        item_skus: tuple[str, ...] | None = None,
+        calculated_amount: Decimal | None = None,
     ) -> RefundRecord:
         """Persist a policy-compliant refund using a server-side SKU calculation.
 
-        ``calculated_amount`` is deprecated and ignored; it remains only for call
-        compatibility. Callers should pass ``item_skus`` to identify the requested
-        order lines. Omitting it retains the legacy whole-order behavior.
+        ``calculated_amount`` is a deprecated, ignored compatibility argument.
+        ``item_skus`` is required so authorization never widens a missing selection
+        to the whole order.
         """
         order = await self._repository.get_order(order_id)
         policy = await self._repository.get_policy(order.policy_id)
-        requested_skus = (
-            tuple(item.sku for item in order.items) if item_skus is None else item_skus
-        )
-        trusted_calculated_amount = await self.calculate_refund(order_id, requested_skus)
+        trusted_calculated_amount = await self.calculate_refund(order_id, item_skus)
         decision = evaluate_refund(
             customer_id=customer_id,
             order=order,
@@ -72,7 +69,8 @@ class SupportTools:
         )
         if not decision.allowed:
             raise RefundRejected(decision.violations)
-        refund_id = str(uuid5(NAMESPACE_URL, f"{order_id}:{idempotency_key}"))
+        order_namespace = uuid5(NAMESPACE_URL, order_id)
+        refund_id = str(uuid5(order_namespace, idempotency_key))
         return await self._repository.save_refund(
             RefundRecord(
                 refund_id=refund_id,

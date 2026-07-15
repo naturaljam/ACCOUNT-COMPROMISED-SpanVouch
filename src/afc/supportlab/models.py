@@ -1,7 +1,8 @@
 from decimal import Decimal
 from enum import StrEnum
+from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class OrderStatus(StrEnum):
@@ -35,6 +36,13 @@ class Order(BaseModel):
     policy_id: str
     status: OrderStatus
     items: tuple[OrderItem, ...]
+
+    @model_validator(mode="after")
+    def ensure_unique_item_skus(self) -> Self:
+        item_skus = tuple(item.sku for item in self.items)
+        if len(set(item_skus)) != len(item_skus):
+            raise ValueError("duplicate item SKUs are not allowed")
+        return self
 
     @property
     def total(self) -> Decimal:

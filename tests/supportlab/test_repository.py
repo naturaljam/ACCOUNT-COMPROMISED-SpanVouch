@@ -1,9 +1,26 @@
 from decimal import Decimal
 
 import pytest
+from pydantic import ValidationError
 
-from afc.supportlab.models import OrderStatus, RefundRecord
+from afc.supportlab.models import Order, OrderItem, OrderStatus, RefundRecord
 from afc.supportlab.repository import build_seed_repository
+
+
+def test_order_rejects_duplicate_item_skus() -> None:
+    duplicate_items = (
+        OrderItem(sku="sku-duplicate", quantity=1, unit_price=Decimal("10.00")),
+        OrderItem(sku="sku-duplicate", quantity=2, unit_price=Decimal("20.00")),
+    )
+
+    with pytest.raises(ValidationError, match="duplicate item SKUs"):
+        Order(
+            order_id="order-duplicate-skus",
+            customer_id="cust-001",
+            policy_id="standard",
+            status=OrderStatus.DELIVERED,
+            items=duplicate_items,
+        )
 
 
 @pytest.mark.asyncio
