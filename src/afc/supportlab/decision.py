@@ -78,6 +78,7 @@ class ScriptedDecisionModel:
             "customer_id": customer_id,
             "order_id": self._scenario.order_id,
             "amount": amount,
+            "item_skus": "sku-red",
             "calculated_amount": "19.99",
             "reason": "damaged item",
             "idempotency_key": f"{self._scenario.scenario_id}-refund",
