@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from typing import Any, TypedDict, cast
 
@@ -100,7 +100,7 @@ async def run_support_scenario(
                 span.set_status(Status(StatusCode.OK))
                 observation = str(result)
                 span.set_attribute("tool.result", observation)
-            except (KeyError, RefundRejected) as error:
+            except (InvalidOperation, KeyError, RefundRejected, ValueError) as error:
                 span.record_exception(error)
                 span.set_status(Status(StatusCode.ERROR, str(error)))
                 span.set_attribute("tool.error.type", type(error).__name__)
@@ -149,12 +149,17 @@ async def run_support_scenario(
         },
     ) as run_span:
         final = cast(SupportState, await graph.ainvoke(initial))
-        run_span.set_attribute("run.outcome", final["outcome"] or RunOutcome.FAILED.value)
+        outcome = RunOutcome(final["outcome"] or RunOutcome.FAILED.value)
+        run_span.set_attribute("run.outcome", outcome.value)
+        if outcome is RunOutcome.SUCCEEDED:
+            run_span.set_status(Status(StatusCode.OK))
+        else:
+            run_span.set_status(Status(StatusCode.ERROR, outcome.value))
         if final["final_message"] is not None:
             run_span.set_attribute("run.final_message", final["final_message"])
     return SupportRunResult(
         scenario_id=scenario.scenario_id,
-        outcome=RunOutcome(final["outcome"] or RunOutcome.FAILED.value),
+        outcome=outcome,
         steps=final["step"],
         observations=tuple(final["observations"]),
         final_message=final["final_message"],
