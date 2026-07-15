@@ -1,0 +1,8 @@
+{
+  "name": "supportlab-v1",
+  "schema_version": "1.0",
+  "seed": 20260715,
+  "trace_count": 20,
+  "traces_sha256": "c8a1bf6a81867278c7e1173451ff4b18902e24ddfbcd9f98a2d692dfa0aefe0d",
+  "labels_sha256": "5ca1ba021909a365504fa26bd4d5e198d7b3b403d2c922e6fe7752ce16e94eeb"
+}
