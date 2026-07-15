@@ -16,6 +16,12 @@ services:
       - "4317:4317"
     volumes:
       - phoenix_data:/root/.phoenix
+    healthcheck:
+      test: ["CMD", "/usr/bin/python3.13", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:6006/healthz', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
 
 volumes:
   phoenix_data:
