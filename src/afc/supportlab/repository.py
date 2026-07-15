@@ -30,7 +30,7 @@ class InMemorySupportRepository:
         self._customers = {item.customer_id: item for item in customers}
         self._orders = {item.order_id: item for item in orders}
         self._policies = {item.policy_id: item for item in policies}
-        self._refunds_by_key: dict[str, RefundRecord] = {}
+        self._refunds_by_key: dict[tuple[str, str], RefundRecord] = {}
 
     async def get_customer(self, customer_id: str) -> Customer:
         return self._customers[customer_id]
@@ -42,10 +42,11 @@ class InMemorySupportRepository:
         return self._policies[policy_id]
 
     async def save_refund(self, refund: RefundRecord) -> RefundRecord:
-        existing = self._refunds_by_key.get(refund.idempotency_key)
+        scoped_key = (refund.order_id, refund.idempotency_key)
+        existing = self._refunds_by_key.get(scoped_key)
         if existing is not None:
             return existing
-        self._refunds_by_key[refund.idempotency_key] = refund
+        self._refunds_by_key[scoped_key] = refund
         return refund
 
     async def list_refunds(self, order_id: str) -> Sequence[RefundRecord]:

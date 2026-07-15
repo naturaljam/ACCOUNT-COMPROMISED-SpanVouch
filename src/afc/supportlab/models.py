@@ -56,4 +56,4 @@ class RefundRecord(BaseModel):
     amount: Decimal = Field(gt=0)
     reason: str = Field(min_length=1)
     idempotency_key: str = Field(min_length=1)
-    approved_by: str = Field(min_length=1)
+    approved_by: str | None = Field(default=None, min_length=1)
