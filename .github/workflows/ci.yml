@@ -1,0 +1,33 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.15"
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --frozen --group dev
+      - run: uv run ruff check src tests
+      - run: uv run mypy
+      - run: uv run pytest --cov=afc --cov-report=term-missing
+      - run: uv run afc-generate-dataset --output .cache/ci-dataset --seed 20260715
+      - name: Verify frozen dataset hashes
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+          expected = json.loads(Path("evals/datasets/supportlab-v1/manifest.json").read_text())
+          actual = json.loads(Path(".cache/ci-dataset/manifest.json").read_text())
+          assert expected == actual, (expected, actual)
+      - run: docker compose config --quiet

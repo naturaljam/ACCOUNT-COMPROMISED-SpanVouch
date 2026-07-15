@@ -1,0 +1,13 @@
+.git
+.venv
+.cache
+__pycache__
+*.pyc
+htmlcov
+.pytest_cache
+.mypy_cache
+.ruff_cache
+node_modules
+postgres_data
+redis_data
+phoenix_data
