@@ -22,6 +22,7 @@ from afc.review.commands import (
     ApplyHumanDecision,
     ClaimReviewWork,
     CreateReviewCase,
+    FinalizeSemanticFailure,
     RenewReviewLease,
     ReviewLeaseWork,
     RouteRevisionFailureToHuman,
@@ -185,6 +186,16 @@ class SQLiteReviewRepository:
             AppendDiagnosisRevision, command, "invalid append revision command"
         )
         return await asyncio.to_thread(self._append_revision, command)
+
+    async def finalize_semantic_failure(
+        self, command: FinalizeSemanticFailure
+    ) -> DiagnosisReviewCase:
+        command = self._revalidate_command(
+            FinalizeSemanticFailure,
+            command,
+            "invalid semantic failure finalization command",
+        )
+        return await asyncio.to_thread(self._finalize_semantic_failure, command)
 
     async def route_to_human(self, command: RouteToHumanReview) -> DiagnosisReviewCase:
         command = self._revalidate_command(
@@ -757,6 +768,94 @@ class SQLiteReviewRepository:
             self._require_updated(cursor)
             self._insert_transition_event(connection, command)
             return self._read_case(connection, command.case_id)
+
+    def _finalize_semantic_failure(
+        self, command: FinalizeSemanticFailure
+    ) -> DiagnosisReviewCase:
+        verifier = command.verifier
+        route = command.route
+        with self._transaction(write=True) as connection:
+            self._require_valid_transition(verifier)
+            self._require_valid_transition(route)
+            existing = connection.execute(
+                "SELECT report_json FROM verifier_runs "
+                "WHERE case_id = ? AND verifier_run_id = ?",
+                (verifier.case_id, verifier.report.verifier_run_id),
+            ).fetchone()
+            verifier_event_exists = self._event_exists(connection, verifier.event_id)
+            route_event_exists = self._event_exists(connection, route.event_id)
+            if existing is not None or verifier_event_exists or route_event_exists:
+                if (
+                    existing is not None
+                    and str(existing["report_json"]) == canonical_json(verifier.report)
+                    and verifier_event_exists
+                    and route_event_exists
+                    and self._event_matches(
+                        connection,
+                        event_id=verifier.event_id,
+                        command=verifier,
+                        case_version=verifier.expected_version + 1,
+                    )
+                    and self._event_matches(
+                        connection,
+                        event_id=route.event_id,
+                        command=route,
+                        case_version=route.expected_version + 1,
+                    )
+                ):
+                    state = self._require_state(connection, verifier.case_id)
+                    if (
+                        int(state["version"]) == verifier.expected_version + 2
+                        and str(state["status"]) == route.target_status.value
+                        and state["semantic_run_id"] == verifier.report.verifier_run_id
+                        and state["composite_verdict"]
+                        == verifier.composite_verdict.value
+                        and state["lease_owner"] is None
+                        and state["lease_expires_at"] is None
+                    ):
+                        return self._read_case(connection, verifier.case_id)
+                raise ReviewConflictError("duplicate semantic failure finalization")
+
+            state = self._require_state(connection, verifier.case_id)
+            self._require_cas(state, verifier.expected_version, verifier.prior_status)
+            if verifier.lease_owner is None:
+                raise ReviewConflictError(
+                    "semantic verifier result requires review lease owner"
+                )
+            self._require_owned_lease(
+                state, verifier.lease_owner, verifier.occurred_at
+            )
+            if verifier.report.revision_number != int(state["current_revision_number"]):
+                raise ReviewConflictError("verifier revision conflict")
+            current_revision = self._revision_row(
+                connection, verifier.case_id, int(state["current_revision_number"])
+            )
+            if verifier.report.report_sha256 != str(current_revision["report_sha256"]):
+                raise ReviewConflictError("verifier report binding conflict")
+            if str(state["verification_mode"]) != VerificationMode.HYBRID.value:
+                raise ReviewConflictError("verifier mode conflict")
+
+            self._insert_verifier_report(connection, verifier.report, verifier.case_id)
+            self._after_insert("verifier_run")
+            cursor = connection.execute(
+                "UPDATE review_cases SET status = ?, version = version + 2, "
+                "semantic_run_id = ?, composite_verdict = ?, lease_owner = NULL, "
+                "lease_expires_at = NULL, updated_at = ? "
+                "WHERE case_id = ? AND version = ? AND status = ?",
+                (
+                    route.target_status.value,
+                    verifier.report.verifier_run_id,
+                    verifier.composite_verdict.value,
+                    _timestamp(route.occurred_at),
+                    verifier.case_id,
+                    verifier.expected_version,
+                    verifier.prior_status.value,
+                ),
+            )
+            self._require_updated(cursor)
+            self._insert_transition_event(connection, verifier)
+            self._insert_transition_event(connection, route)
+            return self._read_case(connection, verifier.case_id)
 
     def _route_to_human(self, command: RouteToHumanReview) -> DiagnosisReviewCase:
         with self._transaction(write=True) as connection:

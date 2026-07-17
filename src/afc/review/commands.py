@@ -265,6 +265,32 @@ class RouteToHumanReview(TransitionCommand):
         return self
 
 
+class FinalizeSemanticFailure(ReviewCommand):
+    verifier: AppendVerifierRun
+    route: RouteToHumanReview
+
+    @model_validator(mode="after")
+    def validate_atomic_transition(self) -> Self:
+        verifier = self.verifier
+        route = self.route
+        if verifier.report.verifier_kind is not VerifierKind.SEMANTIC:
+            raise ValueError("semantic failure finalization requires a semantic report")
+        if verifier.report.operational_error is None:
+            raise ValueError("semantic failure finalization requires an operational error")
+        if verifier.event_type is not WorkflowEventType.PROVIDER_FAILED:
+            raise ValueError("semantic failure finalization requires provider_failed")
+        if verifier.target_status is not ReviewStatus.VERIFYING:
+            raise ValueError("semantic failure verifier transition must remain verifying")
+        if (
+            route.case_id != verifier.case_id
+            or route.expected_version != verifier.expected_version + 1
+            or route.prior_status is not verifier.target_status
+            or route.occurred_at != verifier.occurred_at
+        ):
+            raise ValueError("semantic failure route must follow the verifier transition")
+        return self
+
+
 class RouteRevisionFailureToHuman(TransitionCommand):
     composite_verdict: VerifierVerdict
     lease_owner: str = Field(min_length=1)

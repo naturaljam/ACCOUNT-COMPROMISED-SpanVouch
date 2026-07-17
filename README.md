@@ -136,6 +136,8 @@ The `afc-review create` command likewise refuses `deepseek` diagnosis or `hybrid
 
 Review SQLite stores a canonical, allowlisted `DiagnosticTraceView`, diagnosis revisions, verifier summaries, events, and human decisions. It does not store raw `TraceIR`, prompts, authorization headers, keys, hidden reasoning, or raw provider bodies. `reviewer_label` is caller-supplied audit text, not an authenticated identity; authentication and RBAC are intentionally outside Phase 3.
 
+Phase 3 initializes review databases at schema v2, including create-idempotency reservations. Phase 3 has not been released, so unpublished development schema v1 databases are not a supported production contract and must be deleted and rebuilt; the application does not silently migrate them.
+
 ## Run the API and provisioned Phoenix service
 
 ```bash

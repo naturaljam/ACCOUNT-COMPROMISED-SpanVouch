@@ -20,6 +20,7 @@ from afc.review.commands import (
     AppendDiagnosisRevision,
     AppendVerifierRun,
     ClaimReviewWork,
+    FinalizeSemanticFailure,
     RenewReviewLease,
     ReviewLeaseWork,
     RouteRevisionFailureToHuman,
@@ -51,6 +52,7 @@ from afc.review.protocols import ReviewRepository, ReviewReviser, Verifier
 from afc.review.verdicts import MergedVerifierReports, merge_verifier_reports
 
 ProviderWorkResult = TypeVar("ProviderWorkResult")
+ProviderFinalizationResult = TypeVar("ProviderFinalizationResult")
 
 
 class ReviewWorkflowState(TypedDict):
@@ -172,6 +174,7 @@ class ReviewWorkflow:
         *,
         work: ReviewLeaseWork,
         stopped: asyncio.Event,
+        committed: asyncio.Event,
     ) -> None:
         interval = self._lease_duration.total_seconds() / 3
         while True:
@@ -180,83 +183,122 @@ class ReviewWorkflow:
             if stopped.is_set():
                 return
             now = self._now()
-            await self._repository.renew_review_lease(
-                RenewReviewLease(
-                    case_id=runtime.case.case_id,
-                    expected_version=runtime.case.version,
-                    expected_status=runtime.case.status,
-                    lease_owner=self._lease_owner,
-                    work=work,
-                    now=now,
-                    lease_expires_at=now + self._lease_duration,
+            try:
+                await self._repository.renew_review_lease(
+                    RenewReviewLease(
+                        case_id=runtime.case.case_id,
+                        expected_version=runtime.case.version,
+                        expected_status=runtime.case.status,
+                        lease_owner=self._lease_owner,
+                        work=work,
+                        now=now,
+                        lease_expires_at=now + self._lease_duration,
+                    )
                 )
-            )
+            except ReviewConflictError:
+                if committed.is_set():
+                    return
+                raise
 
-    async def _supervise_provider_work(
+    async def _run_provider_lifecycle(
         self,
         runtime: ReviewRuntimeBundle,
         *,
         work: ReviewLeaseWork,
-        operation: Callable[[], Awaitable[ProviderWorkResult]],
-    ) -> ProviderWorkResult:
+        provider: Callable[[], Awaitable[ProviderWorkResult]],
+        finalize: Callable[[ProviderWorkResult], Awaitable[ProviderFinalizationResult]],
+    ) -> ProviderFinalizationResult:
         stopped = asyncio.Event()
+        committed = asyncio.Event()
 
-        async def run_operation() -> ProviderWorkResult:
-            try:
-                return await operation()
-            finally:
-                stopped.set()
+        async def call_provider() -> ProviderWorkResult:
+            return await provider()
 
-        operation_task = asyncio.create_task(run_operation())
+        provider_task: asyncio.Task[ProviderWorkResult] = asyncio.create_task(
+            call_provider()
+        )
         heartbeat_task = asyncio.create_task(
             self._renew_lease_until_stopped(
                 runtime,
                 work=work,
                 stopped=stopped,
+                committed=committed,
             )
         )
+        finalization_task: asyncio.Task[ProviderFinalizationResult] | None = None
         try:
             done, _ = await asyncio.wait(
-                {operation_task, heartbeat_task},
+                {provider_task, heartbeat_task},
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            if heartbeat_task in done and not operation_task.done():
+            if heartbeat_task in done:
                 heartbeat_error = heartbeat_task.exception()
                 if heartbeat_error is not None:
-                    operation_task.cancel()
-                    await asyncio.gather(operation_task, return_exceptions=True)
+                    if not provider_task.done():
+                        provider_task.cancel()
+                    await asyncio.gather(provider_task, return_exceptions=True)
                     raise heartbeat_error
+                if not provider_task.done():
+                    provider_task.cancel()
+                    await asyncio.gather(provider_task, return_exceptions=True)
+                    raise ReviewConflictError(
+                        "review lease heartbeat stopped before provider completion"
+                    )
 
-            try:
-                result = await operation_task
-            except BaseException as operation_error:
-                heartbeat_result = (
+            provider_result = await provider_task
+            if heartbeat_task.done():
+                heartbeat_error = heartbeat_task.exception()
+                if heartbeat_error is not None:
+                    raise heartbeat_error
+                raise ReviewConflictError(
+                    "review lease heartbeat stopped before finalization"
+                )
+
+            async def call_finalizer() -> ProviderFinalizationResult:
+                return await finalize(provider_result)
+
+            finalization_task = asyncio.create_task(call_finalizer())
+            finalization_wait: set[asyncio.Future[Any]] = {
+                finalization_task,
+                heartbeat_task,
+            }
+            finalization_done, _ = await asyncio.wait(
+                finalization_wait,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if finalization_task not in finalization_done:
+                heartbeat_error = heartbeat_task.exception()
+                if isinstance(heartbeat_error, ReviewConflictError):
+                    try:
+                        result = await finalization_task
+                    except BaseException:
+                        raise heartbeat_error from None
+                    committed.set()
+                    stopped.set()
                     await asyncio.gather(heartbeat_task, return_exceptions=True)
-                )[0]
-                if isinstance(operation_error, ReviewWorkflowProviderError):
-                    raise
-                if isinstance(heartbeat_result, BaseException) and not isinstance(
-                    heartbeat_result, asyncio.CancelledError
-                ):
-                    raise heartbeat_result from None
-                raise
+                    return result
+                finalization_task.cancel()
+                await asyncio.gather(finalization_task, return_exceptions=True)
+                if heartbeat_error is not None:
+                    raise heartbeat_error
+                raise ReviewConflictError(
+                    "review lease heartbeat stopped before finalization commit"
+                )
 
-            heartbeat_result = (
-                await asyncio.gather(heartbeat_task, return_exceptions=True)
-            )[0]
-            if isinstance(heartbeat_result, BaseException) and not isinstance(
-                heartbeat_result, (asyncio.CancelledError, ReviewConflictError)
-            ):
-                raise heartbeat_result
+            result = await finalization_task
+            committed.set()
+            stopped.set()
+            await asyncio.gather(heartbeat_task, return_exceptions=True)
             return result
         finally:
             stopped.set()
-            for task in (operation_task, heartbeat_task):
+            tasks: list[asyncio.Future[Any]] = [provider_task, heartbeat_task]
+            if finalization_task is not None:
+                tasks.append(finalization_task)
+            for task in tasks:
                 if not task.done():
                     task.cancel()
-            await asyncio.gather(
-                operation_task, heartbeat_task, return_exceptions=True
-            )
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def run(self, case_id: str) -> DiagnosisReviewDetail:
         return await self._execute(case_id)
@@ -420,62 +462,71 @@ class ReviewWorkflow:
                     event_type=WorkflowEventType.VERIFICATION_STARTED,
                 )
                 claimed_runtime = runtime
+                semantic_started_at = self._now()
 
-                async def verify_semantically() -> tuple[
-                    ReviewRuntimeBundle, VerifierReport, bool
-                ]:
-                    started_at = self._now()
+                async def verify_semantically() -> VerifierReport | ProviderError:
                     if self._semantic is None:
-                        error = ProviderConfigurationError(
+                        return ProviderConfigurationError(
                             "semantic verifier is not configured"
                         )
-                        await self._persist_semantic_failure(
-                            claimed_runtime,
-                            deterministic,
-                            error,
-                            started_at=started_at,
-                        )
-                        raise ReviewWorkflowProviderError(
-                            case_id, "provider_not_configured", retryable=False
-                        ) from None
                     try:
-                        report = await self._semantic.verify(
+                        return await self._semantic.verify(
                             self._verification_input(claimed_runtime)
                         )
                     except ProviderError as error:
+                        return error
+
+                async def finalize_semantic(
+                    outcome: VerifierReport | ProviderError,
+                ) -> tuple[
+                    VerifierReport | None,
+                    bool,
+                    ReviewWorkflowProviderError | None,
+                ]:
+                    if isinstance(outcome, ProviderError):
                         await self._persist_semantic_failure(
                             claimed_runtime,
                             deterministic,
-                            error,
-                            started_at=started_at,
+                            outcome,
+                            started_at=semantic_started_at,
                         )
-                        code, retryable = _provider_failure(error)
-                        raise ReviewWorkflowProviderError(
-                            case_id, code, retryable=retryable
-                        ) from None
+                        code, retryable = _provider_failure(outcome)
+                        return (
+                            None,
+                            False,
+                            ReviewWorkflowProviderError(
+                                case_id, code, retryable=retryable
+                            ),
+                        )
                     normalized = self._normalize_report(
-                        report, VerifierKind.SEMANTIC, expected_round
+                        outcome, VerifierKind.SEMANTIC, expected_round
                     )
                     merged = merge_verifier_reports(deterministic, normalized)
                     request_revision = self._should_request_revision(
                         claimed_runtime, merged.verdict
                     )
-                    persisted = await self._append_verifier(
+                    await self._commit_verifier(
                         claimed_runtime,
                         normalized,
                         merged,
                         request_revision=request_revision,
                         lease_owner=self._lease_owner,
                     )
-                    return persisted, normalized, request_revision
+                    return normalized, request_revision, None
 
-                runtime, semantic, request_revision = (
-                    await self._supervise_provider_work(
+                semantic, request_revision, provider_error = (
+                    await self._run_provider_lifecycle(
                         claimed_runtime,
                         work=ReviewLeaseWork.SEMANTIC_VERIFICATION,
-                        operation=verify_semantically,
+                        provider=verify_semantically,
+                        finalize=finalize_semantic,
                     )
                 )
+                if provider_error is not None:
+                    raise provider_error
+                if semantic is None:
+                    raise ReviewConflictError("semantic finalization result is missing")
+                runtime = await self._repository.load_runtime(case_id)
                 if request_revision:
                     return self._state_after(runtime, "request_revision")
 
@@ -512,6 +563,26 @@ class ReviewWorkflow:
         event_type: WorkflowEventType | None = None,
         lease_owner: str | None = None,
     ) -> ReviewRuntimeBundle:
+        await self._commit_verifier(
+            runtime,
+            report,
+            merged,
+            request_revision=request_revision,
+            event_type=event_type,
+            lease_owner=lease_owner,
+        )
+        return await self._repository.load_runtime(runtime.case.case_id)
+
+    async def _commit_verifier(
+        self,
+        runtime: ReviewRuntimeBundle,
+        report: VerifierReport,
+        merged: MergedVerifierReports,
+        *,
+        request_revision: bool,
+        event_type: WorkflowEventType | None = None,
+        lease_owner: str | None = None,
+    ) -> None:
         now = self._now()
         target = ReviewStatus.REVISION_REQUESTED if request_revision else ReviewStatus.VERIFYING
         if event_type is None:
@@ -541,7 +612,6 @@ class ReviewWorkflow:
                 occurred_at=now,
             )
         )
-        return await self._repository.load_runtime(runtime.case.case_id)
 
     async def _request_revision(self, state: ReviewWorkflowState) -> ReviewWorkflowState:
         runtime = await self._repository.load_runtime(state["case_id"])
@@ -580,45 +650,49 @@ class ReviewWorkflow:
             raise ReviewConflictError("evidence revision is unsupported")
         claimed_runtime = runtime
 
-        async def revise_and_persist() -> ReviewRuntimeBundle:
+        async def revise() -> DiagnosisReport | ProviderError:
             if not self._reviser.supports(claimed_runtime.case.diagnoser):
-                error: ProviderError = ProviderConfigurationError(
+                return ProviderConfigurationError(
                     "revision provider is not configured"
                 )
-            else:
-                try:
-                    revised_report = await self._reviser.revise(
-                        claimed_runtime, gaps
-                    )
-                except ProviderError as provider_error:
-                    error = provider_error
-                else:
-                    return await self._persist_revision(
-                        claimed_runtime, gaps, revised_report
-                    )
-            code, retryable = _provider_failure(error)
-            await self._persist_revision_failure(
-                claimed_runtime, code=code, retryable=retryable
-            )
-            raise ReviewWorkflowProviderError(
-                claimed_runtime.case.case_id,
-                code,
-                retryable=retryable,
-            ) from None
+            try:
+                return await self._reviser.revise(claimed_runtime, gaps)
+            except ProviderError as error:
+                return error
 
-        runtime = await self._supervise_provider_work(
+        async def finalize_revision(
+            outcome: DiagnosisReport | ProviderError,
+        ) -> ReviewWorkflowProviderError | None:
+            if isinstance(outcome, ProviderError):
+                code, retryable = _provider_failure(outcome)
+                await self._persist_revision_failure(
+                    claimed_runtime, code=code, retryable=retryable
+                )
+                return ReviewWorkflowProviderError(
+                    claimed_runtime.case.case_id,
+                    code,
+                    retryable=retryable,
+                )
+            await self._commit_revision(claimed_runtime, gaps, outcome)
+            return None
+
+        provider_error = await self._run_provider_lifecycle(
             claimed_runtime,
             work=ReviewLeaseWork.EVIDENCE_REVISION,
-            operation=revise_and_persist,
+            provider=revise,
+            finalize=finalize_revision,
         )
+        if provider_error is not None:
+            raise provider_error
+        runtime = await self._repository.load_runtime(claimed_runtime.case.case_id)
         return self._state_after(runtime, "verify_final")
 
-    async def _persist_revision(
+    async def _commit_revision(
         self,
         runtime: ReviewRuntimeBundle,
         gaps: tuple[EvidenceGap, ...],
         revised_report: DiagnosisReport,
-    ) -> ReviewRuntimeBundle:
+    ) -> None:
         previous = runtime.revisions[-1]
         if (
             revised_report.trace_id != runtime.snapshot.trace_id
@@ -660,7 +734,6 @@ class ReviewWorkflow:
                 occurred_at=now,
             )
         )
-        return await self._repository.load_runtime(runtime.case.case_id)
 
     async def _route_to_human(self, state: ReviewWorkflowState) -> ReviewWorkflowState:
         runtime = await self._repository.load_runtime(state["case_id"])
@@ -730,15 +803,40 @@ class ReviewWorkflow:
             completed_at=completed_at,
         )
         merged = merge_verifier_reports(deterministic, report)
-        runtime = await self._append_verifier(
-            runtime,
-            report,
-            merged,
-            request_revision=False,
-            event_type=WorkflowEventType.PROVIDER_FAILED,
+        verifier = AppendVerifierRun(
+            case_id=runtime.case.case_id,
+            expected_version=runtime.case.version,
+            prior_status=ReviewStatus.VERIFYING,
+            target_status=ReviewStatus.VERIFYING,
+            report=report,
+            composite_verdict=merged.verdict,
             lease_owner=self._lease_owner,
+            event_id=self._id_factory(),
+            event_type=WorkflowEventType.PROVIDER_FAILED,
+            event_metadata_json=canonical_json(
+                {
+                    "revision_number": report.revision_number,
+                    "verdict": merged.verdict.value,
+                    "verifier_kind": report.verifier_kind.value,
+                }
+            ),
+            occurred_at=completed_at,
         )
-        await self._route_to_human(self._state_after(runtime, "route_to_human"))
+        route = RouteToHumanReview(
+            case_id=runtime.case.case_id,
+            expected_version=runtime.case.version + 1,
+            prior_status=ReviewStatus.VERIFYING,
+            target_status=ReviewStatus.AWAITING_HUMAN_REVIEW,
+            event_id=self._id_factory(),
+            event_type=WorkflowEventType.AWAITING_HUMAN_REVIEW,
+            event_metadata_json=canonical_json(
+                {"verdict": merged.verdict.value}
+            ),
+            occurred_at=completed_at,
+        )
+        await self._repository.finalize_semantic_failure(
+            FinalizeSemanticFailure(verifier=verifier, route=route)
+        )
 
     async def _persist_revision_failure(
         self, runtime: ReviewRuntimeBundle, *, code: str, retryable: bool

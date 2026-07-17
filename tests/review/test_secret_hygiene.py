@@ -17,9 +17,11 @@ from fastapi.testclient import TestClient
 from afc.api.app import create_app
 from afc.cli import review as review_cli
 from afc.diagnosis.errors import ProviderProtocolError
-from afc.diagnosis.models import DiagnoserKind
+from afc.diagnosis.evidence import EvidenceCatalog
+from afc.diagnosis.models import DiagnoserKind, EvidenceSelector
 from afc.diagnosis.rule_diagnoser import RuleDiagnoser
 from afc.diagnosis.service import DiagnosisService
+from afc.diagnosis.trace_view import DiagnosticTraceView
 from afc.invariants.engine import InvariantEngine
 from afc.invariants.supportlab import supportlab_rules
 from afc.review.evidence_verifier import EvidenceVerifier
@@ -58,8 +60,11 @@ class FailingSemanticVerifier:
     kind = VerifierKind.SEMANTIC
     version_fingerprint = "secret-hygiene-semantic-v1"
 
+    def __init__(self) -> None:
+        self.inputs: list[VerificationInput] = []
+
     async def verify(self, input_: VerificationInput) -> VerifierReport:
-        del input_
+        self.inputs.append(input_)
         raise ProviderProtocolError(f"{SENTINEL_KEY}:{RAW_PROVIDER_BODY}")
 
 
@@ -75,15 +80,29 @@ def _clean_trace() -> TraceIR:
 def _trace_with_value_secrets() -> TraceIR:
     trace = _clean_trace()
     root = trace.spans[0]
+    encoded = json.dumps({"client_secret": SENTINEL_KEY})
+    for _ in range(6):
+        encoded = json.dumps(encoded)
     root = root.model_copy(
         update={
+            "name": f"root api_key={SENTINEL_KEY}",
             "attributes": {
                 **root.attributes,
                 "tool.result": {
                     "api_key": SENTINEL_KEY,
+                    "X-API-Key": SENTINEL_KEY,
+                    "clientSecret": SENTINEL_KEY,
+                    "private-key": SENTINEL_KEY,
+                    "session_token": SENTINEL_KEY,
+                    "Set-Cookie": SENTINEL_KEY,
+                    "deep": encoded,
                     "safe": "diagnostic context survives",
                 },
-                "tool.error.message": f"token={SENTINEL_KEY}; provider rejected request",
+                "tool.error.message": {
+                    "proxy authorization": SENTINEL_KEY,
+                    "db.password": SENTINEL_KEY,
+                    "message": "provider rejected request",
+                },
                 "run.final_message": (
                     f"Authorization: Bearer {SENTINEL_KEY}; final context survives"
                 ),
@@ -93,7 +112,9 @@ def _trace_with_value_secrets() -> TraceIR:
     return trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
 
 
-def _review_runtime(database: Path) -> tuple[ReviewService, SQLiteReviewRepository]:
+def _review_runtime(
+    database: Path,
+) -> tuple[ReviewService, SQLiteReviewRepository, FailingSemanticVerifier]:
     engine = InvariantEngine(supportlab_rules())
     diagnoser = RuleDiagnoser(engine)
     diagnosis_service = DiagnosisService({DiagnoserKind.RULES: diagnoser})
@@ -118,7 +139,7 @@ def _review_runtime(database: Path) -> tuple[ReviewService, SQLiteReviewReposito
         id_factory=lambda: str(uuid4()),
         clock=lambda: datetime.now(UTC),
     )
-    return service, repository
+    return service, repository, semantic
 
 
 def _assert_sanitized(value: object) -> None:
@@ -131,7 +152,7 @@ def test_provider_failure_is_sanitized_across_error_sqlite_api_cli_and_report(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "review.db"
-    service, repository = _review_runtime(database)
+    service, repository, semantic = _review_runtime(database)
     asyncio.run(repository.initialize())
 
     with pytest.raises(ReviewWorkflowProviderError) as raised:
@@ -147,6 +168,8 @@ def test_provider_failure_is_sanitized_across_error_sqlite_api_cli_and_report(
     case_id = raised.value.case_id
     _assert_sanitized(str(raised.value))
     detail = asyncio.run(repository.get_detail(case_id))
+    assert semantic.inputs
+    _assert_sanitized(semantic.inputs[0].model_dump(mode="json"))
     _assert_sanitized(detail.model_dump(mode="json"))
     assert detail.verifier_reports[-1].operational_error is not None
     assert detail.verifier_reports[-1].operational_error.code == "provider_protocol_error"
@@ -202,7 +225,7 @@ def test_allowed_trace_value_secrets_never_reach_sqlite_or_public_aggregate(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "trace-value-secrets.db"
-    service, repository = _review_runtime(database)
+    service, repository, semantic = _review_runtime(database)
     asyncio.run(repository.initialize())
 
     try:
@@ -220,6 +243,22 @@ def test_allowed_trace_value_secrets_never_reach_sqlite_or_public_aggregate(
         case_id = created.case.case_id
 
     detail = asyncio.run(repository.get_detail(case_id))
+    trace_view = DiagnosticTraceView.from_trace(_trace_with_value_secrets())
+    catalog = EvidenceCatalog.from_view(trace_view)
+    catalog_refs = tuple(
+        catalog.resolve(
+            EvidenceSelector(
+                span_id=selector.split("::", 1)[0],
+                field_path=selector.split("::", 1)[1],
+            ),
+            description="sanitizer boundary check",
+        )
+        for selector in catalog.selectors
+    )
+    _assert_sanitized(trace_view.model_dump(mode="json"))
+    _assert_sanitized([ref.model_dump(mode="json") for ref in catalog_refs])
+    assert semantic.inputs
+    _assert_sanitized(semantic.inputs[0].model_dump(mode="json"))
     _assert_sanitized(detail.model_dump(mode="json"))
     with sqlite3.connect(database) as connection:
         view_json = connection.execute(

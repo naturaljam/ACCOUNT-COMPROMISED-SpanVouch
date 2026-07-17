@@ -100,7 +100,7 @@ src/afc/
     workflow.py               # LangGraph 有界状态机
     service.py                # 应用服务与事务边界
     sqlite_repository.py      # SQLite 实现
-    schema.py                 # schema v1 初始化
+    schema.py                 # schema v2 初始化和兼容策略
   api/routes/
     diagnosis_reviews.py
   cli/
@@ -462,7 +462,7 @@ WHERE case_id = ? AND version = ? AND status = 'awaiting_human_review'
 - 数据库默认路径 `.data/afc.db`；
 - Docker 使用 `/data/afc.db` 和命名卷。
 
-Phase 3 使用 schema v1 初始化器。初始化器必须验证已有 schema version；未知或较新版本拒绝启动，不能自动破坏性升级。Alembic 和 PostgreSQL migration 留到后续基础设施阶段。
+Phase 3 使用 schema v2 初始化器，其中 create-idempotency reservation 属于 v2 合同。初始化器必须验证已有 schema version；未知或较新版本拒绝启动，不能自动破坏性升级。Phase 3 尚未发布，因此开发期 schema v1 数据库不属于受支持的生产合同，必须删除并由初始化器重建为 v2；本阶段不提供静默 v1-to-v2 migration。Alembic 和 PostgreSQL migration 留到后续基础设施阶段。
 
 ## 12. API 设计
 
@@ -622,7 +622,7 @@ Semantic Verifier 先运行 2 条 allowlist smoke，再运行完整对照。它�
 
 ### 16.2 SQLite 集成测试
 
-- schema v1 初始化和重复初始化；
+- schema v2 初始化和重复初始化；
 - 未知 schema 拒绝；
 - foreign key 与事务回滚；
 - WAL/busy timeout；

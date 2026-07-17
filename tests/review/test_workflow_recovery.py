@@ -132,6 +132,90 @@ class CrashAfterAppendRepository(SQLiteReviewRepository):
         return result
 
 
+class ClearedLeaseRaceRepository(SQLiteReviewRepository):
+    """Force a renewal to observe the lease-clearing finalization commit."""
+
+    def __init__(self, database: Path) -> None:
+        super().__init__(database)
+        self.renew_entered = asyncio.Event()
+        self.finalized = asyncio.Event()
+        self.conflict_observed = asyncio.Event()
+        self.active_renewals = 0
+
+    async def renew_review_lease(self, command):  # type: ignore[no-untyped-def]
+        self.active_renewals += 1
+        self.renew_entered.set()
+        try:
+            await asyncio.wait_for(self.finalized.wait(), timeout=1.0)
+            try:
+                await super().renew_review_lease(command)
+            except ReviewConflictError:
+                self.conflict_observed.set()
+                raise
+        finally:
+            self.active_renewals -= 1
+
+    async def append_verifier_run(self, command):  # type: ignore[no-untyped-def]
+        result = await super().append_verifier_run(command)
+        if command.report.verifier_kind is VerifierKind.SEMANTIC:
+            self.finalized.set()
+            await asyncio.wait_for(self.conflict_observed.wait(), timeout=1.0)
+        return result
+
+    async def append_revision(self, command):  # type: ignore[no-untyped-def]
+        result = await super().append_revision(command)
+        self.finalized.set()
+        await asyncio.wait_for(self.conflict_observed.wait(), timeout=1.0)
+        return result
+
+    async def route_revision_failure(self, command):  # type: ignore[no-untyped-def]
+        result = await super().route_revision_failure(command)
+        self.finalized.set()
+        await asyncio.wait_for(self.conflict_observed.wait(), timeout=1.0)
+        return result
+
+    async def finalize_semantic_failure(self, command):  # type: ignore[no-untyped-def]
+        result = await super().finalize_semantic_failure(command)
+        self.finalized.set()
+        await asyncio.wait_for(self.conflict_observed.wait(), timeout=1.0)
+        return result
+
+    async def load_runtime(self, case_id: str):  # type: ignore[no-untyped-def]
+        if self.finalized.is_set() and not self.conflict_observed.is_set():
+            await asyncio.wait_for(self.conflict_observed.wait(), timeout=1.0)
+        return await super().load_runtime(case_id)
+
+
+class HeartbeatAwareVerifier(FakeVerifier):
+    def __init__(
+        self,
+        kind: VerifierKind,
+        outcomes: list[object],
+        repository: ClearedLeaseRaceRepository,
+    ) -> None:
+        super().__init__(kind, outcomes)
+        self._race_repository = repository
+
+    async def verify(self, input_):  # type: ignore[no-untyped-def]
+        await asyncio.wait_for(self._race_repository.renew_entered.wait(), timeout=1.0)
+        return await super().verify(input_)
+
+
+class HeartbeatAwareReviser(FakeReviser):
+    def __init__(
+        self,
+        repository: ClearedLeaseRaceRepository,
+        *,
+        outcomes: list[object],
+    ) -> None:
+        super().__init__(supported=(DiagnoserKind.DEEPSEEK,), outcomes=outcomes)
+        self._race_repository = repository
+
+    async def revise(self, runtime_bundle, evidence_gaps):  # type: ignore[no-untyped-def]
+        await asyncio.wait_for(self._race_repository.renew_entered.wait(), timeout=1.0)
+        return await super().revise(runtime_bundle, evidence_gaps)
+
+
 async def test_crash_after_verifying_commit_requires_expired_lease_before_resume(
     tmp_path: Path,
 ) -> None:
@@ -503,6 +587,202 @@ async def test_revision_provider_failure_preserves_classification_without_fabric
     assert f'"code":"{expected_code}"' in event[1]
     assert f'"retryable":{str(expected_retryable).lower()}' in event[1]
     assert "TOP-SECRET" not in event[1]
+
+
+async def test_semantic_finalize_survives_heartbeat_observing_cleared_lease(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "semantic-finalize-race.sqlite3"
+    repository = ClearedLeaseRaceRepository(database)
+    await repository.initialize()
+    await _create_case(
+        repository,
+        mode=VerificationMode.HYBRID,
+        diagnoser=DiagnoserKind.DEEPSEEK,
+    )
+    deterministic = FakeVerifier(
+        VerifierKind.DETERMINISTIC,
+        [
+            _report(
+                VerifierKind.DETERMINISTIC,
+                VerifierVerdict.VERIFIED,
+                revision_number=0,
+                suffix="semantic-finalize-race",
+            )
+        ],
+    )
+    semantic = HeartbeatAwareVerifier(
+        VerifierKind.SEMANTIC,
+        [
+            _report(
+                VerifierKind.SEMANTIC,
+                VerifierVerdict.VERIFIED,
+                revision_number=0,
+                suffix="semantic-finalize-race-provider",
+            )
+        ],
+        repository,
+    )
+
+    detail = await _workflow(
+        repository,
+        deterministic,
+        semantic=semantic,
+        clock=_utc_now,
+        lease_duration=timedelta(milliseconds=300),
+    ).run("case-review-1")
+
+    assert repository.conflict_observed.is_set()
+    assert repository.active_renewals == 0
+    assert detail.case.status is ReviewStatus.AWAITING_HUMAN_REVIEW
+    assert len(detail.verifier_reports) == 2
+
+
+async def test_revision_finalize_survives_heartbeat_observing_cleared_lease(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "revision-finalize-race.sqlite3"
+    repository = ClearedLeaseRaceRepository(database)
+    await repository.initialize()
+    await _create_case(
+        repository,
+        mode=VerificationMode.DETERMINISTIC,
+        diagnoser=DiagnoserKind.DEEPSEEK,
+    )
+    deterministic = FakeVerifier(
+        VerifierKind.DETERMINISTIC,
+        [
+            _report(
+                VerifierKind.DETERMINISTIC,
+                VerifierVerdict.NEEDS_EVIDENCE,
+                revision_number=0,
+                suffix="revision-finalize-race",
+            ),
+            _report(
+                VerifierKind.DETERMINISTIC,
+                VerifierVerdict.VERIFIED,
+                revision_number=1,
+                suffix="revision-finalize-race-final",
+            ),
+        ],
+    )
+    reviser = HeartbeatAwareReviser(repository, outcomes=[_deepseek_report()])
+
+    detail = await _workflow(
+        repository,
+        deterministic,
+        reviser=reviser,
+        clock=_utc_now,
+        lease_duration=timedelta(milliseconds=300),
+    ).run("case-review-1")
+
+    assert repository.conflict_observed.is_set()
+    assert repository.active_renewals == 0
+    assert detail.case.status is ReviewStatus.AWAITING_HUMAN_REVIEW
+    assert detail.case.current_revision_number == 1
+    assert len(detail.revisions) == 2
+
+
+async def test_semantic_failure_route_is_atomic_and_survives_cleared_lease_race(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "semantic-failure-race.sqlite3"
+    repository = ClearedLeaseRaceRepository(database)
+    await repository.initialize()
+    await _create_case(
+        repository,
+        mode=VerificationMode.HYBRID,
+        diagnoser=DiagnoserKind.DEEPSEEK,
+    )
+    deterministic = FakeVerifier(
+        VerifierKind.DETERMINISTIC,
+        [
+            _report(
+                VerifierKind.DETERMINISTIC,
+                VerifierVerdict.VERIFIED,
+                revision_number=0,
+                suffix="semantic-failure-race",
+            )
+        ],
+    )
+    semantic = HeartbeatAwareVerifier(
+        VerifierKind.SEMANTIC,
+        [ProviderRequestError("transport_error", retryable=True)],
+        repository,
+    )
+
+    with pytest.raises(ReviewWorkflowProviderError) as raised:
+        await _workflow(
+            repository,
+            deterministic,
+            semantic=semantic,
+            clock=_utc_now,
+            lease_duration=timedelta(milliseconds=300),
+        ).run("case-review-1")
+
+    assert raised.value.case_id == "case-review-1"
+    assert raised.value.code == "transport_error"
+    assert raised.value.retryable is True
+    assert repository.conflict_observed.is_set()
+    assert repository.active_renewals == 0
+    detail = await repository.get_detail("case-review-1")
+    assert detail.case.status is ReviewStatus.AWAITING_HUMAN_REVIEW
+    assert [event for event, _ in _events(database)][-2:] == [
+        "provider_failed",
+        "awaiting_human_review",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_code", "retryable"),
+    (
+        (ProviderConfigurationError("removed"), "provider_not_configured", False),
+        (ProviderRequestError("transport_error", retryable=True), "transport_error", True),
+    ),
+)
+async def test_revision_failure_survives_cleared_lease_race(
+    tmp_path: Path,
+    error: Exception,
+    expected_code: str,
+    retryable: bool,
+) -> None:
+    database = tmp_path / f"revision-failure-race-{expected_code}.sqlite3"
+    repository = ClearedLeaseRaceRepository(database)
+    await repository.initialize()
+    await _create_case(
+        repository,
+        mode=VerificationMode.DETERMINISTIC,
+        diagnoser=DiagnoserKind.DEEPSEEK,
+    )
+    deterministic = FakeVerifier(
+        VerifierKind.DETERMINISTIC,
+        [
+            _report(
+                VerifierKind.DETERMINISTIC,
+                VerifierVerdict.NEEDS_EVIDENCE,
+                revision_number=0,
+                suffix=f"revision-failure-race-{expected_code}",
+            )
+        ],
+    )
+    reviser = HeartbeatAwareReviser(repository, outcomes=[error])
+
+    with pytest.raises(ReviewWorkflowProviderError) as raised:
+        await _workflow(
+            repository,
+            deterministic,
+            reviser=reviser,
+            clock=_utc_now,
+            lease_duration=timedelta(milliseconds=300),
+        ).run("case-review-1")
+
+    assert raised.value.code == expected_code
+    assert raised.value.retryable is retryable
+    assert repository.conflict_observed.is_set()
+    assert repository.active_renewals == 0
+    detail = await repository.get_detail("case-review-1")
+    assert detail.case.status is ReviewStatus.AWAITING_HUMAN_REVIEW
+    assert detail.case.composite_verdict is VerifierVerdict.REVIEW_REQUIRED
 
 
 async def test_semantic_heartbeat_blocks_concurrent_consented_resume_past_original_expiry(

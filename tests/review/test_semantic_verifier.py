@@ -324,6 +324,7 @@ async def test_prompt_contains_only_independent_canonical_allowlist_data() -> No
     spans = list(view.spans)
     spans[1] = spans[1].model_copy(
         update={
+            "name": f"tool client_secret={VALUE_SECRET}",
             "attributes": {
                 **spans[1].attributes,
                 "tool.error.message": (

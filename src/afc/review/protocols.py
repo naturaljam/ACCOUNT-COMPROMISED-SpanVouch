@@ -8,6 +8,7 @@ from afc.review.commands import (
     ApplyHumanDecision,
     ClaimReviewWork,
     CreateReviewCase,
+    FinalizeSemanticFailure,
     RenewReviewLease,
     RouteRevisionFailureToHuman,
     RouteToHumanReview,
@@ -108,6 +109,11 @@ class ReviewRepository(Protocol):
         raise NotImplementedError
 
     async def append_revision(self, command: AppendDiagnosisRevision) -> DiagnosisReviewCase:
+        raise NotImplementedError
+
+    async def finalize_semantic_failure(
+        self, command: FinalizeSemanticFailure
+    ) -> DiagnosisReviewCase:
         raise NotImplementedError
 
     async def route_to_human(self, command: RouteToHumanReview) -> DiagnosisReviewCase:

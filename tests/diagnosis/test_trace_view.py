@@ -1,11 +1,14 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from afc.diagnosis.trace_view import (
     ALLOWED_ATTRIBUTES,
     SECRET_REDACTION,
     DiagnosticTraceView,
     sanitize_diagnostic_trace_view,
+    sanitize_diagnostic_value,
 )
 from afc.review.models import canonical_json
 from afc.trace_ir.models import TraceIR
@@ -216,3 +219,178 @@ def test_trace_view_redacts_opaque_bearer_tokens_only_at_value_boundaries() -> N
     assert view.spans[0].attributes["run.final_message"] == safe_prose
     assert sanitize_diagnostic_trace_view(view) == view
     assert sanitize_diagnostic_trace_view(sanitize_diagnostic_trace_view(view)) == view
+
+
+def test_trace_view_uses_one_classifier_for_common_nested_credential_keys() -> None:
+    trace = load_trace("clean-01")
+    credential_keys = (
+        "Authorization",
+        "proxy-authorization",
+        "X API KEY",
+        "XAPIKEY",
+        "api_key",
+        "clientSecret",
+        "private-key",
+        "password",
+        "passwd",
+        "pwd",
+        "db.password",
+        "token",
+        "accessToken",
+        "refresh-token",
+        "session_token",
+        "id.token",
+        "Cookie",
+        "cookies",
+        "Set-Cookie",
+        "session-cookie",
+        "account_password_value",
+        "provider_secret_value",
+        "auth_token_value",
+        "session_credential",
+    )
+    nested = {key: VALUE_SECRET for key in credential_keys}
+    nested.update(
+        {
+            "token_count": 7,
+            "password_policy_name": "rotate-quarterly",
+            "secret_rotation_duration": 30,
+            "safe": "useful context",
+        }
+    )
+    root = trace.spans[0].model_copy(
+        update={
+            "attributes": {
+                **trace.spans[0].attributes,
+                "tool.result": {"nested": [nested]},
+                "tool.error.message": {"details": nested},
+            }
+        }
+    )
+
+    view = DiagnosticTraceView.from_trace(
+        trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
+    )
+    serialized = canonical_json(view)
+
+    assert VALUE_SECRET not in serialized
+    assert '"token_count":7' in serialized
+    assert '"password_policy_name":"rotate-quarterly"' in serialized
+    assert '"secret_rotation_duration":30' in serialized
+    assert "useful context" in serialized
+
+
+def test_trace_view_sanitizes_span_names_mapping_keys_and_final_messages() -> None:
+    trace = load_trace("clean-01")
+    root = trace.spans[0].model_copy(
+        update={
+            "name": f"request api_key={VALUE_SECRET}",
+            "attributes": {
+                **trace.spans[0].attributes,
+                "tool.result": {f"token={VALUE_SECRET}": "safe value"},
+                "run.final_message": f"client_secret: {VALUE_SECRET}",
+            },
+        }
+    )
+
+    view = DiagnosticTraceView.from_trace(
+        trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
+    )
+
+    assert VALUE_SECRET not in canonical_json(view)
+    assert view.spans[0].name == f"request api_key={SECRET_REDACTION}"
+    assert "safe value" in canonical_json(view)
+
+
+def test_trace_view_sanitizes_deep_encoding_and_fails_closed_at_budget() -> None:
+    trace = load_trace("clean-01")
+    six_layers = json.dumps({"client_secret": VALUE_SECRET})
+    for _ in range(6):
+        six_layers = json.dumps(six_layers)
+    exhausted = json.dumps({"password": VALUE_SECRET})
+    for _ in range(12):
+        exhausted = json.dumps(exhausted)
+    root = trace.spans[0].model_copy(
+        update={
+            "attributes": {
+                **trace.spans[0].attributes,
+                "tool.result": [six_layers, exhausted],
+            }
+        }
+    )
+
+    view = DiagnosticTraceView.from_trace(
+        trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
+    )
+    serialized = canonical_json(view)
+
+    assert VALUE_SECRET not in serialized
+    assert SECRET_REDACTION in serialized
+    assert sanitize_diagnostic_trace_view(view) == view
+
+
+def test_sanitizer_bounds_large_and_cyclic_values_without_corrupting_safe_data() -> None:
+    safe = [f"safe-{index}" for index in range(2_000)]
+    assert sanitize_diagnostic_value(safe) == safe
+
+    cyclic: list[object] = ["safe prefix"]
+    cyclic.append(cyclic)
+    assert sanitize_diagnostic_value(cyclic) == ["safe prefix", SECRET_REDACTION]
+
+
+@pytest.mark.parametrize(
+    "safe_prose",
+    (
+        "Bearer news",
+        "Bearer of good news",
+        "The bearer bond.",
+        "Bearer news remains safe. 熊猫依旧安全。",
+    ),
+)
+def test_trace_view_preserves_ordinary_bearer_prose_byte_for_byte(
+    safe_prose: str,
+) -> None:
+    trace = load_trace("clean-01")
+    root = trace.spans[0].model_copy(
+        update={
+            "attributes": {
+                **trace.spans[0].attributes,
+                "run.final_message": safe_prose,
+            }
+        }
+    )
+
+    view = DiagnosticTraceView.from_trace(
+        trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
+    )
+
+    assert view.spans[0].attributes["run.final_message"] == safe_prose
+
+
+def test_trace_view_redacts_long_and_short_credential_shaped_bearer_values() -> None:
+    trace = load_trace("clean-01")
+    long_letters = "abcdefghijklmnopqrstuvwxyzabcdef"
+    short_shaped = "ab1cd"
+    root = trace.spans[0].model_copy(
+        update={
+            "attributes": {
+                **trace.spans[0].attributes,
+                "tool.result": [
+                    f"Bearer {long_letters}",
+                    f"Bearer {long_letters}.",
+                    f"Bearer {short_shaped}; safe tail",
+                    "Bearer ab_cd, safe tail",
+                ],
+            }
+        }
+    )
+
+    view = DiagnosticTraceView.from_trace(
+        trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
+    )
+    serialized = canonical_json(view)
+
+    assert long_letters not in serialized
+    assert short_shaped not in serialized
+    assert "ab_cd" not in serialized
+    assert "safe tail" in serialized

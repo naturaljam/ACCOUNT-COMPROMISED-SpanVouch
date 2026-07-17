@@ -4,9 +4,9 @@ Updated: 2026-07-18
 
 ## Scope and provenance
 
-This document records the reproducible evidence for the Phase 3 `diagnosis -> independent verification -> at most one evidence revision -> human decision` workflow. The Task 12 verification baseline is commit `578df55fc4cac36a8f522ce9e03c3c7f4111d117`; the delivery delta is the single commit titled `chore: complete phase 3 delivery gates`. Git records the resulting commit SHA because a commit cannot embed its own hash without changing that hash.
+This document records reproducible Phase 3 evidence for the `diagnosis -> independent verification -> at most one evidence revision -> human decision` workflow. The Task 12 baseline at commit `578df55fc4cac36a8f522ce9e03c3c7f4111d117` and its later delivery/acceptance commits are historical evidence, not final merge-acceptance provenance for the current implementation.
 
-The final acceptance delta is one additional commit titled `fix: close phase 3 acceptance gaps`. It adds a nonzero deterministic acceptance gate, explicit paid-resume consent, durable verifier-to-report hash bindings, and atomic current-revision verifier pointers. Git likewise records the resulting commit SHA outside this self-referential document.
+The current implementation commit intentionally does not record a final code-under-test SHA or claim controller gates. After the code commit exists, the controller will run fresh acceptance gates against that exact SHA and add the result in a separate evidence-only documentation commit.
 
 The frozen review cohort contains 36 candidates: 20 unmodified rule reports and 16 deterministic mutations. It is bound to the frozen 20-trace SupportLab cohort.
 
@@ -65,13 +65,15 @@ The 2026-07-17 offline gate produced the following fresh evidence:
 - `uv sync --frozen --group dev`: 60 packages audited;
 - Ruff: clean;
 - strict mypy: 63 source files, no issues;
-- pytest with coverage: 485 passed at 93% total coverage; after the final whole-branch review fixes and follow-up hardening, the fresh repository suite passed 554 tests, with only the pre-existing Starlette/httpx deprecation warning;
+- pytest with coverage: 485 passed at 93% total coverage in the historical delivery gate;
 - deterministic review report: `status=complete`, 36 candidates, all six recorded quality rates at their accepted value, 0 operational errors, and 0 provider tokens;
 - Docker image build and health check: passed;
 - real persisted case: one revision, one deterministic verifier report, five ordered events, terminal `confirm` decision;
 - post-restart CLI GET: byte-identical to the pre-restart terminal detail;
 - container runtime and data ownership: UID/GID `10001:10001`; `/data/afc.db` owned by `10001:10001` and writable;
 - isolated named volume cleanup: passed after the recovery assertion.
+
+The current correction's ordinary local verification passed 568 tests and strict mypy over 63 source files, with only the pre-existing Starlette/httpx deprecation warning. These counts are implementation evidence, not final controller acceptance; the evidence-only follow-up commit will record the exact code SHA and complete gate relationship.
 
 On this Windows workstation, `uv run pytest` resolves the test runner through a bundled runtime that cannot import the repository's `tests` namespace. The canonical `.venv\Scripts\python -m pytest --cov=afc --cov-report=term-missing` invocation uses the frozen synced environment and produced the passing full-suite evidence above. Linux CI continues to run the locked wheel installation with `uv run --no-sync`.
 
@@ -82,6 +84,8 @@ No live result is inferred from these offline checks.
 The default API, CLI, evaluator, and CI paths are `rules + deterministic` and make zero external model calls. Secret-hygiene tests inject a sentinel credential and raw provider body, then check the sanitized workflow exception, verifier report, SQLite rows, workflow events, API JSON, and CLI JSON. Docker build-context tests exclude `.env`, `.env.*`, `.data/`, caches, and generated live reports while explicitly allowing the empty `.env.example` template.
 
 SQLite stores only the recursively sanitized, allowlisted diagnostic snapshot and structured audit records. It does not store raw TraceIR, prompts, keys, authorization headers, hidden reasoning, or raw provider responses. Active semantic-verification and evidence-revision leases are owner-fenced and renewed below their expiry interval, so normal provider latency cannot start a concurrent second call. After a genuinely dead worker stops heartbeating, the stale lease can still be reclaimed; crash recovery remains at-least-once while persisted domain effects remain deduplicated.
+
+Review persistence uses schema v2. Because Phase 3 is still unpublished, development schema v1 databases are not a supported production compatibility contract and must be rebuilt; no silent v1-to-v2 migration is claimed.
 
 `reviewer_label` is an audit label supplied by the caller; it is not authentication. Phase 3 does not claim auth or RBAC.
 

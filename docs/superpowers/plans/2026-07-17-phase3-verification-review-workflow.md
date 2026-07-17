@@ -66,7 +66,7 @@ src/afc/review/verdicts.py                       pure transition and merge polic
 src/afc/review/evidence_verifier.py              deterministic grounding verifier
 src/afc/review/semantic_verifier.py              independent DeepSeek verifier
 src/afc/review/commands.py                       transactional repository commands
-src/afc/review/schema.py                         SQLite schema v1 and connection policy
+src/afc/review/schema.py                         SQLite schema v2 and connection policy
 src/afc/review/sqlite_repository.py              transactional persistence adapter
 src/afc/review/service.py                        application use cases and human decisions
 src/afc/review/workflow.py                       bounded LangGraph coordinator
@@ -513,7 +513,7 @@ git add pyproject.toml src/afc/evals tests/evals evals/datasets/supportlab-revie
 git commit -m "feat: add deterministic review evaluation"
 ```
 
-## Task 5: ReviewRepository and SQLite Schema v1
+## Task 5: ReviewRepository and SQLite Schema v2
 
 **Files:**
 
@@ -563,7 +563,7 @@ Define the immutable command models in `review/commands.py`. Each command includ
 
 - [ ] **Step 1: Write failing schema initialization tests**
 
-Cover fresh creation, repeated initialization, exact schema version `1`, refusal of unknown/newer versions, `PRAGMA foreign_keys=ON`, `journal_mode=WAL`, non-zero `busy_timeout`, and all eight required tables:
+Cover fresh creation, repeated initialization, exact schema version `2`, refusal of unknown/newer versions, and explicit rejection of unpublished development schema v1 databases, which must be rebuilt rather than silently migrated. Also cover `PRAGMA foreign_keys=ON`, `journal_mode=WAL`, non-zero `busy_timeout`, and all eight required tables:
 
 ```text
 schema_metadata
@@ -582,7 +582,7 @@ Run: `.venv\Scripts\python -m pytest tests/review/test_sqlite_schema.py -q`
 
 Expected: FAIL because schema initialization is absent.
 
-- [ ] **Step 3: Implement schema v1 with explicit constraints**
+- [ ] **Step 3: Implement schema v2 with explicit constraints**
 
 Use `TEXT` for UUIDs, enums, timestamps, canonical JSON, and hashes; `INTEGER` for versions/counts; and foreign keys with no cascade that could erase audit history. Required uniqueness/constraints:
 
