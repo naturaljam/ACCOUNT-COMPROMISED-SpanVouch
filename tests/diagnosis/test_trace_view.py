@@ -704,6 +704,30 @@ def test_sanitizer_preserves_cookie_and_bearer_prose_with_punctuation(
     assert sanitize_diagnostic_value(safe_prose) == safe_prose
 
 
+_UNICODE_ZS_SPACES = tuple(
+    chr(codepoint)
+    for codepoint in (
+        0x0020,
+        0x00A0,
+        0x1680,
+        0x2000,
+        0x2001,
+        0x2002,
+        0x2003,
+        0x2004,
+        0x2005,
+        0x2006,
+        0x2007,
+        0x2008,
+        0x2009,
+        0x200A,
+        0x202F,
+        0x205F,
+        0x3000,
+    )
+)
+
+
 def _assert_sanitizer_fixed_point(source: str, expected: str) -> None:
     sanitized = sanitize_diagnostic_value(source)
 
@@ -1260,18 +1284,13 @@ def test_structural_credential_core_scan_is_linear_for_huge_suffixes() -> None:
 
 
 def test_arbitrary_prefix_metadata_stops_cross_field_label_contamination() -> None:
-    unicode_spaces = (
-        "\N{NO-BREAK SPACE}",
-        "\N{EM SPACE}",
-        "\N{IDEOGRAPHIC SPACE}",
-    )
     metadata_labels = (
         "custom_token_count",
         "custom_password_policy",
         "tenant_refresh_token_rotation_status",
     )
 
-    for space in (" ", *unicode_spaces):
+    for space in _UNICODE_ZS_SPACES:
         for metadata_label in metadata_labels:
             safe_source = f"safe={metadata_label}{space}field=ok"
             _assert_sanitizer_fixed_point(safe_source, safe_source)
@@ -1286,6 +1305,89 @@ def test_arbitrary_prefix_metadata_stops_cross_field_label_contamination() -> No
                 f"{SECRET_REDACTION}"
             )
             _assert_sanitizer_fixed_point(source, expected)
+
+
+@pytest.mark.parametrize(
+    "label",
+    (
+        "token count payload",
+        "authorization status header",
+        "password policy value",
+        "api key count material",
+        "access key id material",
+        "private key algorithm payload",
+        "client secret length material",
+        "cookie count payload",
+    ),
+)
+def test_structural_labels_preserve_mapping_parity_after_metadata_terminals(
+    label: str,
+) -> None:
+    assert sanitize_diagnostic_value({label: "secret-one"}) == {
+        label: SECRET_REDACTION
+    }
+    for prefix in ("", "status=ok; ", "status=ok | "):
+        _assert_sanitizer_fixed_point(
+            f"{prefix}{label}=secret-one",
+            f"{prefix}{label}={SECRET_REDACTION}",
+        )
+
+
+def test_mapping_and_structural_label_matrix_share_full_candidate_semantics() -> None:
+    credential_cores = (
+        ("token",),
+        ("authorization",),
+        ("password",),
+        ("api", "key"),
+        ("access", "key"),
+        ("private", "key"),
+        ("client", "secret"),
+        ("cookie",),
+    )
+    metadata_terminals = ("count", "status", "policy", "id", "algorithm", "length")
+    qualifier_cases = (
+        ("status", False),
+        ("payload", True),
+        ("value", True),
+    )
+    arbitrary_prefixes = ((), ("tenant", "custom"))
+
+    for space, prefix, core, terminal, qualifier_case in product(
+        _UNICODE_ZS_SPACES,
+        arbitrary_prefixes,
+        credential_cores,
+        metadata_terminals,
+        qualifier_cases,
+    ):
+        qualifier, should_redact = qualifier_case
+        label = space.join((*prefix, *core, terminal, qualifier))
+        expected_value = SECRET_REDACTION if should_redact else "secret-one"
+
+        mapping = sanitize_diagnostic_value({label: "secret-one"})
+        structural = sanitize_diagnostic_value(f"{label}=secret-one")
+
+        assert mapping == {label: expected_value}
+        assert structural == f"{label}={expected_value}"
+
+
+def test_compact_structural_alias_suffixes_work_with_every_zs_space() -> None:
+    for space, compact_alias in product(
+        _UNICODE_ZS_SPACES,
+        ("userpassword", "clientsecretstring", "sessiontokenvalue"),
+    ):
+        label = f"worker{space}{compact_alias}"
+        _assert_sanitizer_fixed_point(
+            f"{label}=secret-one",
+            f"{label}={SECRET_REDACTION}",
+        )
+
+
+def test_full_structural_candidate_scan_is_linear_with_many_chunks() -> None:
+    label = " ".join((*(("context",) * 25_000), "token", "count", "payload"))
+    sanitized = sanitize_diagnostic_value(f"{label}=secret-one")
+
+    assert sanitized == f"{label}={SECRET_REDACTION}"
+    assert sanitize_diagnostic_value(sanitized) == sanitized
 
 
 def test_nfkc_url_scheme_colons_preserve_spelling_and_url_boundaries() -> None:
@@ -1450,7 +1552,11 @@ def test_trace_view_preserves_safe_urls_and_redacts_punctuation_labels() -> None
                     f"https\N{FULLWIDTH COLON}/\\/agent:{VALUE_SECRET}"
                     "@compatible.example.com:443/path\n"
                     "https\N{SMALL COLON}//auth.example.com:443/path "
-                    "compatible-colon-url-safe"
+                    "compatible-colon-url-safe\n"
+                    f"token count payload={VALUE_SECRET}\n"
+                    f"tenant custom authorization\N{NO-BREAK SPACE}status"
+                    f"\N{NO-BREAK SPACE}header={VALUE_SECRET}\n"
+                    "token count status=visible full-label-parity-safe"
                 ),
             }
         }
@@ -1477,4 +1583,5 @@ def test_trace_view_preserves_safe_urls_and_redacts_punctuation_labels() -> None
     assert "mixed-url-safe" in message
     assert "arbitrary-metadata-safe" in message
     assert "compatible-colon-url-safe" in message
+    assert "full-label-parity-safe" in message
     assert sanitize_diagnostic_trace_view(view) == view

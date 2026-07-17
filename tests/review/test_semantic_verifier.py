@@ -402,6 +402,10 @@ async def test_prompt_contains_only_independent_canonical_allowlist_data() -> No
                     "@compatible.example.com:443/path\n"
                     "https\N{SMALL COLON}//auth.example.com:443/path "
                     "compatible-colon-url-safe\n"
+                    f"token count payload={VALUE_SECRET}\n"
+                    f"tenant custom authorization\N{NO-BREAK SPACE}status"
+                    f"\N{NO-BREAK SPACE}header={VALUE_SECRET}\n"
+                    "token count status=visible full-label-parity-safe\n"
                     "A cookie: recipe; instructions remain safe\n"
                     "cookie: recipe; instructions remain safe\n"
                     "Browser cookie: recipe; instructions remain safe\n"
@@ -462,6 +466,7 @@ async def test_prompt_contains_only_independent_canonical_allowlist_data() -> No
     assert "mixed-url-safe" in serialized
     assert "arbitrary-metadata-safe" in serialized
     assert "compatible-colon-url-safe" in serialized
+    assert "full-label-parity-safe" in serialized
     assert "Bearer of; good news" in serialized
     assert "trace-review-1" not in serialized
     assert "run-review-1" not in serialized

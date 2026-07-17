@@ -383,6 +383,10 @@ async def test_revision_prompt_is_a_canonical_sanitized_boundary() -> None:
                     "@compatible.example.com:443/path\n"
                     "https\N{SMALL COLON}//auth.example.com:443/path "
                     "compatible-colon-url-safe\n"
+                    f"token count payload={VALUE_SECRET}\n"
+                    f"tenant custom authorization\N{NO-BREAK SPACE}status"
+                    f"\N{NO-BREAK SPACE}header={VALUE_SECRET}\n"
+                    "token count status=visible full-label-parity-safe\n"
                     "cookie: recipe; instructions remain safe\n"
                     "Browser cookie: recipe; instructions remain safe\n"
                     "Cookie=recipe; instructions remain safe\n"
@@ -472,6 +476,7 @@ async def test_revision_prompt_is_a_canonical_sanitized_boundary() -> None:
     assert "mixed-url-safe" in prompt
     assert "arbitrary-metadata-safe" in prompt
     assert "compatible-colon-url-safe" in prompt
+    assert "full-label-parity-safe" in prompt
     for forbidden in (
         "semantic-trace-id-secret",
         "semantic-run-id-secret",
