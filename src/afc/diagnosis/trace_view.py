@@ -158,9 +158,6 @@ _COMPACT_SAFE_METADATA_LABELS = frozenset(
     for qualifier in _COMPACT_SAFE_METADATA_QUALIFIERS
     for terminal in _SAFE_METADATA_TERMINALS
 )
-_MAX_COMPACT_SAFE_METADATA_LABEL_LENGTH = max(
-    len(label) for label in _COMPACT_SAFE_METADATA_LABELS
-)
 _NONEMPTY_LINE = re.compile(r"[^\r\n]+")
 _COOKIE_PAIR_VALUE = re.compile(
     r"(?i)(?:^|;\s*)[!#$%&'*+\-.^_`|~0-9A-Za-z]+\s*="
@@ -341,51 +338,6 @@ def _is_credential_shaped_cookie_value(value: str) -> bool:
     )
 
 
-def _has_compact_safe_metadata_suffix(
-    chunks: tuple[tuple[str, ...], ...],
-    end: int,
-) -> bool:
-    compact_suffix = ""
-    for index in range(end - 1, -1, -1):
-        compact_suffix = f"{''.join(chunks[index])}{compact_suffix}"
-        if len(compact_suffix) > _MAX_COMPACT_SAFE_METADATA_LABEL_LENGTH:
-            break
-        if compact_suffix in _COMPACT_SAFE_METADATA_LABELS:
-            return True
-    return False
-
-
-def _last_safe_metadata_chunk_boundary(
-    chunks: tuple[tuple[str, ...], ...],
-) -> int:
-    last_safe_boundary = 0
-    active_core = False
-    metadata_tail_length = 0
-    previous_part: str | None = None
-
-    for chunk_index, chunk in enumerate(chunks[:-1], start=1):
-        for part in chunk:
-            is_core = _is_credential_core_end(previous_part, part)
-            if is_core:
-                active_core = True
-                metadata_tail_length = 0
-            elif active_core and part in _SAFE_METADATA_CHAIN_PARTS:
-                metadata_tail_length += 1
-            else:
-                active_core = False
-                metadata_tail_length = 0
-            previous_part = part
-
-        if _is_safe_metadata_tail(
-            metadata_tail_length,
-            chunk[-1],
-            active_core,
-        ) or _has_compact_safe_metadata_suffix(chunks, chunk_index):
-            last_safe_boundary = chunk_index
-
-    return last_safe_boundary
-
-
 def _compact_credential_suffix_parts(
     chunks: tuple[tuple[str, ...], ...],
     boundary: int,
@@ -404,8 +356,6 @@ def _compact_credential_suffix_parts(
 
 def _structural_credential_label_parts(
     label: str,
-    *,
-    may_include_previous_value: bool = False,
 ) -> tuple[str, ...] | None:
     chunks = tuple(
         parts
@@ -415,24 +365,9 @@ def _structural_credential_label_parts(
     if not chunks:
         return None
     full_parts = tuple(part for chunk in chunks for part in chunk)
-    full_candidate_is_sensitive = _is_credential_label_parts(full_parts)
-    if not may_include_previous_value:
-        if full_candidate_is_sensitive:
-            return full_parts
-        return _compact_credential_suffix_parts(chunks, 0)
-
-    boundary = _last_safe_metadata_chunk_boundary(chunks)
-    if boundary == 0:
-        if full_candidate_is_sensitive:
-            return full_parts
-        return _compact_credential_suffix_parts(chunks, 0)
-
-    suffix_parts = tuple(
-        part for chunk in chunks[boundary:] for part in chunk
-    )
-    if _is_credential_label_parts(suffix_parts):
-        return suffix_parts
-    return _compact_credential_suffix_parts(chunks, boundary)
+    if _is_credential_label_parts(full_parts):
+        return full_parts
+    return _compact_credential_suffix_parts(chunks, 0)
 
 
 def _redact_structural_value(prefix: str, value: str) -> str:
@@ -501,7 +436,7 @@ def _extract_structural_label(
     candidate_start: int,
     delimiter_index: int,
     url_context: tuple[int, int, int] | None,
-) -> tuple[str, bool]:
+) -> str:
     label_start = delimiter_index
     is_url_path_or_query = (
         url_context is not None and delimiter_index >= url_context[1]
@@ -516,9 +451,7 @@ def _extract_structural_label(
         ):
             break
         label_start -= 1
-    label = line[label_start:delimiter_index].strip()
-    starts_at_field_boundary = candidate_start == 0 or label_start > candidate_start
-    return label, starts_at_field_boundary
+    return line[label_start:delimiter_index].strip()
 
 
 def _sanitize_structural_credential_line(line: str) -> str:
@@ -526,6 +459,7 @@ def _sanitize_structural_credential_line(line: str) -> str:
     url_context_index = 0
     url_context: tuple[int, int, int] | None = None
     candidate_start = 0
+    candidate_starts_with_previous_value = False
     index = 0
     while index < len(line):
         if url_context is not None and index >= url_context[2]:
@@ -542,6 +476,22 @@ def _sanitize_structural_credential_line(line: str) -> str:
             url_context_index += 1
 
         character = line[index]
+        if candidate_starts_with_previous_value:
+            if _is_structural_label_whitespace(character):
+                while (
+                    index < len(line)
+                    and _is_structural_label_whitespace(line[index])
+                ):
+                    index += 1
+                candidate_start = index
+                candidate_starts_with_previous_value = False
+                continue
+            if _is_structural_field_boundary(character):
+                candidate_start = index + 1
+                candidate_starts_with_previous_value = False
+                index += 1
+                continue
+
         delimiter = _normalize_structural_delimiter(character)
         if delimiter is None:
             index += 1
@@ -552,7 +502,7 @@ def _sanitize_structural_credential_line(line: str) -> str:
             index += 1
             continue
 
-        label, starts_at_field_boundary = _extract_structural_label(
+        label = _extract_structural_label(
             line,
             candidate_start,
             index,
@@ -561,10 +511,7 @@ def _sanitize_structural_credential_line(line: str) -> str:
         value_start = index + 1
         while value_start < len(line) and line[value_start].isspace():
             value_start += 1
-        label_parts = _structural_credential_label_parts(
-            label,
-            may_include_previous_value=not starts_at_field_boundary,
-        )
+        label_parts = _structural_credential_label_parts(label)
         if label_parts is not None:
             value = line[value_start:]
             is_cookie_label = any(
@@ -574,6 +521,7 @@ def _sanitize_structural_credential_line(line: str) -> str:
                 return _redact_structural_value(line[:value_start], value)
 
         candidate_start = value_start
+        candidate_starts_with_previous_value = True
         index = value_start
     return line
 

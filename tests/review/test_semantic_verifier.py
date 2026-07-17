@@ -406,6 +406,11 @@ async def test_prompt_contains_only_independent_canonical_allowlist_data() -> No
                     f"tenant custom authorization\N{NO-BREAK SPACE}status"
                     f"\N{NO-BREAK SPACE}header={VALUE_SECRET}\n"
                     "token count status=visible full-label-parity-safe\n"
+                    f"safe=ok token count payload={VALUE_SECRET}\n"
+                    f"safe=custom_token_count\N{EM SPACE}authorization"
+                    f"\N{EM SPACE}status\N{EM SPACE}header={VALUE_SECRET}\n"
+                    "safe=custom_password_policy\N{NO-BREAK SPACE}field=ok "
+                    "previous-value-safe\n"
                     "A cookie: recipe; instructions remain safe\n"
                     "cookie: recipe; instructions remain safe\n"
                     "Browser cookie: recipe; instructions remain safe\n"
@@ -467,6 +472,7 @@ async def test_prompt_contains_only_independent_canonical_allowlist_data() -> No
     assert "arbitrary-metadata-safe" in serialized
     assert "compatible-colon-url-safe" in serialized
     assert "full-label-parity-safe" in serialized
+    assert "previous-value-safe" in serialized
     assert "Bearer of; good news" in serialized
     assert "trace-review-1" not in serialized
     assert "run-review-1" not in serialized

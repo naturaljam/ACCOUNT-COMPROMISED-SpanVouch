@@ -726,6 +726,16 @@ _UNICODE_ZS_SPACES = tuple(
         0x3000,
     )
 )
+_METADATA_QUALIFIED_CREDENTIAL_LABELS = (
+    "token count payload",
+    "authorization status header",
+    "password policy value",
+    "api key count material",
+    "access key id material",
+    "private key algorithm payload",
+    "client secret length material",
+    "cookie count payload",
+)
 
 
 def _assert_sanitizer_fixed_point(source: str, expected: str) -> None:
@@ -1309,16 +1319,7 @@ def test_arbitrary_prefix_metadata_stops_cross_field_label_contamination() -> No
 
 @pytest.mark.parametrize(
     "label",
-    (
-        "token count payload",
-        "authorization status header",
-        "password policy value",
-        "api key count material",
-        "access key id material",
-        "private key algorithm payload",
-        "client secret length material",
-        "cookie count payload",
-    ),
+    _METADATA_QUALIFIED_CREDENTIAL_LABELS,
 )
 def test_structural_labels_preserve_mapping_parity_after_metadata_terminals(
     label: str,
@@ -1330,6 +1331,67 @@ def test_structural_labels_preserve_mapping_parity_after_metadata_terminals(
         _assert_sanitizer_fixed_point(
             f"{prefix}{label}=secret-one",
             f"{prefix}{label}={SECRET_REDACTION}",
+        )
+
+
+@pytest.mark.parametrize("label", _METADATA_QUALIFIED_CREDENTIAL_LABELS)
+def test_previous_assignment_values_do_not_hide_full_credential_labels(
+    label: str,
+) -> None:
+    boundaries = (
+        *_UNICODE_ZS_SPACES,
+        "\t",
+        ";",
+        "; ",
+        "|",
+        " | ",
+        "\N{FULLWIDTH SEMICOLON}",
+        "\N{IDEOGRAPHIC COMMA}",
+    )
+
+    assert sanitize_diagnostic_value({label: "secret-one"}) == {
+        label: SECRET_REDACTION
+    }
+    for previous_value, boundary in product(
+        ("ok", "custom_token_count"),
+        boundaries,
+    ):
+        prefix = f"safe={previous_value}{boundary}"
+        _assert_sanitizer_fixed_point(
+            f"{prefix}{label}=secret-one",
+            f"{prefix}{label}={SECRET_REDACTION}",
+        )
+
+
+def test_previous_safe_metadata_values_do_not_contaminate_next_safe_field() -> None:
+    boundaries = (
+        *_UNICODE_ZS_SPACES,
+        "\t",
+        ";",
+        " | ",
+        "\N{FULLWIDTH SEMICOLON}",
+    )
+    for metadata_label, boundary in product(
+        (
+            "custom_token_count",
+            "custom_password_policy",
+            "tenant_refresh_token_rotation_status",
+        ),
+        boundaries,
+    ):
+        source = f"safe={metadata_label}{boundary}field=ok"
+        _assert_sanitizer_fixed_point(source, source)
+
+
+def test_previous_values_keep_compact_alias_fallback_for_the_next_label() -> None:
+    for space, compact_alias in product(
+        _UNICODE_ZS_SPACES,
+        ("userpassword", "clientsecretstring", "sessiontokenvalue"),
+    ):
+        label = f"worker{space}{compact_alias}"
+        _assert_sanitizer_fixed_point(
+            f"safe=ok{space}{label}=secret-one",
+            f"safe=ok{space}{label}={SECRET_REDACTION}",
         )
 
 
@@ -1388,6 +1450,15 @@ def test_full_structural_candidate_scan_is_linear_with_many_chunks() -> None:
 
     assert sanitized == f"{label}={SECRET_REDACTION}"
     assert sanitize_diagnostic_value(sanitized) == sanitized
+
+
+def test_previous_assignment_full_candidate_scan_is_linear_with_many_chunks() -> None:
+    label = " ".join((*(("context",) * 25_000), "token", "count", "payload"))
+    source = f"safe=ok {label}=secret-one"
+    expected = f"safe=ok {label}={SECRET_REDACTION}"
+
+    assert sanitize_diagnostic_value(source) == expected
+    assert sanitize_diagnostic_value(expected) == expected
 
 
 def test_nfkc_url_scheme_colons_preserve_spelling_and_url_boundaries() -> None:
@@ -1556,7 +1627,12 @@ def test_trace_view_preserves_safe_urls_and_redacts_punctuation_labels() -> None
                     f"token count payload={VALUE_SECRET}\n"
                     f"tenant custom authorization\N{NO-BREAK SPACE}status"
                     f"\N{NO-BREAK SPACE}header={VALUE_SECRET}\n"
-                    "token count status=visible full-label-parity-safe"
+                    "token count status=visible full-label-parity-safe\n"
+                    f"safe=ok token count payload={VALUE_SECRET}\n"
+                    f"safe=custom_token_count\N{EM SPACE}authorization"
+                    f"\N{EM SPACE}status\N{EM SPACE}header={VALUE_SECRET}\n"
+                    "safe=custom_password_policy\N{NO-BREAK SPACE}field=ok "
+                    "previous-value-safe"
                 ),
             }
         }
@@ -1584,4 +1660,5 @@ def test_trace_view_preserves_safe_urls_and_redacts_punctuation_labels() -> None
     assert "arbitrary-metadata-safe" in message
     assert "compatible-colon-url-safe" in message
     assert "full-label-parity-safe" in message
+    assert "previous-value-safe" in message
     assert sanitize_diagnostic_trace_view(view) == view

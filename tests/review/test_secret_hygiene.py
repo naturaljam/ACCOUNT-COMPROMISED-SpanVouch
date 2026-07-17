@@ -206,6 +206,11 @@ def _trace_with_value_secrets() -> TraceIR:
                     f"tenant custom authorization\N{NO-BREAK SPACE}status"
                     f"\N{NO-BREAK SPACE}header={SENTINEL_KEY}\n"
                     "token count status=visible full-label-parity-safe\n"
+                    f"safe=ok token count payload={SENTINEL_KEY}\n"
+                    f"safe=custom_token_count\N{EM SPACE}authorization"
+                    f"\N{EM SPACE}status\N{EM SPACE}header={SENTINEL_KEY}\n"
+                    "safe=custom_password_policy\N{NO-BREAK SPACE}field=ok "
+                    "previous-value-safe\n"
                     "Bearer Qaz; HTTP 401\n"
                     "A cookie: recipe; instructions remain safe\n"
                     "cookie: recipe; instructions remain safe\n"
@@ -422,6 +427,7 @@ def test_allowed_trace_value_secrets_never_reach_sqlite_or_public_aggregate(
     assert "arbitrary-metadata-safe" in view_json[0]
     assert "compatible-colon-url-safe" in view_json[0]
     assert "full-label-parity-safe" in view_json[0]
+    assert "previous-value-safe" in view_json[0]
     assert "Bearer of; good news" in view_json[0]
 
 
