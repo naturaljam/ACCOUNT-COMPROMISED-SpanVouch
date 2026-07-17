@@ -26,6 +26,7 @@ _PUBLIC_ERROR_CODES = frozenset(
         "review_conflict",
         "review_invalid",
         "review_not_found",
+        "revision_provider_failed",
         "trace_not_found",
         "transport_error",
         "upstream_http_error",
@@ -34,9 +35,18 @@ _PUBLIC_ERROR_CODES = frozenset(
 
 
 class _ApiError(Exception):
-    def __init__(self, status_code: int, code: str) -> None:
+    def __init__(
+        self,
+        status_code: int,
+        code: str,
+        *,
+        case_id: str | None = None,
+        retryable: bool | None = None,
+    ) -> None:
         self.status_code = status_code
         self.code = code
+        self.case_id = case_id
+        self.retryable = retryable
 
 
 class _TransportError(Exception):
@@ -100,20 +110,24 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _error_code(response: httpx.Response) -> str:
+def _error_detail(response: httpx.Response) -> tuple[str, str | None, bool | None]:
     try:
         payload = response.json()
     except (json.JSONDecodeError, ValueError):
-        return "api_error"
+        return "api_error", None, None
     if not isinstance(payload, dict):
-        return "api_error"
+        return "api_error", None, None
     detail = payload.get("detail")
     if not isinstance(detail, dict):
-        return "api_error"
+        return "api_error", None, None
     code = detail.get("code")
     if isinstance(code, str) and code in _PUBLIC_ERROR_CODES:
-        return code
-    return "api_error"
+        case_id = detail.get("case_id")
+        retryable = detail.get("retryable")
+        if isinstance(case_id, str) and case_id and isinstance(retryable, bool):
+            return code, case_id, retryable
+        return code, None, None
+    return "api_error", None, None
 
 
 def _request(
@@ -130,7 +144,13 @@ def _request(
     except httpx.RequestError as error:
         raise _TransportError from error
     if response.status_code >= 400:
-        raise _ApiError(response.status_code, _error_code(response))
+        code, case_id, retryable = _error_detail(response)
+        raise _ApiError(
+            response.status_code,
+            code,
+            case_id=case_id,
+            retryable=retryable,
+        )
     try:
         return response.json()
     except (json.JSONDecodeError, ValueError) as error:
@@ -185,7 +205,7 @@ def _command_request(
         return "GET", f"/v1/diagnosis-reviews/{quote(args.case_id, safe='')}", _NO_BODY
     if args.command == "resume":
         path = f"/v1/diagnosis-reviews/{quote(args.case_id, safe='')}/resume"
-        return "POST", path, _NO_BODY
+        return "POST", path, {"allow_live_api": _allows_live(args)}
 
     body: dict[str, object] = {
         "action": args.action,
@@ -203,6 +223,24 @@ def _command_request(
 
 def _canonical_json(payload: object) -> str:
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _resume_can_call_live(payload: object) -> bool:
+    if not isinstance(payload, dict):
+        raise _InvalidResponseError
+    case = payload.get("case")
+    if not isinstance(case, dict):
+        raise _InvalidResponseError
+    status = case.get("status")
+    verification_mode = case.get("verification_mode")
+    diagnoser = case.get("diagnoser")
+    if not all(isinstance(value, str) for value in (status, verification_mode, diagnoser)):
+        raise _InvalidResponseError
+    if status in {"pending_verification", "verifying"}:
+        return verification_mode == "hybrid"
+    if status in {"revision_requested", "revising"}:
+        return diagnoser == "deepseek"
+    return False
 
 
 def main(
@@ -241,16 +279,33 @@ def main(
             timeout=_TIMEOUT,
             transport=transport,
         ) as client:
+            if args.command == "resume" and not _allows_live(args):
+                show_path = f"v1/diagnosis-reviews/{quote(args.case_id, safe='')}"
+                case_payload = _request(client, "GET", show_path)
+                if _resume_can_call_live(case_payload):
+                    print(
+                        "afc-review: live API use requires --allow-live-api",
+                        file=errors,
+                    )
+                    return 2
             response_payload = _request(client, method, path.lstrip("/"), payload)
     except httpx.InvalidURL:
         print("afc-review: invalid API URL", file=errors)
         return 2
     except _ApiError as error:
-        print(
-            "afc-review: API request failed "
-            f"(status={error.status_code}, code={error.code})",
-            file=errors,
-        )
+        if error.case_id is not None and error.retryable is not None:
+            print(
+                "afc-review: API request failed "
+                f"(code={error.code}, case_id={error.case_id}, "
+                f"retryable={str(error.retryable).lower()})",
+                file=errors,
+            )
+        else:
+            print(
+                "afc-review: API request failed "
+                f"(status={error.status_code}, code={error.code})",
+                file=errors,
+            )
         return 3 if 400 <= error.status_code < 500 else 4
     except _TransportError:
         print("afc-review: API transport failed", file=errors)

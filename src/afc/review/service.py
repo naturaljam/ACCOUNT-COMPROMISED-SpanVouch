@@ -29,11 +29,13 @@ from afc.review.models import (
     HumanDecisionDraft,
     HumanReviewDecision,
     ReviewInputSnapshot,
+    ReviewRuntimeBundle,
     ReviewStatus,
     RevisionOrigin,
     VerificationInput,
     VerificationMode,
     VerifierKind,
+    VerifierReport,
     VerifierVerdict,
     canonical_json,
     canonical_sha256,
@@ -50,6 +52,15 @@ def _require_aware_utc(value: datetime) -> datetime:
     if value.tzinfo is None or offset is None or offset.total_seconds() != 0:
         raise ValueError("clock must return an aware UTC timestamp")
     return value
+
+
+def _resume_can_call_live(runtime: ReviewRuntimeBundle) -> bool:
+    case = runtime.case
+    if case.status in {ReviewStatus.PENDING_VERIFICATION, ReviewStatus.VERIFYING}:
+        return case.verification_mode is VerificationMode.HYBRID
+    if case.status in {ReviewStatus.REVISION_REQUESTED, ReviewStatus.REVISING}:
+        return case.diagnoser is DiagnoserKind.DEEPSEEK
+    return False
 
 
 def _build_corrected_report(
@@ -159,8 +170,9 @@ class ReviewService:
                 "verification_mode": verification_mode.value,
             }
         )
+        idempotency_scope = f"review.create:{trace.trace_id}"
         replay = await self._repository.replay_detail(
-            "review.create",
+            idempotency_scope,
             idempotency_key,
             request_sha256,
             result_type="review_case",
@@ -195,7 +207,7 @@ class ReviewService:
             target_status=ReviewStatus.PENDING_VERIFICATION,
             verification_mode=verification_mode,
             diagnoser=diagnoser,
-            idempotency_scope="review.create",
+            idempotency_scope=idempotency_scope,
             idempotency_key=idempotency_key,
             request_sha256=request_sha256,
             event_id=self._id_factory(),
@@ -214,7 +226,12 @@ class ReviewService:
     async def get(self, case_id: str) -> DiagnosisReviewDetail:
         return await self._repository.get_detail(case_id)
 
-    async def resume(self, case_id: str) -> DiagnosisReviewDetail:
+    async def resume(
+        self, case_id: str, *, allow_live_api: bool = False
+    ) -> DiagnosisReviewDetail:
+        runtime = await self._repository.load_runtime(case_id)
+        if _resume_can_call_live(runtime) and not allow_live_api:
+            raise ReviewConflictError("live API resume requires explicit consent")
         await self._workflow.resume(case_id)
         return await self._repository.get_detail(case_id)
 
@@ -248,6 +265,7 @@ class ReviewService:
 
         now = self._now()
         correction_revision: DiagnosisRevision | None = None
+        correction_verifier_report: VerifierReport | None = None
         if decision.action is DecisionAction.CORRECT:
             if decision.correction is None:
                 raise ReviewValidationError("correct requires a complete correction")
@@ -286,6 +304,14 @@ class ReviewService:
                 provenance=report.provenance,
                 created_at=now,
             )
+            if verification.report_sha256 != correction_revision.report_sha256:
+                raise ReviewValidationError("human correction verification binding failed")
+            correction_verifier_report = VerifierReport.model_validate(
+                {
+                    **verification.model_dump(),
+                    "revision_number": correction_revision.revision_number,
+                }
+            )
 
         decision_id = self._id_factory()
         human_decision = HumanReviewDecision(
@@ -305,6 +331,7 @@ class ReviewService:
             target_status=target_status,
             decision=human_decision,
             correction_revision=correction_revision,
+            correction_verifier_report=correction_verifier_report,
             idempotency_scope=f"review.decision:{case_id}",
             idempotency_key=idempotency_key,
             request_sha256=request_sha256,

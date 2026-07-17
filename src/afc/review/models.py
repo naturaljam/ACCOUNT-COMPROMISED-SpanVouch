@@ -192,6 +192,7 @@ class OperationalErrorMetadata(ReviewModel):
 class VerifierReport(ReviewModel):
     verifier_run_id: str = Field(min_length=1)
     revision_number: int = Field(ge=0)
+    report_sha256: str = Field(pattern=SHA256_PATTERN)
     verifier_kind: VerifierKind
     verdict: VerifierVerdict
     findings: tuple[VerificationFinding, ...] = ()

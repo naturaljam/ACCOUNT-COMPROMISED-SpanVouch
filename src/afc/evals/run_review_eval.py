@@ -12,11 +12,10 @@ from afc.invariants.engine import InvariantEngine
 from afc.invariants.supportlab import supportlab_rules
 from afc.review.evidence_verifier import EvidenceVerifier
 from afc.review.models import canonical_json
+from afc.review.policy import DEFAULT_REVIEW_POLICY_VERSION as DEFAULT_POLICY_VERSION
 from afc.review.protocols import Verifier
 from afc.review.semantic_verifier import SemanticVerifier
 from afc.trace_ir.models import TraceIR
-
-DEFAULT_POLICY_VERSION = "review-policy-v1"
 
 
 def _load_traces(path: Path) -> tuple[TraceIR, ...]:

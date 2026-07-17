@@ -375,6 +375,33 @@ async def test_no_failure_conflicts_with_supported_hard_failure() -> None:
     assert report.evidence_gaps == ()
 
 
+async def test_abstention_conflicts_with_supported_hard_failure() -> None:
+    trace = load_trace("wrong_tool-01")
+    view = DiagnosticTraceView.from_trace(trace)
+    diagnosis = DiagnosisReport(
+        trace_id=trace.trace_id,
+        run_id=trace.run_id,
+        diagnoser=DiagnoserKind.RULES,
+        status=DiagnosisStatus.ABSTAINED,
+        confidence=0.0,
+        abstain_reason=AbstainReason.INSUFFICIENT_EVIDENCE,
+        provenance=DiagnosisProvenance(
+            taxonomy_version="1.0",
+            diagnoser_version="review-test-rules-v1",
+            ruleset_version="review-test-rules-v1",
+        ),
+    )
+
+    report = await _verifier().verify(_input(view, diagnosis))
+
+    assert tuple(finding.code for finding in report.findings) == (
+        FindingCode.DIAGNOSIS_CONFLICT,
+    )
+    assert report.findings[0].revisable is False
+    assert report.verdict is VerifierVerdict.REVIEW_REQUIRED
+    assert report.evidence_gaps == ()
+
+
 async def test_loop_critical_span_must_be_last_repeated_span() -> None:
     view = _view(
         outcome="step_limit",

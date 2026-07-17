@@ -37,6 +37,7 @@ _WORKFLOW_PROVIDER_CODES = _REQUEST_ERROR_CODES | {
     "provider_protocol_error",
     "provider_request_error",
     "provider_error",
+    "revision_provider_failed",
 }
 
 
@@ -59,6 +60,12 @@ class DiagnosisReviewDecisionRequest(HumanDecisionDraft):
         return HumanDecisionDraft.model_validate(
             self.model_dump(exclude={"idempotency_key"})
         )
+
+
+class DiagnosisReviewResumeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    allow_live_api: bool = False
 
 
 def _error_response(error: Exception) -> JSONResponse:
@@ -152,10 +159,13 @@ def build_diagnosis_review_router(
         response_model=DiagnosisReviewDetail,
     )
     async def resume_diagnosis_review(
-        case_id: str,
+        case_id: str, request: DiagnosisReviewResumeRequest | None = None
     ) -> DiagnosisReviewDetail | JSONResponse:
         try:
-            return await review_service.resume(case_id)
+            return await review_service.resume(
+                case_id,
+                allow_live_api=request.allow_live_api if request is not None else False,
+            )
         except Exception as error:
             return _error_response(error)
 

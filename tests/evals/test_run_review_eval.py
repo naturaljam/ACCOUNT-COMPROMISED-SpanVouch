@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+import afc.evals.run_review_eval as review_eval_module
 from afc.diagnosis.errors import ProviderRequestError
 from afc.diagnosis.models import ProviderUsage
 from afc.diagnosis.protocols import ChatMessage, GenerationConfig, ProviderResponse
@@ -12,6 +13,7 @@ from afc.review.models import (
     VerificationInput,
     VerifierKind,
     VerifierReport,
+    VerifierVerdict,
     canonical_json,
 )
 from afc.review.semantic_verifier import SemanticVerifier
@@ -101,6 +103,32 @@ def test_default_deterministic_cli_does_not_construct_live_provider(
     monkeypatch.setattr("afc.evals.run_review_eval.DeepSeekProvider", forbidden_provider)
 
     assert main(["--output", str(tmp_path / "report.json")]) == 0
+
+
+def test_default_deterministic_cli_fails_a_stable_degraded_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = review_eval_module.EvidenceVerifier
+
+    class DegradedVerifier:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self._delegate = original(*args, **kwargs)
+            self.version_fingerprint = self._delegate.version_fingerprint
+
+        async def verify(self, input_: VerificationInput) -> VerifierReport:
+            report = await self._delegate.verify(input_)
+            if input_.report.run_id == "clean-01":
+                return report.model_copy(update={"verdict": VerifierVerdict.REVIEW_REQUIRED})
+            return report
+
+    monkeypatch.setattr(review_eval_module, "EvidenceVerifier", DegradedVerifier)
+    output = tmp_path / "degraded.json"
+
+    assert main(["--output", str(output)]) == 1
+    report = ReviewEvaluationReport.model_validate_json(output.read_text(encoding="utf-8"))
+    assert report.status == "failed"
+    assert report.metrics.valid_report_pass_rate < 1.0
+    assert report.metrics.operational_error_rate == 0.0
 
 
 def test_hybrid_cli_runs_only_allowlisted_candidates_and_reports_semantic_metrics(

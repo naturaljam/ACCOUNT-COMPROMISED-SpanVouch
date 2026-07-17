@@ -140,6 +140,15 @@ def _different_value_sha256(report: DiagnosisReport) -> VerificationInput:
     return _verification_input(_construct_report(report, evidence=(evidence,)))
 
 
+def _coordinated_evidence_id_rename(report: DiagnosisReport) -> VerificationInput:
+    forged_id = "ev-coordinated-forgery"
+    evidence = _construct_evidence(report.evidence[0], evidence_id=forged_id)
+    claim = _construct_claim(report.causal_chain[0], evidence_ids=(forged_id,))
+    return _verification_input(
+        _construct_report(report, evidence=(evidence,), causal_chain=(claim,))
+    )
+
+
 def _unknown_claim_evidence(report: DiagnosisReport) -> VerificationInput:
     claim = _construct_claim(report.causal_chain[0], evidence_ids=("ev-unknown",))
     return _verification_input(_construct_report(report, causal_chain=(claim,)))
@@ -178,6 +187,7 @@ def verifier() -> EvidenceVerifier:
         (_unknown_selector, FindingCode.INVALID_SELECTOR, True),
         (_different_observed_value, FindingCode.EVIDENCE_VALUE_MISMATCH, False),
         (_different_value_sha256, FindingCode.EVIDENCE_HASH_MISMATCH, False),
+        (_coordinated_evidence_id_rename, FindingCode.INVALID_VERIFIER_OUTPUT, False),
         (_unknown_claim_evidence, FindingCode.CLAIM_NOT_GROUNDED, True),
         (_claim_without_evidence, FindingCode.CLAIM_NOT_GROUNDED, True),
         (

@@ -42,6 +42,18 @@ class FailingReviewService:
         raise self.error
 
 
+class RecordingResumeService(FailingReviewService):
+    def __init__(self) -> None:
+        super().__init__(ReviewConflictError("stop after boundary"))
+        self.resume_calls: list[tuple[str, bool]] = []
+
+    async def resume(
+        self, case_id: str, *, allow_live_api: bool = False
+    ) -> object:
+        self.resume_calls.append((case_id, allow_live_api))
+        raise self.error
+
+
 def _client(error: Exception, tmp_path: Path) -> TestClient:
     return TestClient(
         create_app(
@@ -116,6 +128,17 @@ def test_stable_sanitized_review_error_mapping(
             503,
             {"code": "transport_error", "case_id": "case-1", "retryable": True},
         ),
+        (
+            ReviewWorkflowProviderError(
+                "case-1", "revision_provider_failed", retryable=True
+            ),
+            503,
+            {
+                "code": "revision_provider_failed",
+                "case_id": "case-1",
+                "retryable": True,
+            },
+        ),
     ],
 )
 def test_durable_provider_errors_have_minimal_stable_body(
@@ -129,6 +152,31 @@ def test_durable_provider_errors_have_minimal_stable_body(
 
     assert response.status_code == expected_status
     assert response.json() == {"detail": expected}
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    ((None, False), ({}, False), ({"allow_live_api": True}, True)),
+)
+def test_resume_consent_is_explicit_at_the_http_application_boundary(
+    body: dict[str, object] | None,
+    expected: bool,
+    tmp_path: Path,
+) -> None:
+    service = RecordingResumeService()
+    application = create_app(
+        trace_repository=InMemoryTraceRepository(),
+        review_service=service,  # type: ignore[arg-type]
+        review_database=tmp_path / "review.db",
+    )
+    with TestClient(application) as client:
+        if body is None:
+            response = client.post("/v1/diagnosis-reviews/case-1/resume")
+        else:
+            response = client.post("/v1/diagnosis-reviews/case-1/resume", json=body)
+
+    assert response.status_code == 409
+    assert service.resume_calls == [("case-1", expected)]
 
 
 @pytest.mark.parametrize(

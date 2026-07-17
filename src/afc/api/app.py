@@ -23,6 +23,7 @@ from afc.diagnosis.service import DiagnosisService
 from afc.invariants.engine import InvariantEngine
 from afc.invariants.supportlab import supportlab_rules
 from afc.review.evidence_verifier import EvidenceVerifier
+from afc.review.policy import DEFAULT_REVIEW_POLICY_VERSION
 from afc.review.protocols import ReviewRepository, Verifier
 from afc.review.reviser import DiagnosisReviser
 from afc.review.semantic_verifier import SemanticVerifier
@@ -57,7 +58,7 @@ def _deterministic_runtime() -> tuple[dict[DiagnoserKind, Diagnoser], EvidenceVe
     }
     deterministic_verifier = EvidenceVerifier(
         engine,
-        policy_version="supportlab-review-v1",
+        policy_version=DEFAULT_REVIEW_POLICY_VERSION,
     )
     return diagnosers, deterministic_verifier
 

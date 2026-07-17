@@ -201,10 +201,15 @@ class RecordingRepository:
         revisions = self.detail.revisions + (
             (command.correction_revision,) if command.correction_revision is not None else ()
         )
+        verifier_reports = self.detail.verifier_reports + (
+            (command.correction_verifier_report,)
+            if command.correction_verifier_report is not None
+            else ()
+        )
         self.detail = DiagnosisReviewDetail(
             case=terminal_case,
             revisions=revisions,
-            verifier_reports=self.detail.verifier_reports,
+            verifier_reports=verifier_reports,
             decision=command.decision,
         )
         self._decision_keys[key] = (command.request_sha256, self.detail)
@@ -235,7 +240,11 @@ class RecordingVerifier:
 
     async def verify(self, input_: Any) -> Any:
         self.inputs.append(input_)
-        return make_verifier_report(verdict=self.verdict)
+        report_sha256 = canonical_sha256(input_.report)
+        return make_verifier_report(
+            verdict=self.verdict,
+            report_sha256=report_sha256,
+        ).model_copy(update={"verifier_run_id": f"verifier-recording-{report_sha256}"})
 
 
 class NoopWorkflow:
@@ -391,15 +400,14 @@ async def test_create_restart_preflight_replays_without_diagnosis_or_id_allocati
 
 
 @pytest.mark.parametrize(
-    ("run_id", "diagnoser", "mode"),
+    ("diagnoser", "mode"),
     [
-        ("policy_violation-02", DiagnoserKind.RULES, VerificationMode.DETERMINISTIC),
-        ("policy_violation-01", DiagnoserKind.DEEPSEEK, VerificationMode.DETERMINISTIC),
-        ("policy_violation-01", DiagnoserKind.RULES, VerificationMode.HYBRID),
+        (DiagnoserKind.DEEPSEEK, VerificationMode.DETERMINISTIC),
+        (DiagnoserKind.RULES, VerificationMode.HYBRID),
     ],
 )
 async def test_create_changed_fingerprint_conflicts_before_any_diagnoser(
-    run_id: str, diagnoser: DiagnoserKind, mode: VerificationMode
+    diagnoser: DiagnoserKind, mode: VerificationMode
 ) -> None:
     repository = RecordingRepository()
     service, _, _, _ = make_service(repository)
@@ -420,31 +428,38 @@ async def test_create_changed_fingerprint_conflicts_before_any_diagnoser(
 
     with pytest.raises(ReviewConflictError, match="idempotency"):
         await restarted.create(
-            load_trace(run_id),
+            load_trace("policy_violation-01"),
             diagnoser=diagnoser,
             verification_mode=mode,
             idempotency_key="preflight-conflict",
         )
 
 
-async def test_create_rejects_same_key_with_changed_trace_or_mode() -> None:
+async def test_create_key_is_scoped_to_trace_but_changed_payload_on_same_trace_conflicts() -> None:
     repository = RecordingRepository()
-    service, _, _, _ = make_service(repository)
-    await create_case(service, repository, key="collision")
+    service, diagnoser, workflow, _ = make_service(repository)
+    first = await create_case(service, repository, key="shared")
 
-    with pytest.raises(ReviewConflictError, match="idempotency"):
-        await service.create(
-            load_trace("policy_violation-02"),
-            diagnoser=DiagnoserKind.RULES,
-            verification_mode=VerificationMode.DETERMINISTIC,
-            idempotency_key="collision",
-        )
+    second = await service.create(
+        load_trace("policy_violation-02"),
+        diagnoser=DiagnoserKind.RULES,
+        verification_mode=VerificationMode.DETERMINISTIC,
+        idempotency_key="shared",
+    )
+
+    assert second.case.trace_id != first.case.trace_id
+    assert diagnoser.calls == 2
+    assert workflow.runs == [first.case.case_id, second.case.case_id]
+    assert {command.idempotency_scope for command in repository.create_commands} == {
+        f"review.create:{first.case.trace_id}",
+        f"review.create:{second.case.trace_id}",
+    }
     with pytest.raises(ReviewConflictError, match="idempotency"):
         await service.create(
             load_trace("policy_violation-01"),
             diagnoser=DiagnoserKind.RULES,
             verification_mode=VerificationMode.HYBRID,
-            idempotency_key="collision",
+            idempotency_key="shared",
         )
 
 
@@ -463,6 +478,52 @@ async def test_get_and_resume_delegate_to_repository_and_workflow() -> None:
 
     assert await service.get(created.case.case_id) == created
     assert await service.resume(created.case.case_id) == created
+    assert workflow.resumes == [created.case.case_id]
+
+
+@pytest.mark.parametrize(
+    ("status", "mode", "diagnoser"),
+    (
+        (
+            ReviewStatus.PENDING_VERIFICATION,
+            VerificationMode.HYBRID,
+            DiagnoserKind.RULES,
+        ),
+        (ReviewStatus.VERIFYING, VerificationMode.HYBRID, DiagnoserKind.RULES),
+        (
+            ReviewStatus.REVISION_REQUESTED,
+            VerificationMode.DETERMINISTIC,
+            DiagnoserKind.DEEPSEEK,
+        ),
+        (
+            ReviewStatus.REVISING,
+            VerificationMode.DETERMINISTIC,
+            DiagnoserKind.DEEPSEEK,
+        ),
+    ),
+)
+async def test_resume_requires_explicit_consent_before_paid_capable_work(
+    status: ReviewStatus,
+    mode: VerificationMode,
+    diagnoser: DiagnoserKind,
+) -> None:
+    repository = RecordingRepository()
+    service, _, workflow, _ = make_service(repository)
+    created = await create_case(service, repository)
+    assert repository.detail is not None
+    repository.detail = repository.detail.model_copy(
+        update={
+            "case": repository.detail.case.model_copy(
+                update={"status": status, "verification_mode": mode, "diagnoser": diagnoser}
+            )
+        }
+    )
+
+    with pytest.raises(ReviewConflictError, match="live API"):
+        await service.resume(created.case.case_id)
+    assert workflow.resumes == []
+
+    await service.resume(created.case.case_id, allow_live_api=True)
     assert workflow.resumes == [created.case.case_id]
 
 
@@ -651,7 +712,15 @@ async def test_correction_and_idempotency_are_atomic_with_sqlite(tmp_path: Path)
         )
 
     await repository.claim_work(_claim_command())
-    await repository.append_verifier_run(_verifier_command())
+    initial_verification = _verifier_command()
+    initial_verification = initial_verification.model_copy(
+        update={
+            "report": initial_verification.report.model_copy(
+                update={"report_sha256": created.revisions[0].report_sha256}
+            )
+        }
+    )
+    await repository.append_verifier_run(initial_verification)
     await repository.route_to_human(_route_command())
     draft = HumanDecisionDraft(
         action=DecisionAction.CORRECT,
@@ -670,6 +739,14 @@ async def test_correction_and_idempotency_are_atomic_with_sqlite(tmp_path: Path)
     assert len(verifier.inputs) == 1
     assert corrected.case.status is ReviewStatus.CORRECTED
     assert len(corrected.revisions) == 2
+    assert len(corrected.verifier_reports) == 2
+    correction_verification = corrected.verifier_reports[-1]
+    assert correction_verification.revision_number == 1
+    assert correction_verification.verifier_kind is VerifierKind.DETERMINISTIC
+    assert correction_verification.verdict is VerifierVerdict.VERIFIED
+    assert corrected.case.deterministic_run_id == correction_verification.verifier_run_id
+    assert corrected.case.semantic_run_id is None
+    assert corrected.case.composite_verdict is VerifierVerdict.VERIFIED
 
     changed = draft.model_copy(update={"reviewer_label": "reviewer-b"})
     with pytest.raises(ReviewConflictError, match="idempotency"):

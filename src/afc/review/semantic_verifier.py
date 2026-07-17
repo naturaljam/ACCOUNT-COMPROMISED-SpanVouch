@@ -153,7 +153,12 @@ class SemanticVerifier:
         run_id = _stable_id("verifier", run_seed)
         if response.finish_reason != "stop" or not response.content.strip():
             return self._invalid_report(
-                run_id, provenance, response.usage, started_at, completed_at
+                run_id,
+                input_.report_sha256,
+                provenance,
+                response.usage,
+                started_at,
+                completed_at,
             )
         try:
             draft = _SemanticDraft.model_validate_json(response.content)
@@ -169,7 +174,12 @@ class SemanticVerifier:
             )
         except (KeyError, ValidationError, ValueError):
             return self._invalid_report(
-                run_id, provenance, response.usage, started_at, completed_at
+                run_id,
+                input_.report_sha256,
+                provenance,
+                response.usage,
+                started_at,
+                completed_at,
             )
 
     @staticmethod
@@ -223,6 +233,7 @@ class SemanticVerifier:
         )
         return self._invalid_report(
             run_id,
+            input_.report_sha256,
             provenance,
             None,
             input_.snapshot.created_at,
@@ -368,6 +379,7 @@ class SemanticVerifier:
         return VerifierReport(
             verifier_run_id=run_id,
             revision_number=0,
+            report_sha256=input_.report_sha256,
             verifier_kind=self.kind,
             verdict=draft.verdict,
             findings=tuple(findings),
@@ -383,6 +395,7 @@ class SemanticVerifier:
     def _invalid_report(
         self,
         run_id: str,
+        report_sha256: str,
         provenance: VerifierProvenance,
         usage: ProviderUsage | None,
         started_at: datetime,
@@ -401,6 +414,7 @@ class SemanticVerifier:
         return VerifierReport(
             verifier_run_id=run_id,
             revision_number=0,
+            report_sha256=report_sha256,
             verifier_kind=self.kind,
             verdict=VerifierVerdict.REVIEW_REQUIRED,
             findings=(finding,),

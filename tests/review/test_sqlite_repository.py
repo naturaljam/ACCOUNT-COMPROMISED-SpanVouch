@@ -195,6 +195,49 @@ def _decision_command(
     )
 
 
+def _correction_decision_command() -> ApplyHumanDecision:
+    original = make_revision()
+    correction = make_revision(
+        revision_number=1,
+        origin=RevisionOrigin.HUMAN_CORRECTION,
+        previous_report_sha256=original.report_sha256,
+    )
+    verifier_report = make_verifier_report(
+        report_sha256=correction.report_sha256
+    ).model_copy(
+        update={
+            "verifier_run_id": "verifier-human-correction-1",
+            "revision_number": correction.revision_number,
+        }
+    )
+    decision = HumanReviewDecision(
+        decision_id="decision-correction",
+        case_id="case-review-1",
+        action=DecisionAction.CORRECT,
+        expected_version=3,
+        reviewer_label="reviewer-a",
+        correction=make_correction_draft(),
+        resulting_revision_id=correction.revision_id,
+        created_at=NOW + timedelta(seconds=3),
+    )
+    return ApplyHumanDecision(
+        case_id="case-review-1",
+        expected_version=3,
+        prior_status=ReviewStatus.AWAITING_HUMAN_REVIEW,
+        target_status=ReviewStatus.CORRECTED,
+        decision=decision,
+        correction_revision=correction,
+        correction_verifier_report=verifier_report,
+        idempotency_scope="review.decision:case-review-1",
+        idempotency_key="decision-key-correction",
+        request_sha256="c" * 64,
+        event_id="event-human-correction",
+        event_type=WorkflowEventType.HUMAN_CORRECTED,
+        event_metadata_json=canonical_json({"reviewer": "reviewer-a"}),
+        occurred_at=decision.created_at,
+    )
+
+
 def _revalidate(command: BaseModel, updates: dict[str, object]) -> BaseModel:
     return type(command)(**{**command.model_dump(), **updates})
 
@@ -813,6 +856,9 @@ async def test_human_decision_requires_awaiting_human_review_and_matching_correc
             target_status=ReviewStatus.CORRECTED,
             decision=decision,
             correction_revision=correction_revision,
+            correction_verifier_report=make_verifier_report(
+                report_sha256=correction_revision.report_sha256
+            ).model_copy(update={"revision_number": correction_revision.revision_number}),
             idempotency_scope="review.decision:case-review-1",
             idempotency_key="decision-key-correction",
             request_sha256="b" * 64,
@@ -851,6 +897,9 @@ def test_correction_binding_uses_decision_action_enum_identity(
         target_status=ReviewStatus.CORRECTED,
         decision=decision,
         correction_revision=correction_revision,
+        correction_verifier_report=make_verifier_report(
+            report_sha256=correction_revision.report_sha256
+        ).model_copy(update={"revision_number": correction_revision.revision_number}),
         idempotency_scope="review.decision:case-review-1",
         idempotency_key="decision-key-correction",
         request_sha256="c" * 64,
@@ -952,6 +1001,9 @@ async def test_append_revision_keeps_revision_zero_immutable_and_caps_evidence_r
     assert detail.revisions == (original.revisions[0], revision)
     assert appended.current_revision_number == 1
     assert appended.evidence_revision_count == 1
+    assert appended.deterministic_run_id is None
+    assert appended.semantic_run_id is None
+    assert appended.composite_verdict is None
 
     await repository.claim_work(
         _claim_command(
@@ -1212,6 +1264,9 @@ async def test_human_correction_report_must_match_persisted_trace_and_run(
         target_status=ReviewStatus.CORRECTED,
         decision=decision,
         correction_revision=correction,
+        correction_verifier_report=make_verifier_report(
+            report_sha256=correction.report_sha256
+        ).model_copy(update={"revision_number": correction.revision_number}),
         idempotency_scope="review.decision:case-review-1",
         idempotency_key="decision-key-correction",
         request_sha256="c" * 64,
@@ -1229,6 +1284,81 @@ async def test_human_correction_report_must_match_persisted_trace_and_run(
     assert detail.revisions == created.revisions
     assert detail.decision is None
     assert _counts(database)["workflow_events"] == 4
+
+
+async def test_verifier_report_hash_must_bind_to_current_revision_atomically(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "verifier-binding.sqlite3"
+    repository = SQLiteReviewRepository(database)
+    await repository.initialize()
+    await repository.create_case(_create_command())
+    claimed = await repository.claim_work(_claim_command())
+    forged = _verifier_command()
+    forged = forged.model_copy(
+        update={
+            "report": forged.report.model_copy(update={"report_sha256": "f" * 64})
+        }
+    )
+
+    with pytest.raises(ReviewConflictError, match="binding"):
+        await repository.append_verifier_run(forged)
+
+    assert (await repository.get_detail("case-review-1")).case == claimed
+    assert _counts(database)["verifier_runs"] == 0
+    assert _counts(database)["workflow_events"] == 2
+
+
+async def test_human_correction_verifier_binding_is_revalidated_before_write(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "correction-binding.sqlite3"
+    repository = SQLiteReviewRepository(database)
+    await repository.initialize()
+    await _create_and_verify(repository)
+    await repository.route_to_human(_route_command())
+    before = await repository.get_detail("case-review-1")
+    command = _correction_decision_command()
+    assert command.correction_verifier_report is not None
+    forged = command.model_copy(
+        update={
+            "correction_verifier_report": command.correction_verifier_report.model_copy(
+                update={"report_sha256": "f" * 64}
+            )
+        }
+    )
+
+    with pytest.raises(ReviewConflictError, match="invalid human decision command"):
+        await repository.apply_human_decision(forged)
+
+    assert await repository.get_detail("case-review-1") == before
+
+
+async def test_human_correction_rolls_back_revision_verifier_and_decision_together(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "correction-rollback.sqlite3"
+    armed = False
+
+    def fail_after_correction_verifier(stage: str) -> None:
+        if armed and stage == "verifier_run":
+            raise RuntimeError("forced correction transaction failure")
+
+    repository = SQLiteReviewRepository(
+        database, failure_injector=fail_after_correction_verifier
+    )
+    await repository.initialize()
+    await _create_and_verify(repository)
+    await repository.route_to_human(_route_command())
+    before = await repository.get_detail("case-review-1")
+    before_counts = _counts(database)
+    armed = True
+
+    with pytest.raises(RuntimeError, match="forced correction transaction failure"):
+        await repository.apply_human_decision(_correction_decision_command())
+
+    assert await repository.get_detail("case-review-1") == before
+    assert _counts(database) == before_counts
 
 
 async def test_cas_version_or_status_mismatch_changes_nothing(

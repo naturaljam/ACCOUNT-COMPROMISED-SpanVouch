@@ -116,6 +116,8 @@ docker compose down
 
 SQLite is authoritative. LangGraph coordinates one bounded invocation but is not the durable recovery record. A process crash after a provider request starts can require `resume` after the persisted lease expires. External model work is therefore at-least-once and may be billed more than once, while CAS and immutable IDs prevent duplicated revisions, verifier runs, events, and human decisions.
 
+`afc-review resume` first performs a safe case lookup when no live flag is present. It resumes offline work normally, but refuses to POST a hybrid verification resume or a DeepSeek revision resume without `--allow-live-api`. Direct API callers use `{"allow_live_api": false}` for offline resume and must send `{"allow_live_api": true}` when the recoverable next step can call DeepSeek; omission is treated as false.
+
 ## Controlled semantic verification
 
 Hybrid verification is a manual, paid experiment and is never run in CI. Configure `DEEPSEEK_API_KEY` only in the local environment and require the explicit live flag:
@@ -128,7 +130,7 @@ uv run afc-evaluate-review \
   --output evals/reports/generated/review-semantic-smoke.json
 ```
 
-The `afc-review create` command likewise refuses `deepseek` diagnosis or `hybrid` verification unless `--allow-live-api` is present. Generated reports are ignored; never paste or commit a key or raw provider response.
+The `afc-review create` command likewise refuses `deepseek` diagnosis or `hybrid` verification unless `--allow-live-api` is present, and the same flag is required for paid-capable resume. Generated reports are ignored; never paste or commit a key or raw provider response.
 
 ## Security and data boundary
 

@@ -79,7 +79,7 @@ class ReviewEvaluationReport(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     schema_version: Literal["1.0"] = "1.0"
-    status: Literal["complete", "partial"]
+    status: Literal["complete", "partial", "failed"]
     candidate_count: int = Field(ge=1)
     samples: tuple[ReviewSampleResult, ...]
     metrics: ReviewMetrics
@@ -333,19 +333,38 @@ async def evaluate_review_candidates(
                 )
             )
     ordered_samples = tuple(samples)
+    metrics = _compute_metrics(candidates, labels, ordered_samples)
+    valid_count = sum(
+        candidate.mutation_kind is MutationKind.UNMODIFIED for candidate in candidates
+    )
+    defect_count = len(candidates) - valid_count
+    unsupported_count = sum(
+        candidate.mutation_kind is MutationKind.UNSUPPORTED_SCOPE
+        for candidate in candidates
+    )
+    deterministic_accepted = (
+        len(candidates) == 36
+        and valid_count == 20
+        and defect_count == 16
+        and unsupported_count == 6
+        and metrics.valid_report_pass_rate == 1.0
+        and metrics.hard_defect_recall == 1.0
+        and metrics.unsupported_scope_detection_rate == 1.0
+        and metrics.structured_output_success_rate == 1.0
+        and metrics.operational_error_rate == 0.0
+    )
+    semantic_operational_failure = any(
+        sample.semantic_operational_error is not None for sample in ordered_samples
+    )
     return ReviewEvaluationReport(
         status=(
-            "partial"
-            if any(
-                sample.operational_error is not None
-                or sample.semantic_operational_error is not None
-                for sample in ordered_samples
-            )
-            else "complete"
+            "failed"
+            if not deterministic_accepted
+            else "partial" if semantic_operational_failure else "complete"
         ),
         candidate_count=len(candidates),
         samples=ordered_samples,
-        metrics=_compute_metrics(candidates, labels, ordered_samples),
+        metrics=metrics,
         verifier_version=verifier.version_fingerprint,
         policy_sha256=sha256(policy_version.encode("utf-8")).hexdigest(),
         usage=_usage(ordered_samples),

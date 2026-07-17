@@ -150,7 +150,7 @@ def _resolve_selector(
     span_id: str,
     field_path: str,
     description: str,
-) -> tuple[JsonValue, str] | None:
+) -> tuple[str, JsonValue, str] | None:
     selector = EvidenceSelector(span_id=span_id, field_path=field_path)
     try:
         resolved = catalog.resolve(selector, description=description)
@@ -159,7 +159,7 @@ def _resolve_selector(
     recomputed_sha256 = sha256(
         evidence_json(resolved.observed_value).encode("utf-8")
     ).hexdigest()
-    return resolved.observed_value, recomputed_sha256
+    return resolved.evidence_id, resolved.observed_value, recomputed_sha256
 
 
 def _rule_context(
@@ -348,7 +348,14 @@ class EvidenceVerifier:
                         )
                     )
                     continue
-                observed_value, value_hash = resolved
+                evidence_id, observed_value, value_hash = resolved
+                if evidence.evidence_id != evidence_id and not duplicate_references:
+                    add_finding(
+                        FindingCode.INVALID_VERIFIER_OUTPUT,
+                        revisable=False,
+                        selectors=(evidence.canonical,),
+                        span_ids=(evidence.span_id,),
+                    )
                 if evidence_json(evidence.observed_value) != evidence_json(observed_value):
                     add_finding(
                         FindingCode.EVIDENCE_VALUE_MISMATCH,
@@ -581,16 +588,17 @@ class EvidenceVerifier:
                     span_ids=(root.span_id,),
                 )
 
-            if report.status is DiagnosisStatus.DIAGNOSED:
+            conflicts: tuple[InvariantResult, ...]
+            if accepted_unsupported and unsupported_failures:
+                conflicts = ()
+            elif report.status is DiagnosisStatus.DIAGNOSED:
                 conflicts = tuple(
                     result
                     for result in supported_failures
                     if result.failure_type is not report.failure_type
                 )
-            elif report.status is DiagnosisStatus.NO_FAILURE:
-                conflicts = supported_failures
             else:
-                conflicts = ()
+                conflicts = supported_failures
             if conflicts:
                 add_finding(
                     FindingCode.DIAGNOSIS_CONFLICT,
@@ -676,6 +684,7 @@ class EvidenceVerifier:
         return VerifierReport(
             verifier_run_id=verifier_run_id,
             revision_number=0,
+            report_sha256=report_hash,
             verifier_kind=self.kind,
             verdict=verdict,
             findings=ordered_findings,

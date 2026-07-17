@@ -50,12 +50,6 @@ def _success(payload: object) -> httpx.MockTransport:
             None,
         ),
         (
-            ["resume", "--case-id", "case-1"],
-            "POST",
-            "/v1/diagnosis-reviews/case-1/resume",
-            None,
-        ),
-        (
             [
                 "decide",
                 "--case-id",
@@ -111,6 +105,103 @@ def test_commands_send_exact_http_request_and_canonical_json(
     captured = capsys.readouterr()
     assert captured.out == '{"a":{"b":true},"message":"审计完成","z":1}\n'
     assert captured.err == ""
+
+
+def test_offline_resume_preflights_case_then_posts_explicit_false_consent(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.method == "GET":
+            return httpx.Response(
+                200,
+                json={
+                    "case": {
+                        "status": "verifying",
+                        "verification_mode": "deterministic",
+                        "diagnoser": "rules",
+                    }
+                },
+                request=request,
+            )
+        return httpx.Response(200, json={"ok": True}, request=request)
+
+    assert main(
+        ["resume", "--case-id", "case-1"],
+        transport=_transport(handler),
+        environ={},
+    ) == 0
+
+    assert [(request.method, request.url.path) for request in seen] == [
+        ("GET", "/v1/diagnosis-reviews/case-1"),
+        ("POST", "/v1/diagnosis-reviews/case-1/resume"),
+    ]
+    assert json.loads(seen[1].content) == {"allow_live_api": False}
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    "case",
+    (
+        {
+            "status": "pending_verification",
+            "verification_mode": "hybrid",
+            "diagnoser": "rules",
+        },
+        {
+            "status": "verifying",
+            "verification_mode": "hybrid",
+            "diagnoser": "rules",
+        },
+        {
+            "status": "revising",
+            "verification_mode": "deterministic",
+            "diagnoser": "deepseek",
+        },
+    ),
+)
+def test_paid_capable_resume_without_flag_stops_after_safe_get(
+    case: dict[str, object], capsys: pytest.CaptureFixture[str]
+) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"case": case}, request=request)
+
+    assert main(
+        ["resume", "--case-id", "case-1"],
+        transport=_transport(handler),
+        environ={},
+    ) == 2
+    assert [(request.method, request.url.path) for request in seen] == [
+        ("GET", "/v1/diagnosis-reviews/case-1")
+    ]
+    assert capsys.readouterr().err == (
+        "afc-review: live API use requires --allow-live-api\n"
+    )
+
+
+def test_live_resume_flag_posts_explicit_consent_without_preflight(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"ok": True}, request=request)
+
+    assert main(
+        ["resume", "--case-id", "case-1", "--allow-live-api"],
+        transport=_transport(handler),
+        environ={},
+    ) == 0
+    assert len(seen) == 1
+    assert seen[0].method == "POST"
+    assert json.loads(seen[0].content) == {"allow_live_api": True}
+    assert capsys.readouterr().err == ""
 
 
 def test_api_url_flag_overrides_environment(capsys: pytest.CaptureFixture[str]) -> None:
@@ -426,7 +517,6 @@ def test_explicit_live_flag_allows_http_without_reading_key(
             "key-1",
         ],
         ["show", "--case-id", "case-1"],
-        ["resume", "--case-id", "case-1"],
         [
             "decide",
             "--case-id",
@@ -503,6 +593,41 @@ def test_api_5xx_has_stable_exit_and_never_echoes_provider_body(
     assert exit_code == 4
     assert captured.out == ""
     assert captured.err == f"afc-review: API request failed (status={status}, code=api_error)\n"
+    assert secret not in captured.err
+
+
+def test_operational_api_error_retains_only_recovery_handle_fields(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    secret = "private-provider-body"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            503,
+            json={
+                "detail": {
+                    "code": "revision_provider_failed",
+                    "case_id": "case-durable-7",
+                    "retryable": True,
+                    "provider_body": secret,
+                }
+            },
+            request=request,
+        )
+
+    exit_code = main(
+        ["show", "--case-id", "case-durable-7"],
+        transport=_transport(handler),
+        environ={},
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 4
+    assert captured.out == ""
+    assert captured.err == (
+        "afc-review: API request failed "
+        "(code=revision_provider_failed, case_id=case-durable-7, retryable=true)\n"
+    )
     assert secret not in captured.err
 
 

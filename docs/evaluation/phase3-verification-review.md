@@ -1,10 +1,12 @@
 # Phase 3 Verification and Human Review Evaluation
 
-Updated: 2026-07-17
+Updated: 2026-07-18
 
 ## Scope and provenance
 
 This document records the reproducible evidence for the Phase 3 `diagnosis -> independent verification -> at most one evidence revision -> human decision` workflow. The Task 12 verification baseline is commit `578df55fc4cac36a8f522ce9e03c3c7f4111d117`; the delivery delta is the single commit titled `chore: complete phase 3 delivery gates`. Git records the resulting commit SHA because a commit cannot embed its own hash without changing that hash.
+
+The final acceptance delta is one additional commit titled `fix: close phase 3 acceptance gaps`. It adds a nonzero deterministic acceptance gate, explicit paid-resume consent, durable verifier-to-report hash bindings, and atomic current-revision verifier pointers. Git likewise records the resulting commit SHA outside this self-referential document.
 
 The frozen review cohort contains 36 candidates: 20 unmodified rule reports and 16 deterministic mutations. It is bound to the frozen 20-trace SupportLab cohort.
 
@@ -40,6 +42,8 @@ The acceptance evidence is:
 | Repeated report bytes | exact |
 
 The evaluator joins candidate IDs to expected finding codes; it does not infer success from aggregate counts alone. Selector, observed-value, hash, claim grounding, critical-span grounding, scope guard, and invariant behavior are also exercised by focused unit tests.
+
+The command exits nonzero and records `status=failed` if any exact deterministic gate degrades, even when two degraded reports are byte-identical. Hybrid semantic verdicts remain descriptive measurements without an accuracy threshold.
 
 ## Persistence and delivery evidence
 

@@ -117,10 +117,12 @@ def make_verifier_report(
     verdict: VerifierVerdict = VerifierVerdict.VERIFIED,
     findings: tuple[VerificationFinding, ...] = (),
     operational_error: OperationalErrorMetadata | None = None,
+    report_sha256: str | None = None,
 ) -> VerifierReport:
     return VerifierReport(
         verifier_run_id=f"verifier-{kind.value}-1",
         revision_number=0,
+        report_sha256=report_sha256 or canonical_sha256(make_diagnosis_report()),
         verifier_kind=kind,
         verdict=verdict,
         findings=findings,

@@ -543,6 +543,7 @@ class ReviewWorkflow:
         report = VerifierReport(
             verifier_run_id=f"verifier-{digest}",
             revision_number=runtime.case.current_revision_number,
+            report_sha256=runtime.revisions[-1].report_sha256,
             verifier_kind=VerifierKind.SEMANTIC,
             verdict=VerifierVerdict.REVIEW_REQUIRED,
             findings=(finding,),

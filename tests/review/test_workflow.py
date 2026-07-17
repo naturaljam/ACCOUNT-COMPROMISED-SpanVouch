@@ -70,7 +70,7 @@ class FakeVerifier:
         outcome = self.outcomes[len(self.inputs) - 1]
         if isinstance(outcome, Exception):
             raise outcome
-        return outcome
+        return outcome.model_copy(update={"report_sha256": input_.report_sha256})
 
 
 class FakeReviser:

@@ -12,6 +12,7 @@ from afc.review.models import (
     ReviewStatus,
     RevisionOrigin,
     VerificationMode,
+    VerifierKind,
     VerifierReport,
     VerifierVerdict,
     canonical_json,
@@ -251,6 +252,7 @@ class RouteRevisionFailureToHuman(TransitionCommand):
 class ApplyHumanDecision(TransitionCommand):
     decision: HumanReviewDecision
     correction_revision: DiagnosisRevision | None
+    correction_verifier_report: VerifierReport | None = None
     idempotency_scope: str = Field(min_length=1)
     idempotency_key: str = Field(min_length=1)
     request_sha256: str = Field(pattern=SHA256_PATTERN)
@@ -273,14 +275,29 @@ class ApplyHumanDecision(TransitionCommand):
         if self.decision.action is DecisionAction.CORRECT:
             if self.correction_revision is None:
                 raise ValueError("correct decisions require a correction revision")
+            if self.correction_verifier_report is None:
+                raise ValueError("correct decisions require a correction verifier report")
             if self.correction_revision.case_id != self.case_id:
                 raise ValueError("correction revision case_id must match command")
             if self.correction_revision.origin is not RevisionOrigin.HUMAN_CORRECTION:
                 raise ValueError("correction revision must have human correction origin")
             if self.correction_revision.revision_id != self.decision.resulting_revision_id:
                 raise ValueError("decision resulting revision must match correction revision")
+            verifier_report = self.correction_verifier_report
+            if verifier_report.verifier_kind is not VerifierKind.DETERMINISTIC:
+                raise ValueError("correction verifier report must be deterministic")
+            if verifier_report.verdict is not VerifierVerdict.VERIFIED:
+                raise ValueError("correction verifier report must be verified")
+            if verifier_report.operational_error is not None:
+                raise ValueError("correction verifier report cannot be operational")
+            if verifier_report.revision_number != self.correction_revision.revision_number:
+                raise ValueError("correction verifier revision must match correction revision")
+            if verifier_report.report_sha256 != self.correction_revision.report_sha256:
+                raise ValueError("correction verifier report hash must match correction revision")
+            _require_utc(verifier_report.started_at, "correction_verifier_report.started_at")
+            _require_utc(verifier_report.completed_at, "correction_verifier_report.completed_at")
             _require_utc(self.correction_revision.created_at, "correction_revision.created_at")
-        elif self.correction_revision is not None:
-            raise ValueError("only correct decisions may include a correction revision")
+        elif self.correction_revision is not None or self.correction_verifier_report is not None:
+            raise ValueError("only correct decisions may include correction records")
         _require_utc(self.decision.created_at, "decision.created_at")
         return self

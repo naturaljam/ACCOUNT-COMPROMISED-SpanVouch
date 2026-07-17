@@ -391,6 +391,11 @@ class SQLiteReviewRepository:
             self._require_cas(state, command.expected_version, command.prior_status)
             if command.report.revision_number != int(state["current_revision_number"]):
                 raise ReviewConflictError("verifier revision conflict")
+            current_revision = self._revision_row(
+                connection, command.case_id, int(state["current_revision_number"])
+            )
+            if command.report.report_sha256 != str(current_revision["report_sha256"]):
+                raise ReviewConflictError("verifier report binding conflict")
             if (
                 str(state["verification_mode"]) == VerificationMode.DETERMINISTIC.value
                 and command.report.verifier_kind is VerifierKind.SEMANTIC
@@ -454,6 +459,17 @@ class SQLiteReviewRepository:
                     )
                 ):
                     raise ReviewConflictError("duplicate diagnosis revision")
+                state = self._require_state(connection, command.case_id)
+                if (
+                    int(state["version"]) != command.expected_version + 1
+                    or str(state["status"]) != command.target_status.value
+                    or int(state["current_revision_number"])
+                    != command.revision.revision_number
+                    or state["deterministic_run_id"] is not None
+                    or state["semantic_run_id"] is not None
+                    or state["composite_verdict"] is not None
+                ):
+                    raise ReviewConflictError("duplicate diagnosis revision")
                 return self._read_case(connection, command.case_id)
             if event_exists:
                 raise ReviewConflictError("duplicate workflow event")
@@ -478,6 +494,8 @@ class SQLiteReviewRepository:
             cursor = connection.execute(
                 "UPDATE review_cases SET status = ?, version = version + 1, "
                 "current_revision_number = ?, evidence_revision_count = 1, "
+                "deterministic_run_id = NULL, semantic_run_id = NULL, "
+                "composite_verdict = NULL, "
                 "lease_owner = NULL, lease_expires_at = NULL, updated_at = ? "
                 "WHERE case_id = ? AND version = ? AND status = ?",
                 (
@@ -589,8 +607,12 @@ class SQLiteReviewRepository:
             state = self._require_state(connection, command.case_id)
             self._require_cas(state, command.expected_version, command.prior_status)
             correction_number: int | None = None
+            correction_verifier_run_id: str | None = None
             if command.correction_revision is not None:
                 correction = command.correction_revision
+                correction_verifier = command.correction_verifier_report
+                if correction_verifier is None:
+                    raise ReviewConflictError("human correction verification missing")
                 self._require_revision_snapshot_binding(
                     connection, command.case_id, correction
                 )
@@ -607,6 +629,19 @@ class SQLiteReviewRepository:
                     raise ReviewConflictError("diagnosis revision chain conflict")
                 self._insert_revision(connection, correction)
                 self._after_insert("diagnosis_revision")
+                if correction_verifier.report_sha256 != correction.report_sha256:
+                    raise ReviewConflictError("human correction verification binding conflict")
+                existing_verifier = connection.execute(
+                    "SELECT 1 FROM verifier_runs WHERE verifier_run_id = ?",
+                    (correction_verifier.verifier_run_id,),
+                ).fetchone()
+                if existing_verifier is not None:
+                    raise ReviewConflictError("duplicate verifier result")
+                self._insert_verifier_report(
+                    connection, correction_verifier, command.case_id
+                )
+                self._after_insert("verifier_run")
+                correction_verifier_run_id = correction_verifier.verifier_run_id
 
             decision = command.decision
             connection.execute(
@@ -628,11 +663,21 @@ class SQLiteReviewRepository:
             cursor = connection.execute(
                 "UPDATE review_cases SET status = ?, version = version + 1, "
                 "current_revision_number = COALESCE(?, current_revision_number), "
+                "deterministic_run_id = COALESCE(?, deterministic_run_id), "
+                "semantic_run_id = CASE WHEN ? IS NULL THEN semantic_run_id ELSE NULL END, "
+                "composite_verdict = COALESCE(?, composite_verdict), "
                 "terminal_decision_id = ?, lease_owner = NULL, lease_expires_at = NULL, "
                 "updated_at = ? WHERE case_id = ? AND version = ? AND status = ?",
                 (
                     command.target_status.value,
                     correction_number,
+                    correction_verifier_run_id,
+                    correction_verifier_run_id,
+                    (
+                        VerifierVerdict.VERIFIED.value
+                        if correction_verifier_run_id is not None
+                        else None
+                    ),
                     decision.decision_id,
                     _timestamp(command.occurred_at),
                     command.case_id,
