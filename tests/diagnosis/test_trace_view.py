@@ -1,4 +1,5 @@
 import json
+from itertools import product
 from pathlib import Path
 
 import pytest
@@ -701,3 +702,126 @@ def test_sanitizer_preserves_cookie_and_bearer_prose_with_punctuation(
     safe_prose: str,
 ) -> None:
     assert sanitize_diagnostic_value(safe_prose) == safe_prose
+
+
+def _assert_sanitizer_fixed_point(source: str, expected: str) -> None:
+    sanitized = sanitize_diagnostic_value(source)
+
+    assert sanitized == expected
+    for _ in range(4):
+        sanitized = sanitize_diagnostic_value(sanitized)
+        assert sanitized == expected
+
+
+def test_assignment_marker_value_matrix_consumes_complete_quoted_values() -> None:
+    labels = ("api_key", "client_secret", "access_token")
+    separators = ("=", ":")
+    left_whitespace = ("", " ")
+    right_whitespace = ("", " ", "\t")
+    quotes = ('"', "'")
+    suffixes = (
+        "top secret",
+        "top;secret",
+        "top,secret",
+        "top]secret",
+        "top\tsecret",
+        "top=secret",
+    )
+
+    for label, separator, left, right, quote, suffix in product(
+        labels,
+        separators,
+        left_whitespace,
+        right_whitespace,
+        quotes,
+        suffixes,
+    ):
+        prefix = f"{label}{left}{separator}{right}"
+        source = f"{prefix}{quote}{SECRET_REDACTION}{suffix}{quote}"
+        expected = f"{prefix}{quote}{SECRET_REDACTION}{quote}"
+
+        _assert_sanitizer_fixed_point(source, expected)
+
+
+def test_assignment_exact_marker_matrix_is_byte_idempotent() -> None:
+    for label, separator, left, right, quote in product(
+        ("api_key", "client_secret", "access_token"),
+        ("=", ":"),
+        ("", " "),
+        ("", " ", "\t"),
+        ("", '"', "'"),
+    ):
+        source = f"{label}{left}{separator}{right}{quote}{SECRET_REDACTION}{quote}"
+
+        _assert_sanitizer_fixed_point(source, source)
+
+
+def test_cookie_header_context_matrix_redacts_complete_pair_values() -> None:
+    context_paths = (
+        ("request", "headers"),
+        ("response", "headers"),
+        ("http", "request", "headers"),
+        ("http", "response", "headers"),
+    )
+
+    for context, joiner, header, separator, whitespace in product(
+        context_paths,
+        (".", "_", "-", " "),
+        ("Cookie", "Set-Cookie"),
+        (":", "="),
+        ("", " ", "\t"),
+    ):
+        prefix = f"{joiner.join(context)}{joiner}{header}{separator}{whitespace}"
+        source = f"{prefix}session=first; csrf=topsecret"
+
+        _assert_sanitizer_fixed_point(source, f"{prefix}{SECRET_REDACTION}")
+
+
+def test_cookie_marker_matrix_is_atomic_and_idempotent() -> None:
+    context_prefixes = (
+        "",
+        "Browser ",
+        "request.headers.",
+        "response_headers_",
+        "http-request-headers-",
+        "http request headers ",
+    )
+
+    for context, header, separator, whitespace, quote, partial in product(
+        context_prefixes,
+        ("Cookie", "Set-Cookie"),
+        (":", "="),
+        ("", " "),
+        ("", '"', "'"),
+        (False, True),
+    ):
+        prefix = f"{context}{header}{separator}{whitespace}"
+        suffix = "top;secret" if partial else ""
+        source = f"{prefix}{quote}{SECRET_REDACTION}{suffix}{quote}"
+        expected = (
+            f"{prefix}{quote}{SECRET_REDACTION}{quote}" if partial else source
+        )
+
+        _assert_sanitizer_fixed_point(source, expected)
+
+
+def test_cookie_safe_prose_matrix_is_byte_idempotent() -> None:
+    for context, header, separator, whitespace in product(
+        (
+            "",
+            "Browser ",
+            "request.headers.",
+            "response_headers_",
+            "http-request-headers-",
+            "http request headers ",
+        ),
+        ("Cookie", "Set-Cookie"),
+        (":", "="),
+        ("", " ", "\t"),
+    ):
+        source = (
+            f"{context}{header}{separator}{whitespace}"
+            "recipe; instructions remain safe"
+        )
+
+        _assert_sanitizer_fixed_point(source, source)

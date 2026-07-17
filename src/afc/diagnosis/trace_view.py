@@ -143,8 +143,9 @@ _COOKIE_HEADER_CONTEXT_PARTS = frozenset(
 _ASSIGNMENT = re.compile(
     r"(?i)(?P<prefix>[\"']?(?P<key>[a-z][a-z0-9_. -]{0,80})[\"']?"
     r"\s*(?:=|:)\s*)"
-    r"(?P<value>(?:[\"']?\[REDACTED\][\"']?[^\s,;}\]]*"
-    r"|[\"'][^\"'\r\n]+[\"']|[^\s,;}\]]+))"
+    r"(?P<value>(?:\"(?:\\.|[^\"\\\r\n])*\""
+    r"|'(?:\\.|[^'\\\r\n])*'"
+    r"|[\"']?\[REDACTED\][\"']?[^\s,;}\]]*|[^\s,;}\]]+))"
 )
 _AUTHORIZATION = re.compile(
     r"(?i)(?P<prefix>\b(?:proxy[-_ ]?)?authorization(?:\\?[\"'])?\s*"
@@ -152,7 +153,7 @@ _AUTHORIZATION = re.compile(
 )
 _COOKIE_HEADER = re.compile(
     r"(?im)(?P<prefix>(?:^|[({\[;,\"'])"
-    r"(?:(?:browser|headers?|http|request|response)[ ._-]+)?"
+    r"(?:(?:browser|headers?|http|request|response)[ ._-]+){0,4}"
     r"(?:set-cookie|cookie)(?:\\?[\"'])?\s*(?::|=)\s*)"
     r"(?P<value>[^\r\n]*)"
 )
@@ -299,15 +300,13 @@ def _redact_assignment(match: re.Match[str]) -> str:
         or _is_credential_label("_".join(non_cookie_parts))
     )
     contains_cookie_label = len(non_cookie_parts) != len(label_parts)
-    if (
-        match.group("prefix").rstrip().endswith(":")
-        and contains_cookie_label
-        and (
-            (not cookie_header_context and any(character.isspace() for character in label))
-            or (
-                cookie_header_context
-                and not _is_credential_shaped_cookie_value(match.group("value"))
-            )
+    if contains_cookie_label and not _is_credential_shaped_cookie_value(
+        match.group("value")
+    ) and (
+        cookie_header_context
+        or (
+            match.group("prefix").rstrip().endswith(":")
+            and any(character.isspace() for character in label)
         )
     ):
         return match.group(0)

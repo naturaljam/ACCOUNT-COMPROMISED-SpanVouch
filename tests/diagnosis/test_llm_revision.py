@@ -325,8 +325,14 @@ async def test_revision_prompt_is_a_canonical_sanitized_boundary() -> None:
                     f"Proxy-Authorization=abc; refresh={VALUE_SECRET}\n"
                     f"HTTP Cookie=session=first; csrf={VALUE_SECRET}\n"
                     f"Response Set-Cookie: sid=first; refresh={VALUE_SECRET}\n"
+                    f'api_key="[REDACTED]top {VALUE_SECRET}"\n'
+                    f"client_secret='[REDACTED]top;{VALUE_SECRET}'\n"
+                    f"request.headers.Cookie=session=first; csrf={VALUE_SECRET}\n"
+                    f"http request headers Set-Cookie=sid=first; refresh={VALUE_SECRET}\n"
                     "cookie: recipe; instructions remain safe\n"
                     "Browser cookie: recipe; instructions remain safe\n"
+                    "Cookie=recipe; instructions remain safe\n"
+                    "request.headers.Cookie=recipe; instructions remain safe\n"
                     "Bearer Qaz; HTTP 401"
                 ),
                 "tool.error.message": {
@@ -396,6 +402,8 @@ async def test_revision_prompt_is_a_canonical_sanitized_boundary() -> None:
     assert "csrf=" not in prompt
     assert "cookie: recipe; instructions remain safe" in prompt
     assert "Browser cookie: recipe; instructions remain safe" in prompt
+    assert "Cookie=recipe; instructions remain safe" in prompt
+    assert "request.headers.Cookie=recipe; instructions remain safe" in prompt
     for forbidden in (
         "semantic-trace-id-secret",
         "semantic-run-id-secret",
