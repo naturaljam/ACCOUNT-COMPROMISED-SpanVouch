@@ -921,3 +921,74 @@ def test_safe_credential_metadata_labels_remain_visible() -> None:
     ):
         source = f"{label}={value}; metadata remains safe"
         _assert_sanitizer_fixed_point(source, source)
+
+
+def test_escaped_structural_label_and_value_wrappers_are_independent() -> None:
+    for label_wrapper, value_wrapper, separator in product(
+        ('"', "'", '\\"', "\\'"),
+        ("", '"', "'", '\\"', "\\'"),
+        (":", "="),
+    ):
+        source = (
+            f"{label_wrapper}api_key{label_wrapper}{separator}"
+            f"{value_wrapper}topsecret{value_wrapper}"
+        )
+        expected = (
+            f"{label_wrapper}api_key{label_wrapper}{separator}"
+            f"{value_wrapper}{SECRET_REDACTION}{value_wrapper}"
+        )
+        _assert_sanitizer_fixed_point(source, expected)
+
+    cases = (
+        (
+            r'\"api_key\":\"topsecret\"',
+            rf'\"api_key\":\"{SECRET_REDACTION}\"',
+        ),
+        (
+            r'{\"api_key\":\"topsecret\"}',
+            rf'{{\"api_key\":\"{SECRET_REDACTION}\"}}',
+        ),
+        (
+            r"\'api_key\':\'topsecret\'",
+            rf"\'api_key\':\'{SECRET_REDACTION}\'",
+        ),
+        (
+            r"{\'Cookie\':\'a_1\'}",
+            rf"{{\'Cookie\':\'{SECRET_REDACTION}\'}}",
+        ),
+        (
+            rf'\"api_key\":\"{SECRET_REDACTION}tail\"',
+            rf'\"api_key\":\"{SECRET_REDACTION}\"',
+        ),
+        (
+            rf'{{\"api_key\":\"{SECRET_REDACTION}\"}}',
+            rf'{{\"api_key\":\"{SECRET_REDACTION}\"}}',
+        ),
+    )
+
+    for source, expected in cases:
+        _assert_sanitizer_fixed_point(source, expected)
+
+
+def test_structural_label_scanning_has_no_fail_open_length_threshold() -> None:
+    for label_length in (79, 80, 81, 256, 200_000):
+        sensitive_prefix = "api_key."
+        sensitive_label = sensitive_prefix + "x" * (
+            label_length - len(sensitive_prefix)
+        )
+        _assert_sanitizer_fixed_point(
+            f"{sensitive_label}=topsecret",
+            f"{sensitive_label}={SECRET_REDACTION}",
+        )
+
+        metadata_suffix = ".token_count"
+        safe_label = "x" * (label_length - len(metadata_suffix)) + metadata_suffix
+        safe_source = f"{safe_label}=7; long metadata remains safe"
+        _assert_sanitizer_fixed_point(safe_source, safe_source)
+
+    for suffix_length in (80, 81, 256):
+        label = f"api_key.{('x' * suffix_length)}"
+        _assert_sanitizer_fixed_point(
+            f"{label}=topsecret",
+            f"{label}={SECRET_REDACTION}",
+        )

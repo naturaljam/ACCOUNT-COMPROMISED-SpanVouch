@@ -137,11 +137,6 @@ _COMPACT_SAFE_METADATA_LABELS = frozenset(
     for qualifier in _COMPACT_SAFE_METADATA_QUALIFIERS
     for terminal in _SAFE_METADATA_TERMINALS
 )
-_MAX_CREDENTIAL_LABEL_CHARS = 80
-_STRUCTURAL_CREDENTIAL_PREFIX = re.compile(
-    rf"(?i)(?P<label>[\"']?[a-z][a-z0-9_. /-]"
-    rf"{{0,{_MAX_CREDENTIAL_LABEL_CHARS - 1}}}[\"']?)[ \t]*(?:=|:)[ \t]*"
-)
 _NONEMPTY_LINE = re.compile(r"[^\r\n]+")
 _COOKIE_PAIR_VALUE = re.compile(
     r"(?i)(?:^|;\s*)[!#$%&'*+\-.^_`|~0-9A-Za-z]+\s*="
@@ -253,18 +248,30 @@ def _redact_match(match: re.Match[str]) -> str:
     return f"{match.group('prefix')}{SECRET_REDACTION}"
 
 
-def _unwrap_structural_value(value: str) -> tuple[str, str | None]:
+def _unwrap_structural_value(value: str) -> tuple[str, str | None, str]:
     candidate = value.strip()
+    structural_suffix = ""
+    while (
+        candidate
+        and candidate != SECRET_REDACTION
+        and candidate[-1] in "}])"
+    ):
+        structural_suffix = f"{candidate[-1]}{structural_suffix}"
+        candidate = candidate[:-1].rstrip()
     for wrapper in ('\\"', "\\'", '"', "'"):
         if len(candidate) >= 2 * len(wrapper) and candidate.startswith(
             wrapper
         ) and candidate.endswith(wrapper):
-            return candidate[len(wrapper) : -len(wrapper)].strip(), wrapper
-    return candidate, None
+            return (
+                candidate[len(wrapper) : -len(wrapper)].strip(),
+                wrapper,
+                structural_suffix,
+            )
+    return candidate, None, structural_suffix
 
 
 def _is_credential_shaped_cookie_value(value: str) -> bool:
-    candidate, _ = _unwrap_structural_value(value)
+    candidate, _, _ = _unwrap_structural_value(value)
     primary_value = candidate.split(";", 1)[0].strip()
     shaped_token = bool(_COOKIE_TOKEN_VALUE.fullmatch(primary_value)) and (
         len(primary_value) >= 16
@@ -288,27 +295,48 @@ def _is_structural_credential_label(label: str) -> bool:
 
 
 def _redact_structural_value(prefix: str, value: str) -> str:
-    candidate, wrapper = _unwrap_structural_value(value)
+    candidate, wrapper, structural_suffix = _unwrap_structural_value(value)
     if candidate.strip() == SECRET_REDACTION:
         return f"{prefix}{value}"
     if wrapper is not None:
-        return f"{prefix}{wrapper}{SECRET_REDACTION}{wrapper}"
-    return f"{prefix}{SECRET_REDACTION}"
+        return (
+            f"{prefix}{wrapper}{SECRET_REDACTION}{wrapper}{structural_suffix}"
+        )
+    return f"{prefix}{SECRET_REDACTION}{structural_suffix}"
+
+
+def _is_structural_label_character(character: str) -> bool:
+    return character.isascii() and (
+        character.isalnum() or character in "_. /-\t\"'\\"
+    )
 
 
 def _sanitize_structural_credential_line(line: str) -> str:
-    for match in _STRUCTURAL_CREDENTIAL_PREFIX.finditer(line):
-        label = match.group("label")
-        if not _is_structural_credential_label(label):
+    candidate_start = 0
+    index = 0
+    while index < len(line):
+        character = line[index]
+        if character not in ":=":
+            if not _is_structural_label_character(character):
+                candidate_start = index + 1
+            index += 1
             continue
-        value = line[match.end() :]
-        label_parts = _normalize_credential_label(label)
-        is_cookie_label = any(
-            part in {"cookie", "cookies"} for part in label_parts
-        )
-        if is_cookie_label and not _is_credential_shaped_cookie_value(value):
-            continue
-        return _redact_structural_value(line[: match.end()], value)
+
+        label = line[candidate_start:index].strip(" \t")
+        value_start = index + 1
+        while value_start < len(line) and line[value_start] in " \t":
+            value_start += 1
+        if label and _is_structural_credential_label(label):
+            value = line[value_start:]
+            label_parts = _normalize_credential_label(label)
+            is_cookie_label = any(
+                part in {"cookie", "cookies"} for part in label_parts
+            )
+            if not is_cookie_label or _is_credential_shaped_cookie_value(value):
+                return _redact_structural_value(line[:value_start], value)
+
+        candidate_start = value_start
+        index = value_start
     return line
 
 

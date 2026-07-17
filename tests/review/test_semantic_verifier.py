@@ -353,6 +353,10 @@ async def test_prompt_contains_only_independent_canonical_allowlist_data() -> No
                     f"set_cookie=session=first; csrf={VALUE_SECRET}\n"
                     f"Session Cookie=a_1\n"
                     "session_cookie_count=3; metadata remains safe\n"
+                    rf'{{\"api_key\":\"{VALUE_SECRET}\"}}' "\n"
+                    rf'\"Cookie\":\"[REDACTED]top {VALUE_SECRET}\"' "\n"
+                    f"api_key.{('x' * 96)}={VALUE_SECRET}\n"
+                    f"{('x' * 96)}.token_count=7; long metadata remains safe\n"
                     "A cookie: recipe; instructions remain safe\n"
                     "cookie: recipe; instructions remain safe\n"
                     "Browser cookie: recipe; instructions remain safe\n"
@@ -401,6 +405,7 @@ async def test_prompt_contains_only_independent_canonical_allowlist_data() -> No
     assert "request.headers.Cookie=recipe; instructions remain safe" in serialized
     assert "a_1" not in serialized
     assert "session_cookie_count=3; metadata remains safe" in serialized
+    assert "long metadata remains safe" in serialized
     assert "Bearer of; good news" in serialized
     assert "trace-review-1" not in serialized
     assert "run-review-1" not in serialized

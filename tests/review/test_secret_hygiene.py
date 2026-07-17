@@ -156,6 +156,10 @@ def _trace_with_value_secrets() -> TraceIR:
                     f"Set Cookie: session=first; csrf={SENTINEL_KEY}\n"
                     f"Session Cookie=a_1\n"
                     "session_cookie_count=3; metadata remains safe\n"
+                    rf'{{\"api_key\":\"{SENTINEL_KEY}\"}}' "\n"
+                    rf'\"api_key\":\"{SECRET_REDACTION}top {SENTINEL_KEY}\"' "\n"
+                    f"api_key.{('x' * 96)}={SENTINEL_KEY}\n"
+                    f"{('x' * 96)}.token_count=7; long metadata remains safe\n"
                     "Bearer Qaz; HTTP 401\n"
                     "A cookie: recipe; instructions remain safe\n"
                     "cookie: recipe; instructions remain safe\n"
@@ -359,6 +363,7 @@ def test_allowed_trace_value_secrets_never_reach_sqlite_or_public_aggregate(
     assert "request.headers.Cookie=recipe; instructions remain safe" in view_json[0]
     assert "a_1" not in view_json[0]
     assert "session_cookie_count=3; metadata remains safe" in view_json[0]
+    assert "long metadata remains safe" in view_json[0]
     assert "Bearer of; good news" in view_json[0]
 
 
