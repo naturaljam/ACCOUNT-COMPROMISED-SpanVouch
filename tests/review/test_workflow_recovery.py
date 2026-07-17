@@ -92,9 +92,7 @@ def _resume_service(
     ids: SequenceIds,
 ) -> ReviewService:
     engine = InvariantEngine(())
-    diagnosis_service = DiagnosisService(
-        {DiagnoserKind.RULES: RuleDiagnoser(engine)}
-    )
+    diagnosis_service = DiagnosisService({DiagnoserKind.RULES: RuleDiagnoser(engine)})
     return ReviewService(
         diagnosis_service=diagnosis_service,
         repository=repository,
@@ -214,6 +212,37 @@ class HeartbeatAwareReviser(FakeReviser):
     async def revise(self, runtime_bundle, evidence_gaps):  # type: ignore[no-untyped-def]
         await asyncio.wait_for(self._race_repository.renew_entered.wait(), timeout=1.0)
         return await super().revise(runtime_bundle, evidence_gaps)
+
+
+class PostCommitPauseRepository(SQLiteReviewRepository):
+    """Pause the original worker after SQLite commits its provider effect."""
+
+    def __init__(
+        self,
+        database: Path,
+        *,
+        pause_semantic: bool = False,
+        pause_revision: bool = False,
+    ) -> None:
+        super().__init__(database)
+        self.pause_semantic = pause_semantic
+        self.pause_revision = pause_revision
+        self.provider_effect_committed = asyncio.Event()
+        self.release_original = asyncio.Event()
+
+    async def append_verifier_run(self, command):  # type: ignore[no-untyped-def]
+        result = await super().append_verifier_run(command)
+        if self.pause_semantic and command.report.verifier_kind is VerifierKind.SEMANTIC:
+            self.provider_effect_committed.set()
+            await asyncio.wait_for(self.release_original.wait(), timeout=2.0)
+        return result
+
+    async def append_revision(self, command):  # type: ignore[no-untyped-def]
+        result = await super().append_revision(command)
+        if self.pause_revision:
+            self.provider_effect_committed.set()
+            await asyncio.wait_for(self.release_original.wait(), timeout=2.0)
+        return result
 
 
 async def test_crash_after_verifying_commit_requires_expired_lease_before_resume(
@@ -488,9 +517,7 @@ async def test_missing_semantic_verifier_persists_configuration_failure(
     database = tmp_path / "semantic-missing.sqlite3"
     repository = SQLiteReviewRepository(database)
     await repository.initialize()
-    await _create_case(
-        repository, mode=VerificationMode.HYBRID, diagnoser=DiagnoserKind.DEEPSEEK
-    )
+    await _create_case(repository, mode=VerificationMode.HYBRID, diagnoser=DiagnoserKind.DEEPSEEK)
     deterministic = FakeVerifier(
         VerifierKind.DETERMINISTIC,
         [
@@ -681,6 +708,128 @@ async def test_revision_finalize_survives_heartbeat_observing_cleared_lease(
     assert detail.case.status is ReviewStatus.AWAITING_HUMAN_REVIEW
     assert detail.case.current_revision_number == 1
     assert len(detail.revisions) == 2
+
+
+async def test_semantic_postcommit_race_converges_without_recalling_provider(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "semantic-postcommit-convergence.sqlite3"
+    repository = PostCommitPauseRepository(database, pause_semantic=True)
+    await repository.initialize()
+    await _create_case(
+        repository,
+        mode=VerificationMode.HYBRID,
+        diagnoser=DiagnoserKind.DEEPSEEK,
+    )
+    deterministic = FakeVerifier(
+        VerifierKind.DETERMINISTIC,
+        [
+            _report(
+                VerifierKind.DETERMINISTIC,
+                VerifierVerdict.VERIFIED,
+                revision_number=0,
+                suffix="semantic-postcommit-deterministic",
+            )
+        ],
+    )
+    semantic = FakeVerifier(
+        VerifierKind.SEMANTIC,
+        [
+            _report(
+                VerifierKind.SEMANTIC,
+                VerifierVerdict.VERIFIED,
+                revision_number=0,
+                suffix="semantic-postcommit-provider",
+            )
+        ],
+    )
+    ids = SequenceIds()
+    original = _workflow(
+        repository,
+        deterministic,
+        semantic=semantic,
+        id_factory=ids,
+        lease_owner="semantic-original",
+    )
+    competitor = _workflow(
+        repository,
+        deterministic,
+        semantic=semantic,
+        id_factory=ids,
+        lease_owner="semantic-competitor",
+    )
+
+    original_task = asyncio.create_task(original.run("case-review-1"))
+    await asyncio.wait_for(repository.provider_effect_committed.wait(), timeout=1.0)
+    competitor_detail = await competitor.resume("case-review-1")
+    repository.release_original.set()
+    original_detail = await asyncio.wait_for(original_task, timeout=1.0)
+
+    assert competitor_detail.case.status is ReviewStatus.AWAITING_HUMAN_REVIEW
+    assert original_detail.case.status is ReviewStatus.AWAITING_HUMAN_REVIEW
+    assert len(semantic.inputs) == 1
+    assert len(deterministic.inputs) == 1
+
+
+async def test_revision_postcommit_race_converges_without_recalling_reviser(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "revision-postcommit-convergence.sqlite3"
+    repository = PostCommitPauseRepository(database, pause_revision=True)
+    await repository.initialize()
+    await _create_case(
+        repository,
+        mode=VerificationMode.DETERMINISTIC,
+        diagnoser=DiagnoserKind.DEEPSEEK,
+    )
+    deterministic = FakeVerifier(
+        VerifierKind.DETERMINISTIC,
+        [
+            _report(
+                VerifierKind.DETERMINISTIC,
+                VerifierVerdict.NEEDS_EVIDENCE,
+                revision_number=0,
+                suffix="revision-postcommit-initial",
+            ),
+            _report(
+                VerifierKind.DETERMINISTIC,
+                VerifierVerdict.VERIFIED,
+                revision_number=1,
+                suffix="revision-postcommit-final",
+            ),
+        ],
+    )
+    reviser = FakeReviser(
+        supported=(DiagnoserKind.DEEPSEEK,),
+        outcomes=[_deepseek_report()],
+    )
+    ids = SequenceIds()
+    original = _workflow(
+        repository,
+        deterministic,
+        reviser=reviser,
+        id_factory=ids,
+        lease_owner="revision-original",
+    )
+    competitor = _workflow(
+        repository,
+        deterministic,
+        reviser=reviser,
+        id_factory=ids,
+        lease_owner="revision-competitor",
+    )
+
+    original_task = asyncio.create_task(original.run("case-review-1"))
+    await asyncio.wait_for(repository.provider_effect_committed.wait(), timeout=1.0)
+    competitor_detail = await competitor.resume("case-review-1")
+    repository.release_original.set()
+    original_detail = await asyncio.wait_for(original_task, timeout=1.0)
+
+    assert competitor_detail.case.status is ReviewStatus.AWAITING_HUMAN_REVIEW
+    assert original_detail.case.status is ReviewStatus.AWAITING_HUMAN_REVIEW
+    assert original_detail.case.current_revision_number == 1
+    assert len(reviser.calls) == 1
+    assert len(deterministic.inputs) == 2
 
 
 async def test_semantic_failure_route_is_atomic_and_survives_cleared_lease_race(
@@ -995,8 +1144,8 @@ async def test_lease_ownership_loss_cancels_provider_then_allows_stale_recovery(
         lease_owner="recovery-worker",
         lease_duration=duration,
     )
-    recovered = await _resume_service(
-        repository, recovery_workflow, deterministic, ids
-    ).resume("case-review-1", allow_live_api=True)
+    recovered = await _resume_service(repository, recovery_workflow, deterministic, ids).resume(
+        "case-review-1", allow_live_api=True
+    )
     assert recovered.case.status is ReviewStatus.AWAITING_HUMAN_REVIEW
     assert len(recovered_semantic.inputs) == 1

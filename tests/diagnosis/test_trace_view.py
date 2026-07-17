@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from afc.diagnosis import trace_view as trace_view_module
 from afc.diagnosis.trace_view import (
     ALLOWED_ATTRIBUTES,
     SECRET_REDACTION,
@@ -135,8 +136,7 @@ def test_trace_view_sanitizes_escaped_and_double_encoded_json_idempotently() -> 
     encoded = json.dumps(
         {
             "Authorization": (
-                "AWS4-HMAC-SHA256 "
-                f"Credential={VALUE_SECRET}/20260718/region/service/aws4_request"
+                f"AWS4-HMAC-SHA256 Credential={VALUE_SECRET}/20260718/region/service/aws4_request"
             ),
             "nested": {"token": VALUE_SECRET},
             "safe": "保留安全上下文",
@@ -280,6 +280,49 @@ def test_trace_view_uses_one_classifier_for_common_nested_credential_keys() -> N
     assert "useful context" in serialized
 
 
+def test_trace_view_classifies_mapping_labels_after_stripping_delimiters_and_paths() -> None:
+    trace = load_trace("clean-01")
+    credential_labels = (
+        " api_key: ",
+        "'authorization='",
+        '"headers.authorization:"',
+        "userpassword",
+        "sessiontokenvalue",
+        "request.headers.Authorization",
+    )
+    safe_metadata = {
+        "token_count": 7,
+        "password_policy": "rotate-quarterly",
+        "session_duration": 30,
+    }
+    root = trace.spans[0].model_copy(
+        update={
+            "name": f"worker userpassword={VALUE_SECRET}",
+            "attributes": {
+                **trace.spans[0].attributes,
+                "tool.result": {
+                    **{label: VALUE_SECRET for label in credential_labels},
+                    **safe_metadata,
+                },
+                "tool.error.message": (
+                    f"headers.authorization: Token {VALUE_SECRET}; retry remains safe"
+                ),
+            },
+        }
+    )
+
+    view = DiagnosticTraceView.from_trace(
+        trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
+    )
+    serialized = canonical_json(view)
+
+    assert VALUE_SECRET not in serialized
+    assert "retry remains safe" in serialized
+    for key, value in safe_metadata.items():
+        assert view.spans[0].attributes["tool.result"][key] == value
+    assert sanitize_diagnostic_trace_view(view) == view
+
+
 def test_trace_view_sanitizes_span_names_mapping_keys_and_final_messages() -> None:
     trace = load_trace("clean-01")
     root = trace.spans[0].model_copy(
@@ -336,6 +379,66 @@ def test_sanitizer_bounds_large_and_cyclic_values_without_corrupting_safe_data()
     cyclic: list[object] = ["safe prefix"]
     cyclic.append(cyclic)
     assert sanitize_diagnostic_value(cyclic) == ["safe prefix", SECRET_REDACTION]
+
+
+def test_sanitizer_stops_iterating_large_lists_when_node_budget_is_exhausted() -> None:
+    class GuardedList(list[str]):
+        visited = 0
+
+        def __iter__(self):  # type: ignore[no-untyped-def]
+            for index in range(len(self)):
+                self.visited += 1
+                if self.visited > 10_000:
+                    raise AssertionError("sanitizer traversed beyond its node budget")
+                yield self[index]
+
+    value = GuardedList(f"safe-{index}" for index in range(20_000))
+
+    sanitized = sanitize_diagnostic_value(value)
+
+    assert sanitized == SECRET_REDACTION
+    assert value.visited <= 10_000
+    assert sanitize_diagnostic_value(sanitized) == SECRET_REDACTION
+
+
+def test_sanitizer_charges_mapping_keys_and_values_then_stops_immediately() -> None:
+    class GuardedDict(dict[str, str]):
+        visited = 0
+
+        def items(self):  # type: ignore[no-untyped-def]
+            for item in super().items():
+                self.visited += 1
+                if self.visited > 5_000:
+                    raise AssertionError("sanitizer traversed uncharged mapping entries")
+                yield item
+
+    value = GuardedDict((f"safe-{index}", "context") for index in range(12_000))
+
+    sanitized = sanitize_diagnostic_value(value)
+
+    assert sanitized == SECRET_REDACTION
+    assert value.visited <= 5_000
+    assert sanitize_diagnostic_value(sanitized) == SECRET_REDACTION
+
+
+def test_sanitizer_fails_closed_before_regex_for_oversized_plaintext(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    regex_inputs: list[str] = []
+    original = trace_view_module._sanitize_plain_string
+
+    def record_regex_input(value: str) -> str:
+        regex_inputs.append(value)
+        return original(value)
+
+    monkeypatch.setattr(trace_view_module, "_sanitize_plain_string", record_regex_input)
+    oversized = "ordinary prose " + "x" * 262_144
+
+    sanitized = sanitize_diagnostic_value(oversized)
+
+    assert sanitized == SECRET_REDACTION
+    assert regex_inputs == []
+    assert sanitize_diagnostic_value(sanitized) == SECRET_REDACTION
 
 
 @pytest.mark.parametrize(

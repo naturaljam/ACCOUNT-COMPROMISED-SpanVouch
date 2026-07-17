@@ -85,17 +85,25 @@ def _trace_with_value_secrets() -> TraceIR:
         encoded = json.dumps(encoded)
     root = root.model_copy(
         update={
-            "name": f"root api_key={SENTINEL_KEY}",
+            "name": f"root userpassword={SENTINEL_KEY}",
             "attributes": {
                 **root.attributes,
                 "tool.result": {
                     "api_key": SENTINEL_KEY,
+                    "api_key:": SENTINEL_KEY,
+                    "authorization=": SENTINEL_KEY,
+                    "headers.authorization": SENTINEL_KEY,
+                    "userpassword": SENTINEL_KEY,
+                    "sessiontokenvalue": SENTINEL_KEY,
                     "X-API-Key": SENTINEL_KEY,
                     "clientSecret": SENTINEL_KEY,
                     "private-key": SENTINEL_KEY,
                     "session_token": SENTINEL_KEY,
                     "Set-Cookie": SENTINEL_KEY,
                     "deep": encoded,
+                    "token_count": 7,
+                    "password_policy": "rotate-quarterly",
+                    "session_duration": 30,
                     "safe": "diagnostic context survives",
                 },
                 "tool.error.message": {
@@ -104,9 +112,9 @@ def _trace_with_value_secrets() -> TraceIR:
                     "message": "provider rejected request",
                 },
                 "run.final_message": (
-                    f"Authorization: Bearer {SENTINEL_KEY}; final context survives"
+                    f"headers.authorization: Token {SENTINEL_KEY}; final context survives"
                 ),
-            }
+            },
         }
     )
     return trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
@@ -281,6 +289,9 @@ def test_allowed_trace_value_secrets_never_reach_sqlite_or_public_aggregate(
     _assert_sanitized(aggregate)
     assert "diagnostic context survives" in view_json[0]
     assert "final context survives" in view_json[0]
+    assert '"token_count":7' in view_json[0]
+    assert '"password_policy":"rotate-quarterly"' in view_json[0]
+    assert '"session_duration":30' in view_json[0]
 
 
 @pytest.mark.asyncio
@@ -383,9 +394,7 @@ def test_tracked_files_do_not_contain_deepseek_credentials() -> None:
         check=True,
         capture_output=True,
     ).stdout.split(b"\0")
-    tracked = tuple(
-        encoded_path.decode("utf-8") for encoded_path in encoded_paths if encoded_path
-    )
+    tracked = tuple(encoded_path.decode("utf-8") for encoded_path in encoded_paths if encoded_path)
     assert ".env" not in tracked, "ignored local environment file must never be scanned"
 
     offenders: dict[str, tuple[str, ...]] = {}
@@ -393,9 +402,7 @@ def test_tracked_files_do_not_contain_deepseek_credentials() -> None:
         content = (ROOT / relative).read_bytes()
         if b"\0" in content:
             continue
-        findings = _credential_findings(
-            relative, content.decode("utf-8", errors="replace")
-        )
+        findings = _credential_findings(relative, content.decode("utf-8", errors="replace"))
         if findings:
             offenders[relative] = findings
     assert not offenders, f"tracked files contain populated DeepSeek credentials: {offenders}"

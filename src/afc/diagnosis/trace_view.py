@@ -32,6 +32,7 @@ _MAX_VALUE_NODES = 10_000
 _MAX_ENCODED_STRING_BYTES = 262_144
 _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _KEY_SEPARATOR = re.compile(r"[^a-z0-9]+")
+_LABEL_DELIMITERS = " \t\r\n:=\"'"
 _NON_SECRET_METADATA_PARTS = frozenset(
     {
         "age",
@@ -75,9 +76,7 @@ _PROVIDER_KEY = re.compile(
     r"(?<![A-Za-z0-9])(?:ghp|github_pat|xox[baprs])_[A-Za-z0-9_-]{16,}"
     r"(?![A-Za-z0-9])"
 )
-_URL_USERINFO = re.compile(
-    r"(?i)(?P<scheme>\b[a-z][a-z0-9+.-]*://)(?P<userinfo>[^/@\s]+)@"
-)
+_URL_USERINFO = re.compile(r"(?i)(?P<scheme>\b[a-z][a-z0-9+.-]*://)(?P<userinfo>[^/@\s]+)@")
 
 
 @dataclass
@@ -87,15 +86,19 @@ class _SanitizationBudget:
     remaining_nodes: int = _MAX_VALUE_NODES
     active_container_ids: set[int] = field(default_factory=set)
 
-    def claim_node(self) -> bool:
+    def claim_node(self) -> None:
         if self.remaining_nodes <= 0:
-            return False
+            raise _SanitizationBudgetExhausted
         self.remaining_nodes -= 1
-        return True
 
 
-def _normalize_key(key: str) -> tuple[str, ...]:
-    separated = _CAMEL_BOUNDARY.sub("_", key).lower()
+class _SanitizationBudgetExhausted(Exception):
+    """Abort the whole sanitation boundary as soon as its budget is spent."""
+
+
+def _normalize_credential_label(label: str) -> tuple[str, ...]:
+    stripped = label.strip(_LABEL_DELIMITERS)
+    separated = _CAMEL_BOUNDARY.sub("_", stripped).lower()
     return tuple(part for part in _KEY_SEPARATOR.split(separated) if part)
 
 
@@ -104,35 +107,33 @@ def _has_only_metadata_suffix(parts: tuple[str, ...], index: int) -> bool:
     return bool(suffix) and all(part in _NON_SECRET_METADATA_PARTS for part in suffix)
 
 
-def _is_credential_key(key: str) -> bool:
-    """Classify credential-bearing keys after case/separator normalization."""
+def _is_compact_credential_label(compact: str) -> bool:
+    credential_endings = (
+        "authorization",
+        "apikey",
+        "privatekey",
+        "password",
+        "passwd",
+        "pwd",
+        "secret",
+        "token",
+        "credential",
+        "cookie",
+        "cookies",
+    )
+    return any(
+        compact.endswith(ending) or compact.endswith(f"{ending}value")
+        for ending in credential_endings
+    )
 
-    parts = _normalize_key(key)
+
+def _is_credential_label(label: str) -> bool:
+    """Classify a mapping/assignment label after syntax normalization."""
+
+    parts = _normalize_credential_label(label)
     if not parts:
         return False
     compact = "".join(parts)
-    if compact in {
-        "accesstoken",
-        "apikey",
-        "authorization",
-        "clientsecret",
-        "cookie",
-        "cookies",
-        "dbpassword",
-        "idtoken",
-        "password",
-        "passwd",
-        "privatekey",
-        "proxyauthorization",
-        "pwd",
-        "refreshtoken",
-        "sessioncookie",
-        "sessiontoken",
-        "setcookie",
-        "token",
-        "xapikey",
-    }:
-        return True
 
     credential_cores = {
         "password",
@@ -154,7 +155,19 @@ def _is_credential_key(key: str) -> bool:
     cookie_indexes = tuple(
         index for index, part in enumerate(parts) if part in {"cookie", "cookies"}
     )
-    return any(not _has_only_metadata_suffix(parts, index) for index in cookie_indexes)
+    if any(not _has_only_metadata_suffix(parts, index) for index in cookie_indexes):
+        return True
+    return _is_compact_credential_label(compact)
+
+
+def _is_credential_mapping_key(key: str) -> bool:
+    """Classify a structural key, excluding prose assignments stored as keys."""
+
+    stripped = key.strip().strip("\"'").strip()
+    without_trailing_delimiter = stripped.rstrip(":=").rstrip()
+    if ":" in without_trailing_delimiter or "=" in without_trailing_delimiter:
+        return False
+    return _is_credential_label(stripped)
 
 
 def _redact_match(match: re.Match[str]) -> str:
@@ -165,7 +178,7 @@ def _redact_match(match: re.Match[str]) -> str:
 
 
 def _redact_assignment(match: re.Match[str]) -> str:
-    if not _is_credential_key(match.group("key")):
+    if not _is_credential_label(match.group("key")):
         return match.group(0)
     return _redact_match(match)
 
@@ -204,10 +217,7 @@ def _looks_structurally_encoded(value: str) -> bool:
     stripped = value.strip()
     if len(stripped) < 2:
         return False
-    return (
-        (stripped[0], stripped[-1])
-        in {("{", "}"), ("[", "]"), ('"', '"')}
-    )
+    return (stripped[0], stripped[-1]) in {("{", "}"), ("[", "]"), ('"', '"')}
 
 
 def _sanitize_plain_string(value: str) -> str:
@@ -230,17 +240,18 @@ def _sanitize_string(
     depth: int,
     encoded_json_depth: int,
 ) -> str:
+    if len(value) > _MAX_ENCODED_STRING_BYTES:
+        return SECRET_REDACTION
     encoded_size = len(value.encode("utf-8", errors="replace"))
     if (
         encoded_json_depth >= _MAX_ENCODED_JSON_DEPTH
         or encoded_size > _MAX_ENCODED_STRING_BYTES
         or depth >= _MAX_STRUCTURE_DEPTH
     ):
-        if _looks_structurally_encoded(value):
-            return SECRET_REDACTION
-        return _sanitize_plain_string(value)
+        return SECRET_REDACTION
 
     if _looks_structurally_encoded(value):
+        budget.claim_node()
         try:
             decoded = json.loads(value)
         except (json.JSONDecodeError, RecursionError, ValueError):
@@ -269,14 +280,7 @@ def _sanitize_diagnostic_value(
     depth: int,
     encoded_json_depth: int,
 ) -> JsonValue:
-    if not budget.claim_node():
-        if isinstance(value, (list, dict)) or (
-            isinstance(value, str) and _looks_structurally_encoded(value)
-        ):
-            return SECRET_REDACTION
-        if isinstance(value, str):
-            return _sanitize_plain_string(value)
-        return value
+    budget.claim_node()
     if isinstance(value, str):
         return _sanitize_string(
             value,
@@ -290,15 +294,17 @@ def _sanitize_diagnostic_value(
             return SECRET_REDACTION
         budget.active_container_ids.add(identity)
         try:
-            return [
-                _sanitize_diagnostic_value(
-                    item,
-                    budget=budget,
-                    depth=depth + 1,
-                    encoded_json_depth=encoded_json_depth,
+            sanitized_items: list[JsonValue] = []
+            for item in value:
+                sanitized_items.append(
+                    _sanitize_diagnostic_value(
+                        item,
+                        budget=budget,
+                        depth=depth + 1,
+                        encoded_json_depth=encoded_json_depth,
+                    )
                 )
-                for item in value
-            ]
+            return sanitized_items
         finally:
             budget.active_container_ids.remove(identity)
     if isinstance(value, dict):
@@ -309,27 +315,23 @@ def _sanitize_diagnostic_value(
         sanitized: dict[str, JsonValue] = {}
         try:
             for key, item in value.items():
+                budget.claim_node()
                 sanitized_key = _sanitize_string(
                     key,
                     budget=budget,
                     depth=depth + 1,
                     encoded_json_depth=encoded_json_depth,
                 )
-                sanitized_item: JsonValue = (
-                    SECRET_REDACTION
-                    if (
-                        "=" not in key
-                        and ":" not in key
-                        and _is_credential_key(key)
-                        and _is_populated(item)
-                    )
-                    else _sanitize_diagnostic_value(
+                if _is_credential_mapping_key(key) and _is_populated(item):
+                    budget.claim_node()
+                    sanitized_item: JsonValue = SECRET_REDACTION
+                else:
+                    sanitized_item = _sanitize_diagnostic_value(
                         item,
                         budget=budget,
                         depth=depth + 1,
                         encoded_json_depth=encoded_json_depth,
                     )
-                )
                 if sanitized_key in sanitized:
                     sanitized[sanitized_key] = SECRET_REDACTION
                 else:
@@ -343,12 +345,15 @@ def _sanitize_diagnostic_value(
 def sanitize_diagnostic_value(value: JsonValue) -> JsonValue:
     """Sanitize one JSON value under bounded recursive, encoded inspection."""
 
-    return _sanitize_diagnostic_value(
-        value,
-        budget=_SanitizationBudget(),
-        depth=0,
-        encoded_json_depth=0,
-    )
+    try:
+        return _sanitize_diagnostic_value(
+            value,
+            budget=_SanitizationBudget(),
+            depth=0,
+            encoded_json_depth=0,
+        )
+    except _SanitizationBudgetExhausted:
+        return SECRET_REDACTION
 
 
 class DiagnosticSpan(BaseModel):
@@ -375,7 +380,10 @@ class DiagnosticSpan(BaseModel):
     def sanitize_attributes(cls, value: object) -> object:
         if not isinstance(value, dict):
             return value
-        return sanitize_diagnostic_value(cast(dict[str, JsonValue], value))
+        sanitized = sanitize_diagnostic_value(cast(dict[str, JsonValue], value))
+        if isinstance(sanitized, dict):
+            return sanitized
+        return {"sanitization": SECRET_REDACTION}
 
 
 class DiagnosticTraceView(BaseModel):

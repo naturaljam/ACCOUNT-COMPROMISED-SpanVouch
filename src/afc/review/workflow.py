@@ -61,6 +61,7 @@ class ReviewWorkflowState(TypedDict):
     composite_verdict: str | None
     route: NotRequired[str]
     lease_claimed: NotRequired[bool]
+    provider_effect_committed: NotRequired[bool]
 
 
 class ReviewWorkflowProviderError(ReviewError):
@@ -84,8 +85,7 @@ def _provider_failure(error: ProviderError) -> tuple[str, bool]:
     if isinstance(error, ProviderRequestError):
         code = (
             error.code
-            if error.code
-            in {"transport_error", "upstream_http_error", "missing_response"}
+            if error.code in {"transport_error", "upstream_http_error", "missing_response"}
             else "provider_request_error"
         )
         return code, error.retryable
@@ -214,9 +214,7 @@ class ReviewWorkflow:
         async def call_provider() -> ProviderWorkResult:
             return await provider()
 
-        provider_task: asyncio.Task[ProviderWorkResult] = asyncio.create_task(
-            call_provider()
-        )
+        provider_task: asyncio.Task[ProviderWorkResult] = asyncio.create_task(call_provider())
         heartbeat_task = asyncio.create_task(
             self._renew_lease_until_stopped(
                 runtime,
@@ -250,9 +248,7 @@ class ReviewWorkflow:
                 heartbeat_error = heartbeat_task.exception()
                 if heartbeat_error is not None:
                     raise heartbeat_error
-                raise ReviewConflictError(
-                    "review lease heartbeat stopped before finalization"
-                )
+                raise ReviewConflictError("review lease heartbeat stopped before finalization")
 
             async def call_finalizer() -> ProviderFinalizationResult:
                 return await finalize(provider_result)
@@ -413,7 +409,18 @@ class ReviewWorkflow:
     async def _verify_round(
         self, state: ReviewWorkflowState, *, expected_round: int
     ) -> ReviewWorkflowState:
+        try:
+            return await self._verify_round_once(state, expected_round=expected_round)
+        except ReviewConflictError:
+            if not state.get("provider_effect_committed", False):
+                raise
+            return await self._durable_postcommit_state(state["case_id"])
+
+    async def _verify_round_once(
+        self, state: ReviewWorkflowState, *, expected_round: int
+    ) -> ReviewWorkflowState:
         case_id = state["case_id"]
+        provider_effect_committed = state.get("provider_effect_committed", False)
         runtime = await self._repository.load_runtime(case_id)
         if runtime.case.current_revision_number != expected_round:
             raise ReviewConflictError("verification round conflicts with durable state")
@@ -444,11 +451,19 @@ class ReviewWorkflow:
                 request_revision=request_revision,
             )
             if request_revision:
-                return self._state_after(runtime, "request_revision")
+                return self._state_after(
+                    runtime,
+                    "request_revision",
+                    provider_effect_committed=provider_effect_committed,
+                )
 
         if deterministic.verdict is not VerifierVerdict.VERIFIED:
             runtime = await self._repository.load_runtime(case_id)
-            return self._state_after(runtime, "route_to_human")
+            return self._state_after(
+                runtime,
+                "route_to_human",
+                provider_effect_committed=provider_effect_committed,
+            )
 
         runtime = await self._repository.load_runtime(case_id)
         if runtime.case.verification_mode is VerificationMode.HYBRID:
@@ -466,9 +481,7 @@ class ReviewWorkflow:
 
                 async def verify_semantically() -> VerifierReport | ProviderError:
                     if self._semantic is None:
-                        return ProviderConfigurationError(
-                            "semantic verifier is not configured"
-                        )
+                        return ProviderConfigurationError("semantic verifier is not configured")
                     try:
                         return await self._semantic.verify(
                             self._verification_input(claimed_runtime)
@@ -494,9 +507,7 @@ class ReviewWorkflow:
                         return (
                             None,
                             False,
-                            ReviewWorkflowProviderError(
-                                case_id, code, retryable=retryable
-                            ),
+                            ReviewWorkflowProviderError(case_id, code, retryable=retryable),
                         )
                     normalized = self._normalize_report(
                         outcome, VerifierKind.SEMANTIC, expected_round
@@ -514,24 +525,31 @@ class ReviewWorkflow:
                     )
                     return normalized, request_revision, None
 
-                semantic, request_revision, provider_error = (
-                    await self._run_provider_lifecycle(
-                        claimed_runtime,
-                        work=ReviewLeaseWork.SEMANTIC_VERIFICATION,
-                        provider=verify_semantically,
-                        finalize=finalize_semantic,
-                    )
+                semantic, request_revision, provider_error = await self._run_provider_lifecycle(
+                    claimed_runtime,
+                    work=ReviewLeaseWork.SEMANTIC_VERIFICATION,
+                    provider=verify_semantically,
+                    finalize=finalize_semantic,
                 )
                 if provider_error is not None:
                     raise provider_error
                 if semantic is None:
                     raise ReviewConflictError("semantic finalization result is missing")
                 runtime = await self._repository.load_runtime(case_id)
+                provider_effect_committed = True
                 if request_revision:
-                    return self._state_after(runtime, "request_revision")
+                    return self._state_after(
+                        runtime,
+                        "request_revision",
+                        provider_effect_committed=True,
+                    )
 
         runtime = await self._repository.load_runtime(case_id)
-        return self._state_after(runtime, "route_to_human")
+        return self._state_after(
+            runtime,
+            "route_to_human",
+            provider_effect_committed=provider_effect_committed,
+        )
 
     @staticmethod
     def _verification_input(runtime: ReviewRuntimeBundle) -> VerificationInput:
@@ -614,19 +632,28 @@ class ReviewWorkflow:
         )
 
     async def _request_revision(self, state: ReviewWorkflowState) -> ReviewWorkflowState:
-        runtime = await self._repository.load_runtime(state["case_id"])
-        if runtime.case.status is not ReviewStatus.REVISION_REQUESTED:
-            raise ReviewConflictError("revision is not requested")
-        if runtime.case.evidence_revision_count != 0 or runtime.case.current_revision_number != 0:
-            raise ReviewConflictError("evidence revision limit reached")
-        runtime = await self._claim(
-            runtime,
-            target=ReviewStatus.REVISING,
-            event_type=WorkflowEventType.REVISION_STARTED,
-        )
+        try:
+            runtime = await self._repository.load_runtime(state["case_id"])
+            if runtime.case.status is not ReviewStatus.REVISION_REQUESTED:
+                raise ReviewConflictError("revision is not requested")
+            if (
+                runtime.case.evidence_revision_count != 0
+                or runtime.case.current_revision_number != 0
+            ):
+                raise ReviewConflictError("evidence revision limit reached")
+            runtime = await self._claim(
+                runtime,
+                target=ReviewStatus.REVISING,
+                event_type=WorkflowEventType.REVISION_STARTED,
+            )
+        except ReviewConflictError:
+            if not state.get("provider_effect_committed", False):
+                raise
+            return await self._durable_postcommit_state(state["case_id"])
         return {
             **self._state_after(runtime, "revise_once"),
             "lease_claimed": True,
+            "provider_effect_committed": False,
         }
 
     async def _revise_once(self, state: ReviewWorkflowState) -> ReviewWorkflowState:
@@ -652,9 +679,7 @@ class ReviewWorkflow:
 
         async def revise() -> DiagnosisReport | ProviderError:
             if not self._reviser.supports(claimed_runtime.case.diagnoser):
-                return ProviderConfigurationError(
-                    "revision provider is not configured"
-                )
+                return ProviderConfigurationError("revision provider is not configured")
             try:
                 return await self._reviser.revise(claimed_runtime, gaps)
             except ProviderError as error:
@@ -685,7 +710,11 @@ class ReviewWorkflow:
         if provider_error is not None:
             raise provider_error
         runtime = await self._repository.load_runtime(claimed_runtime.case.case_id)
-        return self._state_after(runtime, "verify_final")
+        return self._state_after(
+            runtime,
+            "verify_final",
+            provider_effect_committed=True,
+        )
 
     async def _commit_revision(
         self,
@@ -699,9 +728,7 @@ class ReviewWorkflow:
             or revised_report.run_id != runtime.snapshot.run_id
             or revised_report.diagnoser is not runtime.case.diagnoser
         ):
-            raise ReviewConflictError(
-                "revised diagnosis is not bound to the review input"
-            )
+            raise ReviewConflictError("revised diagnosis is not bound to the review input")
         now = self._now()
         revision = DiagnosisRevision(
             revision_id=self._id_factory(),
@@ -738,26 +765,49 @@ class ReviewWorkflow:
     async def _route_to_human(self, state: ReviewWorkflowState) -> ReviewWorkflowState:
         runtime = await self._repository.load_runtime(state["case_id"])
         if runtime.case.status is not ReviewStatus.VERIFYING:
+            if state.get("provider_effect_committed", False):
+                return self._state_after(
+                    runtime,
+                    "end",
+                    provider_effect_committed=True,
+                )
             raise ReviewConflictError("review case is not ready for human review")
         if runtime.case.composite_verdict is None:
             raise ReviewConflictError("review case has no composite verdict")
         now = self._now()
-        await self._repository.route_to_human(
-            RouteToHumanReview(
-                case_id=runtime.case.case_id,
-                expected_version=runtime.case.version,
-                prior_status=ReviewStatus.VERIFYING,
-                target_status=ReviewStatus.AWAITING_HUMAN_REVIEW,
-                event_id=self._id_factory(),
-                event_type=WorkflowEventType.AWAITING_HUMAN_REVIEW,
-                event_metadata_json=canonical_json(
-                    {"verdict": runtime.case.composite_verdict.value}
-                ),
-                occurred_at=now,
+        try:
+            await self._repository.route_to_human(
+                RouteToHumanReview(
+                    case_id=runtime.case.case_id,
+                    expected_version=runtime.case.version,
+                    prior_status=ReviewStatus.VERIFYING,
+                    target_status=ReviewStatus.AWAITING_HUMAN_REVIEW,
+                    event_id=self._id_factory(),
+                    event_type=WorkflowEventType.AWAITING_HUMAN_REVIEW,
+                    event_metadata_json=canonical_json(
+                        {"verdict": runtime.case.composite_verdict.value}
+                    ),
+                    occurred_at=now,
+                )
             )
-        )
+        except ReviewConflictError:
+            if not state.get("provider_effect_committed", False):
+                raise
+            return await self._durable_postcommit_state(runtime.case.case_id)
         runtime = await self._repository.load_runtime(runtime.case.case_id)
-        return self._state_after(runtime, "end")
+        return self._state_after(
+            runtime,
+            "end",
+            provider_effect_committed=state.get("provider_effect_committed", False),
+        )
+
+    async def _durable_postcommit_state(self, case_id: str) -> ReviewWorkflowState:
+        runtime = await self._repository.load_runtime(case_id)
+        return self._state_after(
+            runtime,
+            "end",
+            provider_effect_committed=True,
+        )
 
     async def _persist_semantic_failure(
         self,
@@ -829,9 +879,7 @@ class ReviewWorkflow:
             target_status=ReviewStatus.AWAITING_HUMAN_REVIEW,
             event_id=self._id_factory(),
             event_type=WorkflowEventType.AWAITING_HUMAN_REVIEW,
-            event_metadata_json=canonical_json(
-                {"verdict": merged.verdict.value}
-            ),
+            event_metadata_json=canonical_json({"verdict": merged.verdict.value}),
             occurred_at=completed_at,
         )
         await self._repository.finalize_semantic_failure(
@@ -852,16 +900,19 @@ class ReviewWorkflow:
                 lease_owner=self._lease_owner,
                 event_id=self._id_factory(),
                 event_type=WorkflowEventType.REVISION_PROVIDER_FAILED,
-                event_metadata_json=canonical_json(
-                    {"code": code, "retryable": retryable}
-                ),
+                event_metadata_json=canonical_json({"code": code, "retryable": retryable}),
                 occurred_at=now,
             )
         )
 
     @staticmethod
-    def _state_after(runtime: ReviewRuntimeBundle, route: str) -> ReviewWorkflowState:
-        return {
+    def _state_after(
+        runtime: ReviewRuntimeBundle,
+        route: str,
+        *,
+        provider_effect_committed: bool = False,
+    ) -> ReviewWorkflowState:
+        state: ReviewWorkflowState = {
             "case_id": runtime.case.case_id,
             "verification_round": runtime.case.current_revision_number,
             "composite_verdict": (
@@ -872,3 +923,6 @@ class ReviewWorkflow:
             "route": route,
             "lease_claimed": False,
         }
+        if provider_effect_committed:
+            state["provider_effect_committed"] = True
+        return state

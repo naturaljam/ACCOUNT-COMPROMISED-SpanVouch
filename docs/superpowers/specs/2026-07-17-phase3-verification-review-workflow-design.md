@@ -448,7 +448,8 @@ WHERE case_id = ? AND version = ? AND status = 'awaiting_human_review'
 - `verifier_runs`：deterministic/semantic 报告、usage 和 operational error；
 - `human_decisions`：人工动作、reason、correction reference；
 - `workflow_events`：追加式状态转换；
-- `idempotency_keys`：scope、key、request fingerprint、result reference。
+- `idempotency_keys`：scope、key、request fingerprint、result reference、
+  `reservation_id`、`lease_expires_at`、`created_at`、`updated_at`。
 
 ### 11.2 配置
 

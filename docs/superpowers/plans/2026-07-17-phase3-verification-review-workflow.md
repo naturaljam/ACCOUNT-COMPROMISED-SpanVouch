@@ -619,7 +619,8 @@ human_decisions: decision_id, case_id, action, reviewer_label, reason,
 workflow_events: event_id, case_id, event_sequence, event_type,
                  from_status, to_status, case_version, metadata_json, created_at
 idempotency_keys: scope, idempotency_key, request_sha256,
-                  result_type, result_id, created_at
+                  result_type, result_id, reservation_id, lease_expires_at,
+                  created_at, updated_at
 ```
 
 Open a fresh connection inside the worker thread for each transaction, apply connection PRAGMAs on every connection, use `BEGIN IMMEDIATE` for writes, commit explicitly, and roll back on every exception. Public async methods call private synchronous transactions with `asyncio.to_thread`; do not share a `sqlite3.Connection` across event-loop threads.
