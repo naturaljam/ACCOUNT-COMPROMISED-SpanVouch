@@ -394,6 +394,14 @@ async def test_prompt_contains_only_independent_canonical_allowlist_data() -> No
                     "\n"
                     r"https:/\/auth.example.com:443/path mixed-url-safe"
                     "\n"
+                    f"authorization {'x' * 40}={VALUE_SECRET}\n"
+                    "safe=custom_token_count\N{NO-BREAK SPACE}field=ok "
+                    "arbitrary-metadata-safe\n"
+                    f"safe=custom_token_count\N{EM SPACE}api key={VALUE_SECRET}\n"
+                    f"https\N{FULLWIDTH COLON}/\\/agent:{VALUE_SECRET}"
+                    "@compatible.example.com:443/path\n"
+                    "https\N{SMALL COLON}//auth.example.com:443/path "
+                    "compatible-colon-url-safe\n"
                     "A cookie: recipe; instructions remain safe\n"
                     "cookie: recipe; instructions remain safe\n"
                     "Browser cookie: recipe; instructions remain safe\n"
@@ -452,6 +460,8 @@ async def test_prompt_contains_only_independent_canonical_allowlist_data() -> No
     assert "compatible-ratio-safe" in serialized
     assert "unicode-space-safe" in serialized
     assert "mixed-url-safe" in serialized
+    assert "arbitrary-metadata-safe" in serialized
+    assert "compatible-colon-url-safe" in serialized
     assert "Bearer of; good news" in serialized
     assert "trace-review-1" not in serialized
     assert "run-review-1" not in serialized

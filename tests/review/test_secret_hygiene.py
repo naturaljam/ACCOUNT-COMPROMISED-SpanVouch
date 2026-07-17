@@ -194,6 +194,14 @@ def _trace_with_value_secrets() -> TraceIR:
                     "\n"
                     r"https:/\/auth.example.com:443/path mixed-url-safe"
                     "\n"
+                    f"authorization {'x' * 40}={SENTINEL_KEY}\n"
+                    "safe=custom_token_count\N{NO-BREAK SPACE}field=ok "
+                    "arbitrary-metadata-safe\n"
+                    f"safe=custom_token_count\N{EM SPACE}api key={SENTINEL_KEY}\n"
+                    f"https\N{FULLWIDTH COLON}/\\/agent:{SENTINEL_KEY}"
+                    "@compatible.example.com:443/path\n"
+                    "https\N{SMALL COLON}//auth.example.com:443/path "
+                    "compatible-colon-url-safe\n"
                     "Bearer Qaz; HTTP 401\n"
                     "A cookie: recipe; instructions remain safe\n"
                     "cookie: recipe; instructions remain safe\n"
@@ -407,6 +415,8 @@ def test_allowed_trace_value_secrets_never_reach_sqlite_or_public_aggregate(
     assert "compatible-ratio-safe" in view_json[0]
     assert "unicode-space-safe" in view_json[0]
     assert "mixed-url-safe" in view_json[0]
+    assert "arbitrary-metadata-safe" in view_json[0]
+    assert "compatible-colon-url-safe" in view_json[0]
     assert "Bearer of; good news" in view_json[0]
 
 

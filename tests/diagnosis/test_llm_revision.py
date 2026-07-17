@@ -375,6 +375,14 @@ async def test_revision_prompt_is_a_canonical_sanitized_boundary() -> None:
                     "\n"
                     r"https:/\/auth.example.com:443/path mixed-url-safe"
                     "\n"
+                    f"authorization {'x' * 40}={VALUE_SECRET}\n"
+                    "safe=custom_token_count\N{NO-BREAK SPACE}field=ok "
+                    "arbitrary-metadata-safe\n"
+                    f"safe=custom_token_count\N{EM SPACE}api key={VALUE_SECRET}\n"
+                    f"https\N{FULLWIDTH COLON}/\\/agent:{VALUE_SECRET}"
+                    "@compatible.example.com:443/path\n"
+                    "https\N{SMALL COLON}//auth.example.com:443/path "
+                    "compatible-colon-url-safe\n"
                     "cookie: recipe; instructions remain safe\n"
                     "Browser cookie: recipe; instructions remain safe\n"
                     "Cookie=recipe; instructions remain safe\n"
@@ -462,6 +470,8 @@ async def test_revision_prompt_is_a_canonical_sanitized_boundary() -> None:
     assert "compatible-ratio-safe" in prompt
     assert "unicode-space-safe" in prompt
     assert "mixed-url-safe" in prompt
+    assert "arbitrary-metadata-safe" in prompt
+    assert "compatible-colon-url-safe" in prompt
     for forbidden in (
         "semantic-trace-id-secret",
         "semantic-run-id-secret",

@@ -1217,6 +1217,108 @@ def test_unicode_spaces_support_labels_without_cross_field_contamination() -> No
             _assert_sanitizer_fixed_point(safe_source, safe_source)
 
 
+@pytest.mark.parametrize(
+    ("credential_core", "former_boundary"),
+    (
+        ("token", 35),
+        ("authorization", 27),
+        ("api key", 34),
+        ("private key", 30),
+    ),
+)
+def test_structural_credential_cores_ignore_compact_alias_length_limits(
+    credential_core: str,
+    former_boundary: int,
+) -> None:
+    for suffix_length in (
+        former_boundary - 3,
+        former_boundary - 1,
+        former_boundary,
+        former_boundary + 1,
+        former_boundary + 3,
+        256,
+    ):
+        label = f"{credential_core} {'x' * suffix_length}"
+        source = f"{label}=secret-one"
+        expected = f"{label}={SECRET_REDACTION}"
+
+        _assert_sanitizer_fixed_point(source, expected)
+        assert sanitize_diagnostic_value({label: "secret-one"}) == {
+            label: SECRET_REDACTION
+        }
+
+
+def test_structural_credential_core_scan_is_linear_for_huge_suffixes() -> None:
+    long_single_chunk = f"token {'x' * 200_000}"
+    many_chunks = f"authorization {' '.join('x' for _ in range(50_000))}"
+
+    for label in (long_single_chunk, many_chunks):
+        sanitized = sanitize_diagnostic_value(f"{label}=secret-one")
+
+        assert sanitized == f"{label}={SECRET_REDACTION}"
+        assert sanitize_diagnostic_value(sanitized) == sanitized
+
+
+def test_arbitrary_prefix_metadata_stops_cross_field_label_contamination() -> None:
+    unicode_spaces = (
+        "\N{NO-BREAK SPACE}",
+        "\N{EM SPACE}",
+        "\N{IDEOGRAPHIC SPACE}",
+    )
+    metadata_labels = (
+        "custom_token_count",
+        "custom_password_policy",
+        "tenant_refresh_token_rotation_status",
+    )
+
+    for space in (" ", *unicode_spaces):
+        for metadata_label in metadata_labels:
+            safe_source = f"safe={metadata_label}{space}field=ok"
+            _assert_sanitizer_fixed_point(safe_source, safe_source)
+            assert sanitize_diagnostic_value({metadata_label: "visible"}) == {
+                metadata_label: "visible"
+            }
+
+        for credential_label in ("api key", "token payload"):
+            source = f"safe=custom_token_count{space}{credential_label}=secret-one"
+            expected = (
+                f"safe=custom_token_count{space}{credential_label}="
+                f"{SECRET_REDACTION}"
+            )
+            _assert_sanitizer_fixed_point(source, expected)
+
+
+def test_nfkc_url_scheme_colons_preserve_spelling_and_url_boundaries() -> None:
+    colon_delimiters = (
+        "\N{PRESENTATION FORM FOR VERTICAL COLON}",
+        "\N{SMALL COLON}",
+        "\N{FULLWIDTH COLON}",
+    )
+    slash_spellings = ("//", r"\/\/", r"/\/", r"\//")
+
+    for colon, slashes in product(colon_delimiters, slash_spellings):
+        scheme = f"https{colon}{slashes}"
+        safe_url = f"{scheme}auth.example:443/path?status=ok"
+        _assert_sanitizer_fixed_point(safe_url, safe_url)
+        _assert_sanitizer_fixed_point(
+            f"{scheme}agent:secret-one@auth.example:443/path",
+            f"{scheme}{SECRET_REDACTION}@auth.example:443/path",
+        )
+
+    first, second, third = colon_delimiters
+    source = (
+        f"https{first}//outer.example/path?redirect="
+        f"https{second}/\\/agent:secret-one@auth.example:443/path "
+        f"https{third}\\//user:secret-two@token.example:8443/health"
+    )
+    expected = (
+        f"https{first}//outer.example/path?redirect="
+        f"https{second}/\\/{SECRET_REDACTION}@auth.example:443/path "
+        f"https{third}\\//{SECRET_REDACTION}@token.example:8443/health"
+    )
+    _assert_sanitizer_fixed_point(source, expected)
+
+
 def test_url_path_query_and_fragment_colons_are_safe_tags() -> None:
     safe_urls = (
         "https://auth.example.com:443/path/token:latest",
@@ -1340,6 +1442,15 @@ def test_trace_view_preserves_safe_urls_and_redacts_punctuation_labels() -> None
                     rf"https:\//agent:{VALUE_SECRET}@mixed-two.example.com:443/path"
                     "\n"
                     r"https:/\/auth.example.com:443/path mixed-url-safe"
+                    "\n"
+                    f"authorization {'x' * 40}={VALUE_SECRET}\n"
+                    "safe=custom_token_count\N{NO-BREAK SPACE}field=ok "
+                    "arbitrary-metadata-safe\n"
+                    f"safe=custom_token_count\N{EM SPACE}api key={VALUE_SECRET}\n"
+                    f"https\N{FULLWIDTH COLON}/\\/agent:{VALUE_SECRET}"
+                    "@compatible.example.com:443/path\n"
+                    "https\N{SMALL COLON}//auth.example.com:443/path "
+                    "compatible-colon-url-safe"
                 ),
             }
         }
@@ -1364,4 +1475,6 @@ def test_trace_view_preserves_safe_urls_and_redacts_punctuation_labels() -> None
     assert "compatible-ratio-safe" in message
     assert "unicode-space-safe" in message
     assert "mixed-url-safe" in message
+    assert "arbitrary-metadata-safe" in message
+    assert "compatible-colon-url-safe" in message
     assert sanitize_diagnostic_trace_view(view) == view

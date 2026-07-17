@@ -117,6 +117,23 @@ _COMPACT_SENSITIVE_PREFIXES = frozenset(
 _COMPACT_SENSITIVE_SUFFIXES = frozenset(
     {"", "credential", "credentials", "hash", "key", "string", "value"}
 )
+_CREDENTIAL_PART_CORES = frozenset(
+    {
+        "auth",
+        "authorization",
+        "cookie",
+        "cookies",
+        "credential",
+        "password",
+        "passwd",
+        "pwd",
+        "secret",
+        "token",
+    }
+)
+_CREDENTIAL_PAIR_CORES = frozenset(
+    {("access", "key"), ("api", "key"), ("private", "key")}
+)
 _COMPACT_CREDENTIAL_LABELS = frozenset(
     f"{prefix}{core}{suffix}"
     for prefix in _COMPACT_SENSITIVE_PREFIXES
@@ -164,7 +181,10 @@ _PROVIDER_KEY = re.compile(
     r"(?<![A-Za-z0-9])(?:ghp|github_pat|xox[baprs])_[A-Za-z0-9_-]{16,}"
     r"(?![A-Za-z0-9])"
 )
-_URL_SCHEME_PATTERN = r"\b[a-z][a-z0-9+.-]*:(?:(?:\\)?/){2}"
+_URL_SCHEME_COLONS = ":\N{PRESENTATION FORM FOR VERTICAL COLON}\N{SMALL COLON}\N{FULLWIDTH COLON}"
+_URL_SCHEME_PATTERN = (
+    rf"\b[a-z][a-z0-9+.-]*[{_URL_SCHEME_COLONS}](?:(?:\\)?/){{2}}"
+)
 _URL_SCHEME = re.compile(rf"(?i){_URL_SCHEME_PATTERN}")
 _URL_USERINFO = re.compile(
     rf"(?i)(?P<scheme>{_URL_SCHEME_PATTERN})"
@@ -198,12 +218,24 @@ def _normalize_credential_label(label: str) -> tuple[str, ...]:
     return tuple(part for part in _KEY_SEPARATOR.split(separated) if part)
 
 
+def _is_safe_metadata_tail(
+    length: int,
+    last_part: str | None,
+    all_parts_are_metadata: bool,
+) -> bool:
+    return (
+        length > 0
+        and last_part in _SAFE_METADATA_TERMINALS
+        and all_parts_are_metadata
+    )
+
+
 def _has_only_metadata_suffix(parts: tuple[str, ...], index: int) -> bool:
     suffix = parts[index + 1 :]
-    return (
-        bool(suffix)
-        and suffix[-1] in _SAFE_METADATA_TERMINALS
-        and all(part in _SAFE_METADATA_CHAIN_PARTS for part in suffix)
+    return _is_safe_metadata_tail(
+        len(suffix),
+        suffix[-1] if suffix else None,
+        all(part in _SAFE_METADATA_CHAIN_PARTS for part in suffix),
     )
 
 
@@ -213,36 +245,40 @@ def _is_compact_credential_label(compact: str) -> bool:
     return compact in _COMPACT_CREDENTIAL_LABELS
 
 
+def _is_credential_core_end(previous_part: str | None, part: str) -> bool:
+    return part in _CREDENTIAL_PART_CORES or (
+        previous_part is not None
+        and (previous_part, part) in _CREDENTIAL_PAIR_CORES
+    )
+
+
+def _credential_core_ends_at(parts: tuple[str, ...], index: int) -> bool:
+    previous_part = parts[index - 1] if index > 0 else None
+    return _is_credential_core_end(previous_part, parts[index])
+
+
+def _first_credential_core_end(parts: tuple[str, ...]) -> int | None:
+    return next(
+        (
+            index
+            for index in range(len(parts))
+            if _credential_core_ends_at(parts, index)
+        ),
+        None,
+    )
+
+
 def _is_credential_label_parts(parts: tuple[str, ...]) -> bool:
     if not parts:
         return False
-    compact = "".join(parts)
+    core_end = _first_credential_core_end(parts)
+    if core_end is not None:
+        return not _has_only_metadata_suffix(parts, core_end)
 
-    credential_cores = {
-        "auth",
-        "authorization",
-        "password",
-        "passwd",
-        "pwd",
-        "secret",
-        "token",
-        "credential",
-    }
-    for index, part in enumerate(parts):
-        if part in credential_cores:
-            return not _has_only_metadata_suffix(parts, index)
-
-    for first, second in (("access", "key"), ("api", "key"), ("private", "key")):
-        for index in range(len(parts) - 1):
-            if parts[index : index + 2] == (first, second):
-                return not _has_only_metadata_suffix(parts, index + 1)
-
-    cookie_indexes = tuple(
-        index for index, part in enumerate(parts) if part in {"cookie", "cookies"}
-    )
-    if any(not _has_only_metadata_suffix(parts, index) for index in cookie_indexes):
-        return True
-    return _is_compact_credential_label(compact)
+    compact_length = sum(len(part) for part in parts)
+    if compact_length > _MAX_COMPACT_CREDENTIAL_LABEL_LENGTH:
+        return False
+    return _is_compact_credential_label("".join(parts))
 
 
 def _is_credential_label(label: str) -> bool:
@@ -305,7 +341,7 @@ def _is_credential_shaped_cookie_value(value: str) -> bool:
     )
 
 
-def _has_safe_metadata_suffix(
+def _has_compact_safe_metadata_suffix(
     chunks: tuple[tuple[str, ...], ...],
     end: int,
 ) -> bool:
@@ -319,6 +355,53 @@ def _has_safe_metadata_suffix(
     return False
 
 
+def _last_safe_metadata_chunk_boundary(
+    chunks: tuple[tuple[str, ...], ...],
+) -> int:
+    last_safe_boundary = 0
+    active_core = False
+    metadata_tail_length = 0
+    previous_part: str | None = None
+
+    for chunk_index, chunk in enumerate(chunks[:-1], start=1):
+        for part in chunk:
+            is_core = _is_credential_core_end(previous_part, part)
+            if is_core:
+                active_core = True
+                metadata_tail_length = 0
+            elif active_core and part in _SAFE_METADATA_CHAIN_PARTS:
+                metadata_tail_length += 1
+            else:
+                active_core = False
+                metadata_tail_length = 0
+            previous_part = part
+
+        if _is_safe_metadata_tail(
+            metadata_tail_length,
+            chunk[-1],
+            active_core,
+        ) or _has_compact_safe_metadata_suffix(chunks, chunk_index):
+            last_safe_boundary = chunk_index
+
+    return last_safe_boundary
+
+
+def _compact_credential_suffix_parts(
+    chunks: tuple[tuple[str, ...], ...],
+    boundary: int,
+) -> tuple[str, ...] | None:
+    compact_suffix = ""
+    suffix_parts: tuple[str, ...] = ()
+    for chunk in reversed(chunks[boundary:]):
+        compact_suffix = f"{''.join(chunk)}{compact_suffix}"
+        if len(compact_suffix) > _MAX_COMPACT_CREDENTIAL_LABEL_LENGTH:
+            return None
+        suffix_parts = (*chunk, *suffix_parts)
+        if _is_compact_credential_label(compact_suffix):
+            return suffix_parts
+    return None
+
+
 def _structural_credential_label_parts(label: str) -> tuple[str, ...] | None:
     chunks = tuple(
         parts
@@ -327,23 +410,13 @@ def _structural_credential_label_parts(label: str) -> tuple[str, ...] | None:
     )
     if not chunks:
         return None
-    trailing_parts = chunks[-1]
-    if _is_credential_label_parts(trailing_parts):
-        return trailing_parts
-
-    compact_suffix = "".join(trailing_parts)
-    suffix_parts = trailing_parts
-    for index in range(len(chunks) - 2, -1, -1):
-        if _has_safe_metadata_suffix(chunks, index + 1):
-            break
-        chunk_parts = chunks[index]
-        compact_suffix = f"{''.join(chunk_parts)}{compact_suffix}"
-        if len(compact_suffix) > _MAX_COMPACT_CREDENTIAL_LABEL_LENGTH:
-            break
-        suffix_parts = (*chunk_parts, *suffix_parts)
-        if _is_credential_label_parts(suffix_parts):
-            return suffix_parts
-    return None
+    boundary = _last_safe_metadata_chunk_boundary(chunks)
+    suffix_parts = tuple(
+        part for chunk in chunks[boundary:] for part in chunk
+    )
+    if _is_credential_label_parts(suffix_parts):
+        return suffix_parts
+    return _compact_credential_suffix_parts(chunks, boundary)
 
 
 def _redact_structural_value(prefix: str, value: str) -> str:
