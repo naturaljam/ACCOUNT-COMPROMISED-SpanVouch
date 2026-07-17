@@ -84,6 +84,21 @@ class RevisionOrigin(StrEnum):
     HUMAN_CORRECTION = "human_correction"
 
 
+class WorkflowEventType(StrEnum):
+    CASE_CREATED = "case_created"
+    VERIFICATION_STARTED = "verification_started"
+    VERIFICATION_COMPLETED = "verification_completed"
+    REVISION_REQUESTED = "revision_requested"
+    REVISION_STARTED = "revision_started"
+    REVISION_COMPLETED = "revision_completed"
+    AWAITING_HUMAN_REVIEW = "awaiting_human_review"
+    HUMAN_CONFIRMED = "human_confirmed"
+    HUMAN_CORRECTED = "human_corrected"
+    HUMAN_REJECTED = "human_rejected"
+    PROVIDER_FAILED = "provider_failed"
+    REVISION_PROVIDER_FAILED = "revision_provider_failed"
+
+
 class ReviewModel(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -411,10 +426,24 @@ class DiagnosisReviewCase(ReviewModel):
         return self
 
 
+class WorkflowEvent(ReviewModel):
+    """Sanitized, append-only workflow event exposed by review aggregates."""
+
+    event_id: str = Field(min_length=1)
+    case_id: str = Field(min_length=1)
+    event_sequence: int = Field(ge=0)
+    event_type: WorkflowEventType
+    from_status: ReviewStatus | None = None
+    to_status: ReviewStatus
+    case_version: int = Field(ge=0)
+    created_at: datetime
+
+
 class DiagnosisReviewDetail(ReviewModel):
     case: DiagnosisReviewCase
     revisions: tuple[DiagnosisRevision, ...]
     verifier_reports: tuple[VerifierReport, ...] = ()
+    events: tuple[WorkflowEvent, ...] = ()
     decision: HumanReviewDecision | None = None
 
 

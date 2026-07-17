@@ -14,5 +14,9 @@ class ReviewConflictError(ReviewError):
     """A review command conflicts with durable state."""
 
 
+class ReviewValidationError(ReviewError):
+    """Caller-supplied review content failed semantic validation."""
+
+
 class ReviewPersistenceError(ReviewError):
     """SQLite could not complete a review operation."""

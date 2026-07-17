@@ -21,7 +21,7 @@ from afc.diagnosis.models import (
 from afc.diagnosis.service import DiagnosisService
 from afc.failure_types import FailureType
 from afc.review.commands import ApplyHumanDecision, CreateReviewCase
-from afc.review.errors import ReviewConflictError
+from afc.review.errors import ReviewConflictError, ReviewValidationError
 from afc.review.models import (
     CorrectionClaim,
     DecisionAction,
@@ -692,7 +692,7 @@ async def test_correction_verifier_error_is_sanitized_without_persistence() -> N
     route_fake_to_human(repository)
     before = repository.detail
 
-    with pytest.raises(ReviewConflictError) as captured:
+    with pytest.raises(ReviewValidationError) as captured:
         await service.decide(
             created.case.case_id,
             HumanDecisionDraft(
@@ -761,7 +761,7 @@ async def test_invalid_correction_is_typed_and_changes_no_history(
         }
     )
 
-    with pytest.raises(ReviewConflictError, match="correction"):
+    with pytest.raises(ReviewValidationError, match="correction"):
         await service.decide(
             created.case.case_id,
             HumanDecisionDraft(
@@ -793,7 +793,7 @@ async def test_nonverified_correction_and_repository_failure_are_atomic() -> Non
         correction=correction_draft(),
     )
 
-    with pytest.raises(ReviewConflictError, match="deterministic verification"):
+    with pytest.raises(ReviewValidationError, match="deterministic verification"):
         await service.decide(created.case.case_id, decision, idempotency_key="unverified")
     assert repository.detail == before
     assert repository.decision_commands == []

@@ -1,5 +1,4 @@
 from datetime import datetime
-from enum import StrEnum
 from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -17,23 +16,9 @@ from afc.review.models import (
     VerifierVerdict,
     canonical_json,
 )
+from afc.review.models import WorkflowEventType as WorkflowEventType
 
 SHA256_PATTERN = r"^[0-9a-f]{64}$"
-
-
-class WorkflowEventType(StrEnum):
-    CASE_CREATED = "case_created"
-    VERIFICATION_STARTED = "verification_started"
-    VERIFICATION_COMPLETED = "verification_completed"
-    REVISION_REQUESTED = "revision_requested"
-    REVISION_STARTED = "revision_started"
-    REVISION_COMPLETED = "revision_completed"
-    AWAITING_HUMAN_REVIEW = "awaiting_human_review"
-    HUMAN_CONFIRMED = "human_confirmed"
-    HUMAN_CORRECTED = "human_corrected"
-    HUMAN_REJECTED = "human_rejected"
-    PROVIDER_FAILED = "provider_failed"
-    REVISION_PROVIDER_FAILED = "revision_provider_failed"
 
 
 def human_decision_transition(

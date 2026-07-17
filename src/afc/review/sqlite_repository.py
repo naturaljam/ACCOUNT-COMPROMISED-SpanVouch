@@ -48,6 +48,8 @@ from afc.review.models import (
     VerifierKind,
     VerifierReport,
     VerifierVerdict,
+    WorkflowEvent,
+    WorkflowEventType,
     canonical_json,
 )
 from afc.review.schema import connect_database, initialize_database
@@ -911,6 +913,7 @@ class SQLiteReviewRepository:
                 case=self._read_case(connection, case_id),
                 revisions=self._read_revisions(connection, case_id),
                 verifier_reports=self._read_verifier_reports(connection, case_id),
+                events=self._read_events(connection, case_id),
                 decision=self._read_decision(connection, case_id),
             )
         except ReviewError:
@@ -1064,6 +1067,34 @@ class SQLiteReviewRepository:
             correction=correction,
             resulting_revision_id=resulting_revision_id,
             created_at=_parse_timestamp(str(row["created_at"])),
+        )
+
+    @staticmethod
+    def _read_events(
+        connection: sqlite3.Connection, case_id: str
+    ) -> tuple[WorkflowEvent, ...]:
+        rows = connection.execute(
+            "SELECT event_id, case_id, event_sequence, event_type, from_status, "
+            "to_status, case_version, created_at FROM workflow_events "
+            "WHERE case_id = ? ORDER BY event_sequence",
+            (case_id,),
+        ).fetchall()
+        return tuple(
+            WorkflowEvent(
+                event_id=str(row["event_id"]),
+                case_id=str(row["case_id"]),
+                event_sequence=int(row["event_sequence"]),
+                event_type=WorkflowEventType(str(row["event_type"])),
+                from_status=(
+                    ReviewStatus(str(row["from_status"]))
+                    if row["from_status"] is not None
+                    else None
+                ),
+                to_status=ReviewStatus(str(row["to_status"])),
+                case_version=int(row["case_version"]),
+                created_at=_parse_timestamp(str(row["created_at"])),
+            )
+            for row in rows
         )
 
     @staticmethod

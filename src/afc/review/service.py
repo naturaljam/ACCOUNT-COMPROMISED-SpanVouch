@@ -20,7 +20,7 @@ from afc.review.commands import (
     WorkflowEventType,
     human_decision_transition,
 )
-from afc.review.errors import ReviewConflictError
+from afc.review.errors import ReviewConflictError, ReviewValidationError
 from afc.review.models import (
     DecisionAction,
     DiagnosisCorrectionDraft,
@@ -250,14 +250,14 @@ class ReviewService:
         correction_revision: DiagnosisRevision | None = None
         if decision.action is DecisionAction.CORRECT:
             if decision.correction is None:
-                raise ReviewConflictError("correct requires a complete correction")
+                raise ReviewValidationError("correct requires a complete correction")
             try:
                 current_revision = runtime.revisions[-1]
                 report = _build_corrected_report(
                     runtime.snapshot, current_revision.report, decision.correction
                 )
             except (IndexError, KeyError, TypeError, ValueError):
-                raise ReviewConflictError("human correction is invalid") from None
+                raise ReviewValidationError("human correction is invalid") from None
             report_sha256 = canonical_sha256(report)
             try:
                 verification = await self._deterministic_verifier.verify(
@@ -268,9 +268,13 @@ class ReviewService:
                     )
                 )
             except Exception:
-                raise ReviewConflictError("human correction verification failed") from None
+                raise ReviewValidationError(
+                    "human correction verification failed"
+                ) from None
             if verification.verdict is not VerifierVerdict.VERIFIED:
-                raise ReviewConflictError("human correction failed deterministic verification")
+                raise ReviewValidationError(
+                    "human correction failed deterministic verification"
+                )
             correction_revision = DiagnosisRevision(
                 revision_id=self._id_factory(),
                 case_id=case_id,

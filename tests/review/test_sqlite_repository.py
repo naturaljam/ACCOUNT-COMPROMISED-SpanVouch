@@ -1375,6 +1375,27 @@ async def test_corrupt_lease_is_sanitized_before_claim_replay_comparison(
         await repository.claim_work(command)
 
 
+async def test_unknown_persisted_workflow_event_type_is_sanitized(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "private-events.sqlite3"
+    repository = SQLiteReviewRepository(database)
+    await repository.initialize()
+    await repository.create_case(_create_command())
+    with connect_database(database) as connection:
+        connection.execute(
+            "UPDATE workflow_events SET event_type = ? WHERE case_id = ?",
+            ("private-unknown-event", "case-review-1"),
+        )
+        connection.commit()
+
+    with pytest.raises(ReviewPersistenceError) as captured:
+        await repository.get_detail("case-review-1")
+
+    assert str(captured.value) == "stored review data is invalid"
+    assert "private" not in str(captured.value)
+
+
 async def test_expired_revising_lease_can_be_reclaimed_with_revision_started_event(
     tmp_path: Path,
 ) -> None:
