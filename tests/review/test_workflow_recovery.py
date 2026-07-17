@@ -245,6 +245,61 @@ class PostCommitPauseRepository(SQLiteReviewRepository):
         return result
 
 
+class FinalVerificationClaimConflictRepository(SQLiteReviewRepository):
+    """Raise before the same worker can mutate final-verification state."""
+
+    def __init__(self, database: Path) -> None:
+        super().__init__(database)
+        self.verification_claims = 0
+
+    async def claim_work(self, command):  # type: ignore[no-untyped-def]
+        if command.event_type.value == "verification_started":
+            self.verification_claims += 1
+            if self.verification_claims == 2:
+                raise ReviewConflictError("injected unchanged final claim conflict")
+        return await super().claim_work(command)
+
+
+class FinalVerifierEventConflictRepository(SQLiteReviewRepository):
+    """Roll back the final verifier append when its event insert fails."""
+
+    def __init__(self, database: Path) -> None:
+        super().__init__(database)
+        self._fail_next_workflow_event = False
+
+    async def append_revision(self, command):  # type: ignore[no-untyped-def]
+        result = await super().append_revision(command)
+        self._fail_next_workflow_event = True
+        return result
+
+    def _after_insert(self, stage: str) -> None:
+        if self._fail_next_workflow_event and stage == "workflow_event":
+            self._fail_next_workflow_event = False
+            raise ReviewConflictError("injected final verifier event conflict")
+        super()._after_insert(stage)
+
+
+class InvalidBindingFinalVerifier(FakeVerifier):
+    async def verify(self, input_):  # type: ignore[no-untyped-def]
+        report = await super().verify(input_)
+        if input_.revision_number == 1:
+            return report.model_copy(update={"report_sha256": "f" * 64})
+        return report
+
+
+class BlockingFinalVerifier(FakeVerifier):
+    def __init__(self, outcomes: list[object]) -> None:
+        super().__init__(VerifierKind.DETERMINISTIC, outcomes)
+        self.final_entered = asyncio.Event()
+        self.release_final = asyncio.Event()
+
+    async def verify(self, input_):  # type: ignore[no-untyped-def]
+        if input_.revision_number == 1:
+            self.final_entered.set()
+            await self.release_final.wait()
+        return await super().verify(input_)
+
+
 async def test_crash_after_verifying_commit_requires_expired_lease_before_resume(
     tmp_path: Path,
 ) -> None:
@@ -830,6 +885,129 @@ async def test_revision_postcommit_race_converges_without_recalling_reviser(
     assert original_detail.case.current_revision_number == 1
     assert len(reviser.calls) == 1
     assert len(deterministic.inputs) == 2
+
+
+@pytest.mark.parametrize(
+    "failure_kind",
+    ("wrong_kind", "invalid_binding", "event_rollback", "same_owner_unchanged"),
+)
+async def test_revision_postcommit_does_not_hide_genuine_final_verification_conflicts(
+    tmp_path: Path,
+    failure_kind: str,
+) -> None:
+    database = tmp_path / f"revision-genuine-conflict-{failure_kind}.sqlite3"
+    repository: SQLiteReviewRepository
+    if failure_kind == "event_rollback":
+        repository = FinalVerifierEventConflictRepository(database)
+    elif failure_kind == "same_owner_unchanged":
+        repository = FinalVerificationClaimConflictRepository(database)
+    else:
+        repository = SQLiteReviewRepository(database)
+    await repository.initialize()
+    await _create_case(
+        repository,
+        mode=VerificationMode.DETERMINISTIC,
+        diagnoser=DiagnoserKind.DEEPSEEK,
+    )
+    initial = _report(
+        VerifierKind.DETERMINISTIC,
+        VerifierVerdict.NEEDS_EVIDENCE,
+        revision_number=0,
+        suffix=f"genuine-conflict-initial-{failure_kind}",
+    )
+    final_kind = (
+        VerifierKind.SEMANTIC
+        if failure_kind == "wrong_kind"
+        else VerifierKind.DETERMINISTIC
+    )
+    final = _report(
+        final_kind,
+        VerifierVerdict.VERIFIED,
+        revision_number=1,
+        suffix=f"genuine-conflict-final-{failure_kind}",
+    )
+    verifier_type = (
+        InvalidBindingFinalVerifier
+        if failure_kind == "invalid_binding"
+        else FakeVerifier
+    )
+    deterministic = verifier_type(VerifierKind.DETERMINISTIC, [initial, final])
+    reviser = FakeReviser(
+        supported=(DiagnoserKind.DEEPSEEK,),
+        outcomes=[_deepseek_report()],
+    )
+
+    with pytest.raises(ReviewConflictError):
+        await _workflow(repository, deterministic, reviser=reviser).run(
+            "case-review-1"
+        )
+
+    durable = await repository.get_detail("case-review-1")
+    assert durable.case.status is ReviewStatus.VERIFYING
+    assert durable.case.current_revision_number == 1
+    assert len(reviser.calls) == 1
+
+
+async def test_revision_postcommit_accepts_only_other_workers_active_claim(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "revision-external-active-claim.sqlite3"
+    repository = PostCommitPauseRepository(database, pause_revision=True)
+    await repository.initialize()
+    await _create_case(
+        repository,
+        mode=VerificationMode.DETERMINISTIC,
+        diagnoser=DiagnoserKind.DEEPSEEK,
+    )
+    deterministic = BlockingFinalVerifier(
+        [
+            _report(
+                VerifierKind.DETERMINISTIC,
+                VerifierVerdict.NEEDS_EVIDENCE,
+                revision_number=0,
+                suffix="external-claim-initial",
+            ),
+            _report(
+                VerifierKind.DETERMINISTIC,
+                VerifierVerdict.VERIFIED,
+                revision_number=1,
+                suffix="external-claim-final",
+            ),
+        ]
+    )
+    reviser = FakeReviser(
+        supported=(DiagnoserKind.DEEPSEEK,),
+        outcomes=[_deepseek_report()],
+    )
+    ids = SequenceIds()
+    original = _workflow(
+        repository,
+        deterministic,
+        reviser=reviser,
+        id_factory=ids,
+        lease_owner="external-claim-original",
+    )
+    competitor = _workflow(
+        repository,
+        deterministic,
+        reviser=reviser,
+        id_factory=ids,
+        lease_owner="external-claim-competitor",
+    )
+
+    original_task = asyncio.create_task(original.run("case-review-1"))
+    await asyncio.wait_for(repository.provider_effect_committed.wait(), timeout=1.0)
+    competitor_task = asyncio.create_task(competitor.resume("case-review-1"))
+    await asyncio.wait_for(deterministic.final_entered.wait(), timeout=1.0)
+    repository.release_original.set()
+    original_detail = await asyncio.wait_for(original_task, timeout=1.0)
+
+    assert original_detail.case.status is ReviewStatus.VERIFYING
+    assert len(reviser.calls) == 1
+    deterministic.release_final.set()
+    competitor_detail = await asyncio.wait_for(competitor_task, timeout=1.0)
+    assert competitor_detail.case.status is ReviewStatus.AWAITING_HUMAN_REVIEW
+    assert len(reviser.calls) == 1
 
 
 async def test_semantic_failure_route_is_atomic_and_survives_cleared_lease_race(

@@ -73,7 +73,7 @@ The 2026-07-17 offline gate produced the following fresh evidence:
 - container runtime and data ownership: UID/GID `10001:10001`; `/data/afc.db` owned by `10001:10001` and writable;
 - isolated named volume cleanup: passed after the recovery assertion.
 
-The current correction's ordinary local verification passed 568 tests and strict mypy over 63 source files, with only the pre-existing Starlette/httpx deprecation warning. These counts are implementation evidence, not final controller acceptance; the evidence-only follow-up commit will record the exact code SHA and complete gate relationship.
+The current correction's ordinary local verification passed 580 tests and strict mypy over 63 source files, with only the pre-existing Starlette/httpx deprecation warning. These counts are implementation evidence, not final controller acceptance; the evidence-only follow-up commit will record the exact code SHA and complete gate relationship.
 
 On this Windows workstation, `uv run pytest` resolves the test runner through a bundled runtime that cannot import the repository's `tests` namespace. The canonical `.venv\Scripts\python -m pytest --cov=afc --cov-report=term-missing` invocation uses the frozen synced environment and produced the passing full-suite evidence above. Linux CI continues to run the locked wheel installation with `uv run --no-sync`.
 

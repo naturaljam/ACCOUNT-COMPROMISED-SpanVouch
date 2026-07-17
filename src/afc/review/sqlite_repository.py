@@ -484,11 +484,16 @@ class SQLiteReviewRepository:
                 snapshot = self._read_snapshot(connection, case_id)
                 revisions = self._read_revisions(connection, case_id)
                 reports = self._read_verifier_reports(connection, case_id)
+                lease_owner, lease_expires_at = self._decode_lease(
+                    self._require_state(connection, case_id)
+                )
                 return ReviewRuntimeBundle(
                     case=case,
                     snapshot=snapshot,
                     revisions=revisions,
                     verifier_reports=reports,
+                    lease_owner=lease_owner,
+                    lease_expires_at=lease_expires_at,
                 )
             except ReviewError:
                 raise

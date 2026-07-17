@@ -33,9 +33,10 @@ _MAX_ENCODED_STRING_BYTES = 262_144
 _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _KEY_SEPARATOR = re.compile(r"[^a-z0-9]+")
 _LABEL_DELIMITERS = " \t\r\n:=\"'"
-_NON_SECRET_METADATA_PARTS = frozenset(
+_SAFE_METADATA_TERMINALS = frozenset(
     {
         "age",
+        "algorithm",
         "count",
         "counts",
         "duration",
@@ -54,6 +55,85 @@ _NON_SECRET_METADATA_PARTS = frozenset(
         "type",
         "version",
     }
+)
+_SAFE_METADATA_CHAIN_PARTS = _SAFE_METADATA_TERMINALS | {
+    "credential",
+    "credentials",
+    "hash",
+    "key",
+    "string",
+    "value",
+}
+_COMPACT_CREDENTIAL_CORES = frozenset(
+    {
+        "apikey",
+        "authorization",
+        "cookie",
+        "cookies",
+        "credential",
+        "password",
+        "passwd",
+        "privatekey",
+        "pwd",
+        "secret",
+        "sessioncookie",
+        "sessioncredential",
+        "sessiontoken",
+        "token",
+    }
+)
+_COMPACT_SENSITIVE_PREFIXES = frozenset(
+    {
+        "",
+        "access",
+        "account",
+        "app",
+        "application",
+        "auth",
+        "client",
+        "database",
+        "db",
+        "deepseek",
+        "header",
+        "headers",
+        "http",
+        "id",
+        "model",
+        "openai",
+        "provider",
+        "proxy",
+        "refresh",
+        "request",
+        "service",
+        "session",
+        "set",
+        "user",
+        "x",
+    }
+)
+_COMPACT_SENSITIVE_SUFFIXES = frozenset(
+    {"", "credential", "credentials", "hash", "key", "string", "value"}
+)
+_COMPACT_CREDENTIAL_LABELS = frozenset(
+    f"{prefix}{core}{suffix}"
+    for prefix in _COMPACT_SENSITIVE_PREFIXES
+    for core in _COMPACT_CREDENTIAL_CORES
+    for suffix in _COMPACT_SENSITIVE_SUFFIXES
+)
+_COMPACT_SAFE_METADATA_BASES = _COMPACT_CREDENTIAL_CORES | {
+    "session",
+    "tokenization",
+    "tokenizer",
+}
+_COMPACT_SAFE_METADATA_QUALIFIERS = frozenset(
+    {"", "credential", "hash", "key", "rotation", "string", "value"}
+)
+_COMPACT_SAFE_METADATA_LABELS = frozenset(
+    f"{prefix}{base}{qualifier}{terminal}"
+    for prefix in _COMPACT_SENSITIVE_PREFIXES
+    for base in _COMPACT_SAFE_METADATA_BASES
+    for qualifier in _COMPACT_SAFE_METADATA_QUALIFIERS
+    for terminal in _SAFE_METADATA_TERMINALS
 )
 _ASSIGNMENT = re.compile(
     r"(?i)(?P<prefix>[\"']?(?P<key>[a-z][a-z0-9_. -]{0,80})[\"']?"
@@ -104,27 +184,17 @@ def _normalize_credential_label(label: str) -> tuple[str, ...]:
 
 def _has_only_metadata_suffix(parts: tuple[str, ...], index: int) -> bool:
     suffix = parts[index + 1 :]
-    return bool(suffix) and all(part in _NON_SECRET_METADATA_PARTS for part in suffix)
+    return (
+        bool(suffix)
+        and suffix[-1] in _SAFE_METADATA_TERMINALS
+        and all(part in _SAFE_METADATA_CHAIN_PARTS for part in suffix)
+    )
 
 
 def _is_compact_credential_label(compact: str) -> bool:
-    credential_endings = (
-        "authorization",
-        "apikey",
-        "privatekey",
-        "password",
-        "passwd",
-        "pwd",
-        "secret",
-        "token",
-        "credential",
-        "cookie",
-        "cookies",
-    )
-    return any(
-        compact.endswith(ending) or compact.endswith(f"{ending}value")
-        for ending in credential_endings
-    )
+    if compact in _COMPACT_SAFE_METADATA_LABELS:
+        return False
+    return compact in _COMPACT_CREDENTIAL_LABELS
 
 
 def _is_credential_label(label: str) -> bool:
@@ -136,6 +206,7 @@ def _is_credential_label(label: str) -> bool:
     compact = "".join(parts)
 
     credential_cores = {
+        "authorization",
         "password",
         "passwd",
         "pwd",
@@ -178,7 +249,15 @@ def _redact_match(match: re.Match[str]) -> str:
 
 
 def _redact_assignment(match: re.Match[str]) -> str:
-    if not _is_credential_label(match.group("key")):
+    label = match.group("key")
+    trailing_label = label.rsplit(maxsplit=1)[-1]
+    if not (
+        _is_credential_label(label)
+        or (
+            trailing_label != label
+            and _is_credential_label(trailing_label)
+        )
+    ):
         return match.group(0)
     return _redact_match(match)
 
@@ -240,12 +319,10 @@ def _sanitize_string(
     depth: int,
     encoded_json_depth: int,
 ) -> str:
-    if len(value) > _MAX_ENCODED_STRING_BYTES:
+    if _string_exceeds_budget(value):
         return SECRET_REDACTION
-    encoded_size = len(value.encode("utf-8", errors="replace"))
     if (
         encoded_json_depth >= _MAX_ENCODED_JSON_DEPTH
-        or encoded_size > _MAX_ENCODED_STRING_BYTES
         or depth >= _MAX_STRUCTURE_DEPTH
     ):
         return SECRET_REDACTION
@@ -267,6 +344,12 @@ def _sanitize_string(
                     )
                 )
     return _sanitize_plain_string(value)
+
+
+def _string_exceeds_budget(value: str) -> bool:
+    if len(value) > _MAX_ENCODED_STRING_BYTES:
+        return True
+    return len(value.encode("utf-8", errors="replace")) > _MAX_ENCODED_STRING_BYTES
 
 
 def _is_populated(value: JsonValue) -> bool:
@@ -315,6 +398,8 @@ def _sanitize_diagnostic_value(
         sanitized: dict[str, JsonValue] = {}
         try:
             for key, item in value.items():
+                if _string_exceeds_budget(key):
+                    raise _SanitizationBudgetExhausted
                 budget.claim_node()
                 sanitized_key = _sanitize_string(
                     key,

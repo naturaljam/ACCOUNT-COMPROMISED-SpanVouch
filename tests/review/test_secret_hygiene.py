@@ -85,7 +85,7 @@ def _trace_with_value_secrets() -> TraceIR:
         encoded = json.dumps(encoded)
     root = root.model_copy(
         update={
-            "name": f"root userpassword={SENTINEL_KEY}",
+            "name": f"root secretkey={SENTINEL_KEY}",
             "attributes": {
                 **root.attributes,
                 "tool.result": {
@@ -95,6 +95,11 @@ def _trace_with_value_secrets() -> TraceIR:
                     "headers.authorization": SENTINEL_KEY,
                     "userpassword": SENTINEL_KEY,
                     "sessiontokenvalue": SENTINEL_KEY,
+                    "secretkey": SENTINEL_KEY,
+                    "passwordhash": SENTINEL_KEY,
+                    "tokenstring": SENTINEL_KEY,
+                    "userpasswordhash": SENTINEL_KEY,
+                    "clientsecretstring": SENTINEL_KEY,
                     "X-API-Key": SENTINEL_KEY,
                     "clientSecret": SENTINEL_KEY,
                     "private-key": SENTINEL_KEY,
@@ -104,6 +109,9 @@ def _trace_with_value_secrets() -> TraceIR:
                     "token_count": 7,
                     "password_policy": "rotate-quarterly",
                     "session_duration": 30,
+                    "tokenizer_name": "sentencepiece",
+                    "password_hash_algorithm": "argon2id",
+                    "token_value_length": 128,
                     "safe": "diagnostic context survives",
                 },
                 "tool.error.message": {
@@ -112,7 +120,7 @@ def _trace_with_value_secrets() -> TraceIR:
                     "message": "provider rejected request",
                 },
                 "run.final_message": (
-                    f"headers.authorization: Token {SENTINEL_KEY}; final context survives"
+                    f"passwordhash: {SENTINEL_KEY}; final context survives"
                 ),
             },
         }
@@ -292,6 +300,9 @@ def test_allowed_trace_value_secrets_never_reach_sqlite_or_public_aggregate(
     assert '"token_count":7' in view_json[0]
     assert '"password_policy":"rotate-quarterly"' in view_json[0]
     assert '"session_duration":30' in view_json[0]
+    assert '"tokenizer_name":"sentencepiece"' in view_json[0]
+    assert '"password_hash_algorithm":"argon2id"' in view_json[0]
+    assert '"token_value_length":128' in view_json[0]
 
 
 @pytest.mark.asyncio

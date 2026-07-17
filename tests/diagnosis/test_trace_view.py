@@ -248,6 +248,12 @@ def test_trace_view_uses_one_classifier_for_common_nested_credential_keys() -> N
         "provider_secret_value",
         "auth_token_value",
         "session_credential",
+        "secretkey",
+        "passwordhash",
+        "tokenstring",
+        "userpasswordhash",
+        "sessiontokenvalue",
+        "clientsecretstring",
     )
     nested = {key: VALUE_SECRET for key in credential_keys}
     nested.update(
@@ -255,6 +261,10 @@ def test_trace_view_uses_one_classifier_for_common_nested_credential_keys() -> N
             "token_count": 7,
             "password_policy_name": "rotate-quarterly",
             "secret_rotation_duration": 30,
+            "tokenizer_name": "sentencepiece",
+            "tokenizerType": "bpe",
+            "password_hash_algorithm": "argon2id",
+            "token_value_length": 128,
             "safe": "useful context",
         }
     )
@@ -277,6 +287,10 @@ def test_trace_view_uses_one_classifier_for_common_nested_credential_keys() -> N
     assert '"token_count":7' in serialized
     assert '"password_policy_name":"rotate-quarterly"' in serialized
     assert '"secret_rotation_duration":30' in serialized
+    assert '"tokenizer_name":"sentencepiece"' in serialized
+    assert '"tokenizerType":"bpe"' in serialized
+    assert '"password_hash_algorithm":"argon2id"' in serialized
+    assert '"token_value_length":128' in serialized
     assert "useful context" in serialized
 
 
@@ -438,6 +452,42 @@ def test_sanitizer_fails_closed_before_regex_for_oversized_plaintext(
 
     assert sanitized == SECRET_REDACTION
     assert regex_inputs == []
+    assert sanitize_diagnostic_value(sanitized) == SECRET_REDACTION
+
+
+def test_sanitizer_rejects_oversized_mapping_key_before_normalization_and_stops(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class GuardedDict(dict[str, str]):
+        visited = 0
+
+        def items(self):  # type: ignore[no-untyped-def]
+            for item in super().items():
+                self.visited += 1
+                if self.visited > 1:
+                    raise AssertionError("sanitizer scanned past oversized mapping key")
+                yield item
+
+    normalized: list[str] = []
+    original_normalize = trace_view_module._normalize_credential_label
+
+    def record_normalization(value: str) -> tuple[str, ...]:
+        normalized.append(value)
+        return original_normalize(value)
+
+    monkeypatch.setattr(
+        trace_view_module,
+        "_normalize_credential_label",
+        record_normalization,
+    )
+    oversized_key = "k" * 262_145
+    value = GuardedDict(((oversized_key, "opaque"), ("safe", "unvisited")))
+
+    sanitized = sanitize_diagnostic_value(value)
+
+    assert sanitized == SECRET_REDACTION
+    assert value.visited == 1
+    assert oversized_key not in normalized
     assert sanitize_diagnostic_value(sanitized) == SECRET_REDACTION
 
 

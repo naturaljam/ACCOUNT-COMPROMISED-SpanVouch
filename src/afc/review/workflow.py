@@ -62,6 +62,12 @@ class ReviewWorkflowState(TypedDict):
     route: NotRequired[str]
     lease_claimed: NotRequired[bool]
     provider_effect_committed: NotRequired[bool]
+    provider_effect_kind: NotRequired[str]
+    provider_effect_id: NotRequired[str]
+    provider_commit_version: NotRequired[int]
+    provider_commit_status: NotRequired[str]
+    provider_commit_revision_count: NotRequired[int]
+    provider_commit_report_count: NotRequired[int]
 
 
 class ReviewWorkflowProviderError(ReviewError):
@@ -412,15 +418,17 @@ class ReviewWorkflow:
         try:
             return await self._verify_round_once(state, expected_round=expected_round)
         except ReviewConflictError:
-            if not state.get("provider_effect_committed", False):
-                raise
-            return await self._durable_postcommit_state(state["case_id"])
+            converged = await self._durable_postcommit_state(state)
+            if converged is not None:
+                return converged
+            raise
 
     async def _verify_round_once(
         self, state: ReviewWorkflowState, *, expected_round: int
     ) -> ReviewWorkflowState:
         case_id = state["case_id"]
-        provider_effect_committed = state.get("provider_effect_committed", False)
+        semantic_committed = False
+        semantic_commit_version: int | None = None
         runtime = await self._repository.load_runtime(case_id)
         if runtime.case.current_revision_number != expected_round:
             raise ReviewConflictError("verification round conflicts with durable state")
@@ -454,7 +462,7 @@ class ReviewWorkflow:
                 return self._state_after(
                     runtime,
                     "request_revision",
-                    provider_effect_committed=provider_effect_committed,
+                    postcommit_state=state,
                 )
 
         if deterministic.verdict is not VerifierVerdict.VERIFIED:
@@ -462,7 +470,7 @@ class ReviewWorkflow:
             return self._state_after(
                 runtime,
                 "route_to_human",
-                provider_effect_committed=provider_effect_committed,
+                postcommit_state=state,
             )
 
         runtime = await self._repository.load_runtime(case_id)
@@ -535,20 +543,31 @@ class ReviewWorkflow:
                     raise provider_error
                 if semantic is None:
                     raise ReviewConflictError("semantic finalization result is missing")
+                semantic_committed = True
+                semantic_commit_version = claimed_runtime.case.version + 1
                 runtime = await self._repository.load_runtime(case_id)
-                provider_effect_committed = True
                 if request_revision:
                     return self._state_after(
                         runtime,
                         "request_revision",
-                        provider_effect_committed=True,
+                        provider_effect_kind="semantic",
+                        provider_effect_id=semantic.verifier_run_id,
+                        provider_commit_version=semantic_commit_version,
                     )
 
         runtime = await self._repository.load_runtime(case_id)
+        if semantic_committed and semantic is not None:
+            return self._state_after(
+                runtime,
+                "route_to_human",
+                provider_effect_kind="semantic",
+                provider_effect_id=semantic.verifier_run_id,
+                provider_commit_version=semantic_commit_version,
+            )
         return self._state_after(
             runtime,
             "route_to_human",
-            provider_effect_committed=provider_effect_committed,
+            postcommit_state=state,
         )
 
     @staticmethod
@@ -647,13 +666,13 @@ class ReviewWorkflow:
                 event_type=WorkflowEventType.REVISION_STARTED,
             )
         except ReviewConflictError:
-            if not state.get("provider_effect_committed", False):
-                raise
-            return await self._durable_postcommit_state(state["case_id"])
+            converged = await self._durable_postcommit_state(state)
+            if converged is not None:
+                return converged
+            raise
         return {
             **self._state_after(runtime, "revise_once"),
             "lease_claimed": True,
-            "provider_effect_committed": False,
         }
 
     async def _revise_once(self, state: ReviewWorkflowState) -> ReviewWorkflowState:
@@ -676,6 +695,7 @@ class ReviewWorkflow:
         if not gaps:
             raise ReviewConflictError("evidence revision is unsupported")
         claimed_runtime = runtime
+        committed_revision: DiagnosisRevision | None = None
 
         async def revise() -> DiagnosisReport | ProviderError:
             if not self._reviser.supports(claimed_runtime.case.diagnoser):
@@ -688,6 +708,7 @@ class ReviewWorkflow:
         async def finalize_revision(
             outcome: DiagnosisReport | ProviderError,
         ) -> ReviewWorkflowProviderError | None:
+            nonlocal committed_revision
             if isinstance(outcome, ProviderError):
                 code, retryable = _provider_failure(outcome)
                 await self._persist_revision_failure(
@@ -698,7 +719,9 @@ class ReviewWorkflow:
                     code,
                     retryable=retryable,
                 )
-            await self._commit_revision(claimed_runtime, gaps, outcome)
+            committed_revision = await self._commit_revision(
+                claimed_runtime, gaps, outcome
+            )
             return None
 
         provider_error = await self._run_provider_lifecycle(
@@ -709,11 +732,15 @@ class ReviewWorkflow:
         )
         if provider_error is not None:
             raise provider_error
+        if committed_revision is None:
+            raise ReviewConflictError("revision finalization result is missing")
         runtime = await self._repository.load_runtime(claimed_runtime.case.case_id)
         return self._state_after(
             runtime,
             "verify_final",
-            provider_effect_committed=True,
+            provider_effect_kind="revision",
+            provider_effect_id=committed_revision.revision_id,
+            provider_commit_version=claimed_runtime.case.version + 1,
         )
 
     async def _commit_revision(
@@ -721,7 +748,7 @@ class ReviewWorkflow:
         runtime: ReviewRuntimeBundle,
         gaps: tuple[EvidenceGap, ...],
         revised_report: DiagnosisReport,
-    ) -> None:
+    ) -> DiagnosisRevision:
         previous = runtime.revisions[-1]
         if (
             revised_report.trace_id != runtime.snapshot.trace_id
@@ -761,15 +788,16 @@ class ReviewWorkflow:
                 occurred_at=now,
             )
         )
+        return revision
 
     async def _route_to_human(self, state: ReviewWorkflowState) -> ReviewWorkflowState:
         runtime = await self._repository.load_runtime(state["case_id"])
         if runtime.case.status is not ReviewStatus.VERIFYING:
-            if state.get("provider_effect_committed", False):
+            if self._has_validated_external_progress(state, runtime):
                 return self._state_after(
                     runtime,
                     "end",
-                    provider_effect_committed=True,
+                    postcommit_state=state,
                 )
             raise ReviewConflictError("review case is not ready for human review")
         if runtime.case.composite_verdict is None:
@@ -791,22 +819,67 @@ class ReviewWorkflow:
                 )
             )
         except ReviewConflictError:
-            if not state.get("provider_effect_committed", False):
-                raise
-            return await self._durable_postcommit_state(runtime.case.case_id)
+            converged = await self._durable_postcommit_state(state)
+            if converged is not None:
+                return converged
+            raise
         runtime = await self._repository.load_runtime(runtime.case.case_id)
         return self._state_after(
             runtime,
             "end",
-            provider_effect_committed=state.get("provider_effect_committed", False),
+            postcommit_state=state,
         )
 
-    async def _durable_postcommit_state(self, case_id: str) -> ReviewWorkflowState:
-        runtime = await self._repository.load_runtime(case_id)
+    async def _durable_postcommit_state(
+        self, state: ReviewWorkflowState
+    ) -> ReviewWorkflowState | None:
+        if not state.get("provider_effect_committed", False):
+            return None
+        runtime = await self._repository.load_runtime(state["case_id"])
+        if not self._has_validated_external_progress(state, runtime):
+            return None
         return self._state_after(
             runtime,
             "end",
-            provider_effect_committed=True,
+            postcommit_state=state,
+        )
+
+    def _has_validated_external_progress(
+        self,
+        state: ReviewWorkflowState,
+        runtime: ReviewRuntimeBundle,
+    ) -> bool:
+        baseline_version = state.get("provider_commit_version")
+        effect_kind = state.get("provider_effect_kind")
+        effect_id = state.get("provider_effect_id")
+        if baseline_version is None or effect_kind is None or effect_id is None:
+            return False
+        if runtime.case.version <= baseline_version:
+            return False
+        if effect_kind == "semantic":
+            effect_is_durable = any(
+                report.verifier_run_id == effect_id
+                and report.verifier_kind is VerifierKind.SEMANTIC
+                for report in runtime.verifier_reports
+            )
+        elif effect_kind == "revision":
+            effect_is_durable = any(
+                revision.revision_id == effect_id for revision in runtime.revisions
+            )
+        else:
+            return False
+        if not effect_is_durable:
+            return False
+        if runtime.case.status in {
+            ReviewStatus.AWAITING_HUMAN_REVIEW,
+            ReviewStatus.CONFIRMED,
+            ReviewStatus.CORRECTED,
+            ReviewStatus.REJECTED,
+        }:
+            return True
+        return (
+            runtime.lease_owner is not None
+            and runtime.lease_owner != self._lease_owner
         )
 
     async def _persist_semantic_failure(
@@ -910,7 +983,10 @@ class ReviewWorkflow:
         runtime: ReviewRuntimeBundle,
         route: str,
         *,
-        provider_effect_committed: bool = False,
+        provider_effect_kind: str | None = None,
+        provider_effect_id: str | None = None,
+        provider_commit_version: int | None = None,
+        postcommit_state: ReviewWorkflowState | None = None,
     ) -> ReviewWorkflowState:
         state: ReviewWorkflowState = {
             "case_id": runtime.case.case_id,
@@ -923,6 +999,41 @@ class ReviewWorkflow:
             "route": route,
             "lease_claimed": False,
         }
-        if provider_effect_committed:
+        if provider_effect_kind is not None:
+            if provider_effect_kind not in {"semantic", "revision"}:
+                raise ValueError("unknown provider effect kind")
+            if provider_effect_id is None or provider_commit_version is None:
+                raise ReviewConflictError("provider effect is missing from durable state")
             state["provider_effect_committed"] = True
+            state["provider_effect_kind"] = provider_effect_kind
+            state["provider_effect_id"] = provider_effect_id
+            state["provider_commit_version"] = provider_commit_version
+            state["provider_commit_status"] = runtime.case.status.value
+            state["provider_commit_revision_count"] = len(runtime.revisions)
+            state["provider_commit_report_count"] = len(runtime.verifier_reports)
+        elif postcommit_state is not None and postcommit_state.get(
+            "provider_effect_committed", False
+        ):
+            effect_kind = postcommit_state.get("provider_effect_kind")
+            effect_id = postcommit_state.get("provider_effect_id")
+            commit_version = postcommit_state.get("provider_commit_version")
+            commit_status = postcommit_state.get("provider_commit_status")
+            revision_count = postcommit_state.get("provider_commit_revision_count")
+            report_count = postcommit_state.get("provider_commit_report_count")
+            if (
+                effect_kind is None
+                or effect_id is None
+                or commit_version is None
+                or commit_status is None
+                or revision_count is None
+                or report_count is None
+            ):
+                raise ReviewConflictError("provider commit state is incomplete")
+            state["provider_effect_committed"] = True
+            state["provider_effect_kind"] = effect_kind
+            state["provider_effect_id"] = effect_id
+            state["provider_commit_version"] = commit_version
+            state["provider_commit_status"] = commit_status
+            state["provider_commit_revision_count"] = revision_count
+            state["provider_commit_report_count"] = report_count
         return state
