@@ -1,5 +1,9 @@
 # Agent Failure Clinic 交接文档
 
+> 历史状态说明：本文件记录 Phase 1 收口过程。Phase 1 后续已于
+> `37b6a0f7941287385d5dfce277601af32b5cc69b` 合并到 `main`。启动新对话请改读
+> `docs/handoffs/2026-07-17-phase2-diagnosis-mvp-handoff.md`，不要执行本文旧的合并步骤。
+
 更新日期：2026-07-17
 交接目标：保留 Phase 1 全分支终审与 final-fix 证据，等待分支 owner 决定 main 集成，
 然后再启动 Phase 2 的证据化诊断 MVP。
