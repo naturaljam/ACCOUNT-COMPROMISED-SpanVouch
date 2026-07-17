@@ -317,7 +317,9 @@ class SQLiteReviewRepository:
                 raise ReviewConflictError("idempotency key conflict")
             if str(row["result_type"]) != "review_case":
                 raise ReviewPersistenceError("stored review data is invalid")
-            if row["result_id"] is not None or str(row["reservation_id"]) != reservation_id:
+            if row["result_id"] is not None:
+                return
+            if str(row["reservation_id"]) != reservation_id:
                 raise ReviewConflictError("idempotency reservation is not owned")
             cursor = connection.execute(
                 "UPDATE idempotency_keys SET lease_expires_at = ?, updated_at = ? "

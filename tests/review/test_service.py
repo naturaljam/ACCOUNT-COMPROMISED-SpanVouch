@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 from collections.abc import Callable
+from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -119,6 +120,20 @@ class CrashingDiagnoser:
         del view, evidence
         self.calls += 1
         raise RuntimeError("diagnosis process crashed")
+
+
+class BlockingFinalizationSQLiteRepository(SQLiteReviewRepository):
+    def __init__(self, database: Path) -> None:
+        super().__init__(database)
+        self.finalization_started = asyncio.Event()
+        self.allow_finalization = asyncio.Event()
+        self.finalization_attempts = 0
+
+    async def create_case(self, command: CreateReviewCase) -> DiagnosisReviewDetail:
+        self.finalization_attempts += 1
+        self.finalization_started.set()
+        await self.allow_finalization.wait()
+        return await super().create_case(command)
 
 
 class RecordingRepository:
@@ -257,6 +272,7 @@ class RecordingRepository:
         assert self.detail is not None and self.detail.case.case_id == case_id
         return self.detail
 
+
     async def load_runtime(self, case_id: str) -> ReviewRuntimeBundle:
         assert self.detail is not None and self.snapshot is not None
         assert self.detail.case.case_id == case_id
@@ -320,6 +336,51 @@ class RecordingRepository:
         )
         self._decision_keys[key] = (command.request_sha256, self.detail)
         return self.detail
+
+
+class FailingPostDiagnosisHeartbeatRepository(RecordingRepository):
+    def __init__(self) -> None:
+        super().__init__()
+        self.finalization_started = asyncio.Event()
+        self.allow_finalization = asyncio.Event()
+        self.finalization_cancelled = False
+        self.release_renewal = asyncio.Event()
+        self.renewal_finished = asyncio.Event()
+
+    async def create_case(self, command: CreateReviewCase) -> DiagnosisReviewDetail:
+        self.finalization_started.set()
+        try:
+            await self.allow_finalization.wait()
+        except asyncio.CancelledError:
+            self.finalization_cancelled = True
+            raise
+        return await super().create_case(command)
+
+    async def renew_create_reservation(
+        self,
+        scope: str,
+        idempotency_key: str,
+        request_sha256: str,
+        *,
+        reservation_id: str,
+        now: datetime,
+        lease_expires_at: datetime,
+    ) -> None:
+        del (
+            scope,
+            idempotency_key,
+            request_sha256,
+            reservation_id,
+            now,
+            lease_expires_at,
+        )
+        self.renewal_calls += 1
+        self.renewal_started.set()
+        try:
+            await self.release_renewal.wait()
+            raise ReviewConflictError("injected post-diagnosis renewal failure")
+        finally:
+            self.renewal_finished.set()
 
 
 class RecordingWorkflow:
@@ -721,6 +782,146 @@ async def test_active_create_heartbeat_prevents_takeover_after_original_expiry(
     detail = await first_task
     assert detail.case.trace_id == trace.trace_id
     assert diagnoser.calls == 1
+
+
+async def test_active_create_heartbeat_continues_through_atomic_finalization(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "heartbeat-finalization.sqlite3"
+    repository = BlockingFinalizationSQLiteRepository(database)
+    await repository.initialize()
+    clock = [NOW]
+    diagnoser = SelectorDiagnoser(
+        EvidenceSelector(
+            span_id="span-005",
+            field_path="attributes.tool.error.type",
+        )
+    )
+    first = ReviewService(
+        diagnosis_service=DiagnosisService({DiagnoserKind.RULES: diagnoser}),
+        repository=repository,
+        workflow=NoopWorkflow(),
+        deterministic_verifier=RecordingVerifier(),
+        id_factory=id_factory(),
+        clock=lambda: clock[0],
+        idempotency_lease_duration=timedelta(seconds=30),
+        idempotency_heartbeat_interval=timedelta(milliseconds=10),
+    )
+    duplicate = ReviewService(
+        diagnosis_service=DiagnosisService({DiagnoserKind.RULES: diagnoser}),
+        repository=repository,
+        workflow=NoopWorkflow(),
+        deterministic_verifier=RecordingVerifier(),
+        id_factory=id_factory(),
+        clock=lambda: clock[0],
+        idempotency_lease_duration=timedelta(seconds=30),
+        idempotency_heartbeat_interval=timedelta(milliseconds=10),
+    )
+    trace = load_trace("policy_violation-01")
+    first_task = asyncio.create_task(
+        first.create(
+            trace,
+            diagnoser=DiagnoserKind.RULES,
+            verification_mode=VerificationMode.DETERMINISTIC,
+            idempotency_key="finalization-heartbeat-key",
+        )
+    )
+    await repository.finalization_started.wait()
+
+    try:
+        clock[0] = NOW + timedelta(seconds=20)
+        renewed_until = await _wait_for_reservation_lease(
+            database, later_than=NOW + timedelta(seconds=30)
+        )
+        assert renewed_until == NOW + timedelta(seconds=50)
+
+        clock[0] = NOW + timedelta(seconds=31)
+        with pytest.raises(
+            ReviewConflictError, match="idempotency request is in progress"
+        ):
+            await asyncio.wait_for(
+                duplicate.create(
+                    trace,
+                    diagnoser=DiagnoserKind.RULES,
+                    verification_mode=VerificationMode.DETERMINISTIC,
+                    idempotency_key="finalization-heartbeat-key",
+                ),
+                timeout=0.5,
+            )
+        assert diagnoser.calls == 1
+        assert repository.finalization_attempts == 1
+    finally:
+        repository.allow_finalization.set()
+
+    detail = await first_task
+    replay = await duplicate.create(
+        trace,
+        diagnoser=DiagnoserKind.RULES,
+        verification_mode=VerificationMode.DETERMINISTIC,
+        idempotency_key="finalization-heartbeat-key",
+    )
+    assert replay == detail
+    assert diagnoser.calls == 1
+    assert repository.finalization_attempts == 1
+
+
+async def test_post_diagnosis_renewal_failure_cancels_finalization_and_joins_tasks() -> None:
+    repository = FailingPostDiagnosisHeartbeatRepository()
+    diagnoser = SelectorDiagnoser(
+        EvidenceSelector(
+            span_id="span-005",
+            field_path="attributes.tool.error.type",
+        )
+    )
+    service = ReviewService(
+        diagnosis_service=DiagnosisService({DiagnoserKind.RULES: diagnoser}),
+        repository=repository,
+        workflow=NoopWorkflow(),
+        deterministic_verifier=RecordingVerifier(),
+        id_factory=id_factory(),
+        clock=lambda: NOW,
+        idempotency_lease_duration=timedelta(seconds=30),
+        idempotency_heartbeat_interval=timedelta(milliseconds=50),
+    )
+    baseline_tasks = set(asyncio.all_tasks())
+    create_task = asyncio.create_task(
+        service.create(
+            load_trace("policy_violation-01"),
+            diagnoser=DiagnoserKind.RULES,
+            verification_mode=VerificationMode.DETERMINISTIC,
+            idempotency_key="post-diagnosis-renewal-failure",
+        )
+    )
+    await asyncio.wait_for(repository.finalization_started.wait(), timeout=0.5)
+
+    try:
+        await asyncio.wait_for(repository.renewal_started.wait(), timeout=0.5)
+        repository.release_renewal.set()
+        with pytest.raises(
+            ReviewConflictError, match="post-diagnosis renewal failure"
+        ):
+            await asyncio.wait_for(create_task, timeout=0.5)
+    finally:
+        repository.release_renewal.set()
+        repository.allow_finalization.set()
+        if not create_task.done():
+            create_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await create_task
+
+    await asyncio.sleep(0)
+    leaked_tasks = {
+        task
+        for task in asyncio.all_tasks()
+        if task not in baseline_tasks and not task.done()
+    }
+    assert leaked_tasks == set()
+    assert diagnoser.calls == 1
+    assert repository.renewal_calls == 1
+    assert repository.renewal_finished.is_set()
+    assert repository.finalization_cancelled is True
+    assert repository.create_commands == []
+    assert repository.detail is None
 
 
 async def test_create_heartbeat_failure_cancels_in_flight_diagnosis() -> None:

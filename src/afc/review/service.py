@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from contextlib import suppress
 from datetime import datetime, timedelta
 from hashlib import sha256
 
@@ -180,51 +179,87 @@ class ReviewService:
                     lease_expires_at=now + self._idempotency_lease_duration,
                 )
 
-    async def _diagnose_with_reservation_heartbeat(
+    async def _complete_reserved_create(
         self,
         trace: TraceIR,
         diagnoser: DiagnoserKind,
         *,
+        verification_mode: VerificationMode,
         scope: str,
         idempotency_key: str,
         request_sha256: str,
         reservation_id: str,
-    ) -> DiagnosisReport:
+        view_json: str,
+        input_sha256: str,
+        created_at: datetime,
+    ) -> tuple[DiagnosisReviewDetail, str]:
         stopped = asyncio.Event()
-        diagnosis_task = asyncio.create_task(
-            self._diagnosis_service.diagnose(trace, diagnoser)
-        )
-        heartbeat_task = asyncio.create_task(
-            self._renew_create_reservation_until_stopped(
-                scope=scope,
-                idempotency_key=idempotency_key,
-                request_sha256=request_sha256,
-                reservation_id=reservation_id,
-                stopped=stopped,
-            )
-        )
+
+        async def persist_reserved_case() -> tuple[DiagnosisReviewDetail, str]:
+            try:
+                snapshot = ReviewInputSnapshot(
+                    trace_id=trace.trace_id,
+                    run_id=trace.run_id,
+                    view_json=view_json,
+                    input_sha256=input_sha256,
+                    catalog_version=CATALOG_VERSION,
+                    created_at=created_at,
+                )
+                report = await self._diagnosis_service.diagnose(trace, diagnoser)
+                case_id = self._id_factory()
+                revision = DiagnosisRevision(
+                    revision_id=self._id_factory(),
+                    case_id=case_id,
+                    revision_number=0,
+                    origin=RevisionOrigin.INITIAL_DIAGNOSIS,
+                    report=report,
+                    report_sha256=canonical_sha256(report),
+                    provenance=report.provenance,
+                    created_at=created_at,
+                )
+                command = CreateReviewCase(
+                    case_id=case_id,
+                    snapshot=snapshot,
+                    initial_revision=revision,
+                    target_status=ReviewStatus.PENDING_VERIFICATION,
+                    verification_mode=verification_mode,
+                    diagnoser=diagnoser,
+                    idempotency_scope=scope,
+                    idempotency_key=idempotency_key,
+                    request_sha256=request_sha256,
+                    idempotency_reservation_id=reservation_id,
+                    event_id=self._id_factory(),
+                    event_type=WorkflowEventType.CASE_CREATED,
+                    event_metadata_json=canonical_json(
+                        {
+                            "diagnoser": diagnoser.value,
+                            "verification_mode": verification_mode.value,
+                        }
+                    ),
+                    created_at=created_at,
+                )
+                persisted = await self._repository.create_case(command)
+                return persisted, case_id
+            finally:
+                stopped.set()
+
         try:
-            completed, _ = await asyncio.wait(
-                (diagnosis_task, heartbeat_task),
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            if heartbeat_task in completed:
-                diagnosis_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await diagnosis_task
-                await heartbeat_task
-                raise ReviewConflictError("idempotency reservation heartbeat stopped")
-            return await diagnosis_task
-        except BaseException:
-            if not diagnosis_task.done():
-                diagnosis_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await diagnosis_task
+            async with asyncio.TaskGroup() as task_group:
+                operation_task = task_group.create_task(persist_reserved_case())
+                task_group.create_task(
+                    self._renew_create_reservation_until_stopped(
+                        scope=scope,
+                        idempotency_key=idempotency_key,
+                        request_sha256=request_sha256,
+                        reservation_id=reservation_id,
+                        stopped=stopped,
+                    )
+                )
+        except ExceptionGroup as error:
+            if len(error.exceptions) == 1:
+                raise error.exceptions[0] from None
             raise
-        finally:
-            stopped.set()
-            if not heartbeat_task.done():
-                await heartbeat_task
+        return operation_task.result()
 
     async def create(
         self,
@@ -267,52 +302,18 @@ class ReviewService:
         )
         if replay is not None:
             return replay
-        snapshot = ReviewInputSnapshot(
-            trace_id=trace.trace_id,
-            run_id=trace.run_id,
-            view_json=view_json,
-            input_sha256=input_sha256,
-            catalog_version=CATALOG_VERSION,
-            created_at=now,
-        )
-        report = await self._diagnose_with_reservation_heartbeat(
+        persisted, case_id = await self._complete_reserved_create(
             trace,
             diagnoser,
+            verification_mode=verification_mode,
             scope=idempotency_scope,
             idempotency_key=idempotency_key,
             request_sha256=request_sha256,
             reservation_id=reservation_id,
-        )
-        case_id = self._id_factory()
-        revision = DiagnosisRevision(
-            revision_id=self._id_factory(),
-            case_id=case_id,
-            revision_number=0,
-            origin=RevisionOrigin.INITIAL_DIAGNOSIS,
-            report=report,
-            report_sha256=canonical_sha256(report),
-            provenance=report.provenance,
+            view_json=view_json,
+            input_sha256=input_sha256,
             created_at=now,
         )
-        command = CreateReviewCase(
-            case_id=case_id,
-            snapshot=snapshot,
-            initial_revision=revision,
-            target_status=ReviewStatus.PENDING_VERIFICATION,
-            verification_mode=verification_mode,
-            diagnoser=diagnoser,
-            idempotency_scope=idempotency_scope,
-            idempotency_key=idempotency_key,
-            request_sha256=request_sha256,
-            idempotency_reservation_id=reservation_id,
-            event_id=self._id_factory(),
-            event_type=WorkflowEventType.CASE_CREATED,
-            event_metadata_json=canonical_json(
-                {"diagnoser": diagnoser.value, "verification_mode": verification_mode.value}
-            ),
-            created_at=now,
-        )
-        persisted = await self._repository.create_case(command)
         if persisted.case.case_id != case_id:
             return persisted
         await self._workflow.run(case_id)
