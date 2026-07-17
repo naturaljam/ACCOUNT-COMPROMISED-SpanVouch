@@ -215,6 +215,11 @@ class AppendVerifierRun(TransitionCommand):
     @model_validator(mode="after")
     def validate_report_event(self) -> Self:
         self.require_valid_transition()
+        if (
+            self.report.verifier_kind is VerifierKind.SEMANTIC
+            and self.lease_owner is None
+        ):
+            raise ValueError("semantic verifier result requires lease_owner")
         _require_utc(self.report.started_at, "report.started_at")
         _require_utc(self.report.completed_at, "report.completed_at")
         return self
@@ -222,7 +227,7 @@ class AppendVerifierRun(TransitionCommand):
 
 class AppendDiagnosisRevision(TransitionCommand):
     revision: DiagnosisRevision
-    lease_owner: str | None = Field(default=None, min_length=1)
+    lease_owner: str = Field(min_length=1)
 
     def require_valid_transition(self) -> None:
         expected = (
@@ -262,7 +267,7 @@ class RouteToHumanReview(TransitionCommand):
 
 class RouteRevisionFailureToHuman(TransitionCommand):
     composite_verdict: VerifierVerdict
-    lease_owner: str | None = Field(default=None, min_length=1)
+    lease_owner: str = Field(min_length=1)
 
     def require_valid_transition(self) -> None:
         expected = (

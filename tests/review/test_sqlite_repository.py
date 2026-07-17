@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
@@ -30,6 +31,7 @@ from afc.review.models import (
     ReviewStatus,
     RevisionOrigin,
     VerificationMode,
+    VerifierKind,
     VerifierVerdict,
     canonical_json,
     canonical_sha256,
@@ -56,13 +58,15 @@ def test_repository_rejects_unsupported_sqlite_memory_and_uri_paths(
         SQLiteReviewRepository(database)
 
 
-def _create_command() -> CreateReviewCase:
+def _create_command(
+    *, verification_mode: VerificationMode = VerificationMode.DETERMINISTIC
+) -> CreateReviewCase:
     return CreateReviewCase(
         case_id="case-review-1",
         snapshot=make_review_snapshot(),
         initial_revision=make_revision(),
         target_status=ReviewStatus.PENDING_VERIFICATION,
-        verification_mode=VerificationMode.DETERMINISTIC,
+        verification_mode=verification_mode,
         diagnoser=DiagnoserKind.RULES,
         idempotency_scope="review.create",
         idempotency_key="create-key-1",
@@ -138,7 +142,9 @@ def _route_command(*, expected_version: int = 2) -> RouteToHumanReview:
     )
 
 
-def _revision_command() -> AppendDiagnosisRevision:
+def _revision_command(
+    *, lease_owner: str | None = "worker-1", occurred_at: datetime | None = None
+) -> AppendDiagnosisRevision:
     original = make_revision()
     return AppendDiagnosisRevision(
         case_id="case-review-1",
@@ -150,15 +156,20 @@ def _revision_command() -> AppendDiagnosisRevision:
             previous_report_sha256=original.report_sha256,
             triggering_gap_ids=("gap-1",),
         ),
+        lease_owner=lease_owner,
         event_id="event-revision-completed-1",
         event_type=WorkflowEventType.REVISION_COMPLETED,
         event_metadata_json=canonical_json({"revision": 1}),
-        occurred_at=NOW + timedelta(seconds=3),
+        occurred_at=occurred_at or NOW + timedelta(seconds=3),
     )
 
 
 def _revision_failure_command(
-    *, expected_version: int = 3, event_id: str = "event-revision-provider-failed-1"
+    *,
+    expected_version: int = 3,
+    event_id: str = "event-revision-provider-failed-1",
+    lease_owner: str | None = "worker-1",
+    occurred_at: datetime | None = None,
 ) -> RouteRevisionFailureToHuman:
     return RouteRevisionFailureToHuman(
         case_id="case-review-1",
@@ -166,10 +177,35 @@ def _revision_failure_command(
         prior_status=ReviewStatus.REVISING,
         target_status=ReviewStatus.AWAITING_HUMAN_REVIEW,
         composite_verdict=VerifierVerdict.REVIEW_REQUIRED,
+        lease_owner=lease_owner,
         event_id=event_id,
         event_type=WorkflowEventType.REVISION_PROVIDER_FAILED,
         event_metadata_json=canonical_json({"code": "revision_provider_failed", "retryable": True}),
-        occurred_at=NOW + timedelta(seconds=3),
+        occurred_at=occurred_at or NOW + timedelta(seconds=3),
+    )
+
+
+def _semantic_verifier_command(
+    *, lease_owner: str | None = "worker-1", occurred_at: datetime | None = None
+) -> AppendVerifierRun:
+    report = make_verifier_report(kind=VerifierKind.SEMANTIC).model_copy(
+        update={
+            "started_at": NOW + timedelta(seconds=2),
+            "completed_at": NOW + timedelta(seconds=3),
+        }
+    )
+    return AppendVerifierRun(
+        case_id="case-review-1",
+        expected_version=3,
+        prior_status=ReviewStatus.VERIFYING,
+        target_status=ReviewStatus.VERIFYING,
+        report=report,
+        composite_verdict=VerifierVerdict.VERIFIED,
+        lease_owner=lease_owner,
+        event_id="event-semantic-completed-1",
+        event_type=WorkflowEventType.VERIFICATION_COMPLETED,
+        event_metadata_json=canonical_json({"verdict": "verified"}),
+        occurred_at=occurred_at or report.completed_at,
     )
 
 
@@ -281,6 +317,39 @@ async def _create_and_claim_revision(repository: SQLiteReviewRepository) -> None
     )
 
 
+async def _create_and_claim_semantic(repository: SQLiteReviewRepository) -> None:
+    await repository.create_case(
+        _create_command(verification_mode=VerificationMode.HYBRID)
+    )
+    await repository.claim_work(_claim_command())
+    await repository.append_verifier_run(_verifier_command())
+    await repository.claim_work(
+        _claim_command(
+            expected_version=2,
+            prior_status=ReviewStatus.VERIFYING,
+            target_status=ReviewStatus.VERIFYING,
+            event_id="event-semantic-started-1",
+            now=NOW + timedelta(seconds=1),
+        )
+    )
+
+
+def test_provider_backed_command_models_require_a_lease_owner() -> None:
+    provider_commands = (
+        _semantic_verifier_command(),
+        _revision_command(),
+        _revision_failure_command(),
+    )
+
+    for command in provider_commands:
+        payload = command.model_dump()
+        payload.pop("lease_owner")
+        with pytest.raises(ValidationError, match="lease_owner"):
+            type(command).model_validate(payload)
+
+    assert _verifier_command().lease_owner is None
+
+
 async def test_review_lease_renewal_is_owner_checked_and_stops_after_transition(
     tmp_path: Path,
 ) -> None:
@@ -319,7 +388,28 @@ async def test_review_lease_renewal_is_owner_checked_and_stops_after_transition(
         await repository.renew_review_lease(command)
 
 
-async def test_provider_finalization_is_fenced_by_current_lease_owner(
+async def test_semantic_finalization_requires_current_unexpired_lease_owner(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "semantic-finalization-owner.sqlite3"
+    repository = SQLiteReviewRepository(database)
+    await repository.initialize()
+    await _create_and_claim_semantic(repository)
+    command = _semantic_verifier_command()
+
+    for forged in (
+        command.model_copy(update={"lease_owner": None}),
+        command.model_copy(update={"lease_owner": "stale-worker"}),
+        command.model_copy(update={"occurred_at": NOW + timedelta(seconds=40)}),
+    ):
+        with pytest.raises(ReviewConflictError, match="lease"):
+            await asyncio.to_thread(repository._append_verifier_run, forged)
+
+    completed = await repository.append_verifier_run(command)
+    assert completed.semantic_run_id == command.report.verifier_run_id
+
+
+async def test_revision_finalization_requires_current_unexpired_lease_owner(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "provider-finalization-owner.sqlite3"
@@ -328,16 +418,38 @@ async def test_provider_finalization_is_fenced_by_current_lease_owner(
     await _create_and_claim_revision(repository)
     command = _revision_command()
 
-    with pytest.raises(ReviewConflictError, match="lease"):
-        await repository.append_revision(
-            command.model_copy(update={"lease_owner": "stale-worker"})
-        )
+    for forged in (
+        command.model_copy(update={"lease_owner": None}),
+        command.model_copy(update={"lease_owner": "stale-worker"}),
+        command.model_copy(update={"occurred_at": NOW + timedelta(seconds=40)}),
+    ):
+        with pytest.raises(ReviewConflictError, match="lease"):
+            await asyncio.to_thread(repository._append_revision, forged)
     assert len((await repository.get_detail("case-review-1")).revisions) == 1
 
-    completed = await repository.append_revision(
-        command.model_copy(update={"lease_owner": "worker-1"})
-    )
+    completed = await repository.append_revision(command)
     assert completed.current_revision_number == 1
+
+
+async def test_revision_failure_requires_current_unexpired_lease_owner(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "revision-failure-owner.sqlite3"
+    repository = SQLiteReviewRepository(database)
+    await repository.initialize()
+    await _create_and_claim_revision(repository)
+    command = _revision_failure_command()
+
+    for forged in (
+        command.model_copy(update={"lease_owner": None}),
+        command.model_copy(update={"lease_owner": "stale-worker"}),
+        command.model_copy(update={"occurred_at": NOW + timedelta(seconds=40)}),
+    ):
+        with pytest.raises(ReviewConflictError, match="lease"):
+            await asyncio.to_thread(repository._route_revision_failure, forged)
+
+    completed = await repository.route_revision_failure(command)
+    assert completed.status is ReviewStatus.AWAITING_HUMAN_REVIEW
 
 
 def _counts(database: Path) -> dict[str, int]:
@@ -378,6 +490,40 @@ async def test_create_case_atomically_persists_aggregate_and_idempotency(
         "workflow_events": 1,
         "idempotency_keys": 1,
     }
+
+
+async def test_create_case_rejects_unsanitized_canonical_snapshot_before_insert(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "unsafe-review-snapshot.sqlite3"
+    repository = SQLiteReviewRepository(database)
+    await repository.initialize()
+    snapshot = make_review_snapshot()
+    parsed = json.loads(snapshot.view_json)
+    sentinel = "direct-snapshot-sentinel-credential"
+    parsed["spans"][0]["attributes"]["tool.result"] = {
+        "api_key": sentinel,
+        "safe": "context must survive only after source sanitation",
+    }
+    unsafe_snapshot = snapshot.model_copy(
+        update={
+            "view_json": canonical_json(parsed),
+            "input_sha256": canonical_sha256(parsed),
+        }
+    )
+    forged = _create_command().model_copy(update={"snapshot": unsafe_snapshot})
+
+    with pytest.raises(ReviewConflictError, match="invalid create review command"):
+        await repository.create_case(forged)
+
+    with connect_database(database) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM review_inputs").fetchone()[0] == 0
+        stored = "\n".join(
+            str(value)
+            for row in connection.execute("SELECT * FROM review_inputs").fetchall()
+            for value in row
+        )
+    assert sentinel not in stored
 
 
 @pytest.mark.parametrize(
@@ -1061,6 +1207,7 @@ async def test_append_revision_keeps_revision_zero_immutable_and_caps_evidence_r
             prior_status=ReviewStatus.REVISING,
             target_status=ReviewStatus.VERIFYING,
             revision=revision,
+            lease_owner="worker-1",
             event_id="event-revision-completed-1",
             event_type=WorkflowEventType.REVISION_COMPLETED,
             event_metadata_json=canonical_json({"revision": 1}),
@@ -1268,6 +1415,7 @@ async def test_appended_revision_report_must_match_persisted_trace_and_run(
                 prior_status=ReviewStatus.REVISING,
                 target_status=ReviewStatus.VERIFYING,
                 revision=mismatched_revision,
+                lease_owner="worker-1",
                 event_id="event-revision-completed-1",
                 event_type=WorkflowEventType.REVISION_COMPLETED,
                 event_metadata_json=canonical_json({"revision": 1}),

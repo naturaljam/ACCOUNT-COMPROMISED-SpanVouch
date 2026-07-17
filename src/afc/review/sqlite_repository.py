@@ -625,7 +625,11 @@ class SQLiteReviewRepository:
 
             state = self._require_state(connection, command.case_id)
             self._require_cas(state, command.expected_version, command.prior_status)
-            if command.lease_owner is not None:
+            if command.report.verifier_kind is VerifierKind.SEMANTIC:
+                if command.lease_owner is None:
+                    raise ReviewConflictError(
+                        "semantic verifier result requires review lease owner"
+                    )
                 self._require_owned_lease(
                     state, command.lease_owner, command.occurred_at
                 )
@@ -716,10 +720,9 @@ class SQLiteReviewRepository:
 
             state = self._require_state(connection, command.case_id)
             self._require_cas(state, command.expected_version, command.prior_status)
-            if command.lease_owner is not None:
-                self._require_owned_lease(
-                    state, command.lease_owner, command.occurred_at
-                )
+            self._require_owned_lease(
+                state, command.lease_owner, command.occurred_at
+            )
             self._require_revision_snapshot_binding(
                 connection, command.case_id, command.revision
             )
@@ -815,10 +818,9 @@ class SQLiteReviewRepository:
                 raise ReviewConflictError("duplicate workflow event")
             state = self._require_state(connection, command.case_id)
             self._require_cas(state, command.expected_version, command.prior_status)
-            if command.lease_owner is not None:
-                self._require_owned_lease(
-                    state, command.lease_owner, command.occurred_at
-                )
+            self._require_owned_lease(
+                state, command.lease_owner, command.occurred_at
+            )
             cursor = connection.execute(
                 "UPDATE review_cases SET status = ?, version = version + 1, "
                 "composite_verdict = ?, lease_owner = NULL, lease_expires_at = NULL, "

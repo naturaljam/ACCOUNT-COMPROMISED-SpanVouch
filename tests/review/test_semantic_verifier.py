@@ -10,6 +10,7 @@ from afc.diagnosis.errors import (
 )
 from afc.diagnosis.models import DiagnosisReport, ProviderUsage
 from afc.diagnosis.protocols import ChatMessage, GenerationConfig, ProviderResponse
+from afc.diagnosis.trace_view import sanitize_diagnostic_trace_view
 from afc.review.models import (
     FindingCode,
     ReviewInputSnapshot,
@@ -333,11 +334,12 @@ async def test_prompt_contains_only_independent_canonical_allowlist_data() -> No
         }
     )
     injected_view = view.model_copy(update={"spans": tuple(spans)})
-    view_json = canonical_json(injected_view)
+    sanitized_view = sanitize_diagnostic_trace_view(injected_view)
+    view_json = canonical_json(sanitized_view)
     snapshot = make_review_snapshot().model_copy(
         update={
             "view_json": view_json,
-            "input_sha256": canonical_sha256(injected_view),
+            "input_sha256": canonical_sha256(sanitized_view),
         }
     )
     provider = RecordingProvider(json.dumps(_draft("verified")))

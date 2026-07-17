@@ -1,3 +1,4 @@
+import json
 import re
 from datetime import datetime
 from typing import cast
@@ -24,6 +25,7 @@ ALLOWED_ATTRIBUTES = frozenset(
 )
 
 SECRET_REDACTION = "[REDACTED]"
+_MAX_ENCODED_JSON_DEPTH = 4
 _SENSITIVE_KEY = re.compile(
     r"(?i)^(?:authorization|proxy[_-]?authorization|password|passwd|pwd|secret|"
     r"token|(?:[a-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|refresh[_-]?token))$"
@@ -35,11 +37,13 @@ _ASSIGNMENT = re.compile(
     r"(?:[\"'][^\"'\r\n]+[\"']|[^\s,;}\]]+))"
 )
 _AUTHORIZATION = re.compile(
-    r"(?i)(?P<prefix>\b(?:proxy-)?authorization\s*(?:=|:)\s*"
-    r"(?:bearer|basic)\s+)(?P<value>(?!\[REDACTED\])[^\s,;}\]]+)"
+    r"(?i)(?P<prefix>\b(?:proxy[-_ ]?)?authorization(?:\\?[\"'])?\s*"
+    r"(?:=|:)\s*)(?P<value>(?!\s*[\"']?\[REDACTED\][\"']?)"
+    r"(?:[\"'][^\"'\r\n]*[\"']|(?:(?!;\s)[^\r\n])+))"
 )
 _BEARER = re.compile(
-    r"(?i)(?P<prefix>\bbearer\s+)(?P<value>(?!\[REDACTED\])[^\s,;}\]]+)"
+    r"(?i)(?P<prefix>\bbearer\s+)(?P<value>(?!\[REDACTED\])"
+    r"[A-Za-z0-9._~+/=-]{20,})(?=$|[\s,;}\]])"
 )
 _PROVIDER_KEY = re.compile(
     r"(?<![A-Za-z0-9])(?:sk|rk|pk)-[A-Za-z0-9_-]{16,}(?![A-Za-z0-9])|"
@@ -59,13 +63,45 @@ def _redact_match(match: re.Match[str]) -> str:
     return f"{match.group('prefix')}{SECRET_REDACTION}"
 
 
-def _sanitize_string(value: str) -> str:
+def _redact_token_shaped_bearer(match: re.Match[str]) -> str:
+    value = match.group("value")
+    shape_evidence = sum(
+        character.isdigit() or character in "._~+/=-" for character in value
+    )
+    if shape_evidence < 2:
+        return match.group(0)
+    return f"{match.group('prefix')}{SECRET_REDACTION}"
+
+
+def _canonical_json_value(value: JsonValue) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _sanitize_string(value: str, *, encoded_json_depth: int) -> str:
+    if encoded_json_depth < _MAX_ENCODED_JSON_DEPTH:
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            pass
+        else:
+            if isinstance(decoded, (str, list, dict)):
+                return _canonical_json_value(
+                    _sanitize_diagnostic_value(
+                        cast(JsonValue, decoded),
+                        encoded_json_depth=encoded_json_depth + 1,
+                    )
+                )
     sanitized = _URL_USERINFO.sub(
         lambda match: f"{match.group('scheme')}{SECRET_REDACTION}@",
         value,
     )
     sanitized = _AUTHORIZATION.sub(_redact_match, sanitized)
-    sanitized = _BEARER.sub(_redact_match, sanitized)
+    sanitized = _BEARER.sub(_redact_token_shaped_bearer, sanitized)
     sanitized = _ASSIGNMENT.sub(_redact_match, sanitized)
     return _PROVIDER_KEY.sub(SECRET_REDACTION, sanitized)
 
@@ -74,23 +110,36 @@ def _is_populated(value: JsonValue) -> bool:
     return value not in (None, "", [], {})
 
 
-def sanitize_diagnostic_value(value: JsonValue) -> JsonValue:
-    """Remove credential fragments from one JSON value without changing its shape."""
-
+def _sanitize_diagnostic_value(
+    value: JsonValue, *, encoded_json_depth: int
+) -> JsonValue:
     if isinstance(value, str):
-        return _sanitize_string(value)
+        return _sanitize_string(value, encoded_json_depth=encoded_json_depth)
     if isinstance(value, list):
-        return [sanitize_diagnostic_value(item) for item in value]
+        return [
+            _sanitize_diagnostic_value(
+                item, encoded_json_depth=encoded_json_depth
+            )
+            for item in value
+        ]
     if isinstance(value, dict):
         sanitized: dict[str, JsonValue] = {}
         for key, item in value.items():
             sanitized[key] = (
                 SECRET_REDACTION
                 if _SENSITIVE_KEY.fullmatch(key) and _is_populated(item)
-                else sanitize_diagnostic_value(item)
+                else _sanitize_diagnostic_value(
+                    item, encoded_json_depth=encoded_json_depth
+                )
             )
         return sanitized
     return value
+
+
+def sanitize_diagnostic_value(value: JsonValue) -> JsonValue:
+    """Remove credential fragments from one JSON value without changing its shape."""
+
+    return _sanitize_diagnostic_value(value, encoded_json_depth=0)
 
 
 class DiagnosticSpan(BaseModel):

@@ -1,9 +1,11 @@
+import json
 from pathlib import Path
 
 from afc.diagnosis.trace_view import (
     ALLOWED_ATTRIBUTES,
     SECRET_REDACTION,
     DiagnosticTraceView,
+    sanitize_diagnostic_trace_view,
 )
 from afc.review.models import canonical_json
 from afc.trace_ir.models import TraceIR
@@ -91,3 +93,88 @@ def test_trace_view_recursively_redacts_credentials_inside_allowed_values() -> N
     assert "example.test/path failed" in serialized
     assert f"{SECRET_REDACTION}]" not in serialized
     assert DiagnosticTraceView.model_validate(view.model_dump()) == view
+
+
+def test_trace_view_redacts_every_authorization_scheme_inside_allowed_strings() -> None:
+    trace = load_trace("clean-01")
+    schemes = (
+        f"Token {VALUE_SECRET}",
+        f'Digest username="agent", response="{VALUE_SECRET}"',
+        (
+            "AWS4-HMAC-SHA256 "
+            f"Credential={VALUE_SECRET}/20260718/cn-north-1/service/aws4_request, "
+            f"SignedHeaders=host;x-date, Signature={VALUE_SECRET}"
+        ),
+        f"Custom-Scheme {VALUE_SECRET}",
+    )
+
+    for scheme in schemes:
+        root = trace.spans[0].model_copy(
+            update={
+                "attributes": {
+                    **trace.spans[0].attributes,
+                    "tool.error.message": (
+                        f"request failed; Authorization: {scheme}; safe retry context"
+                    ),
+                }
+            }
+        )
+        candidate = trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
+
+        serialized = canonical_json(DiagnosticTraceView.from_trace(candidate))
+
+        assert VALUE_SECRET not in serialized
+        assert "safe retry context" in serialized
+
+
+def test_trace_view_sanitizes_escaped_and_double_encoded_json_idempotently() -> None:
+    trace = load_trace("clean-01")
+    encoded = json.dumps(
+        {
+            "Authorization": (
+                "AWS4-HMAC-SHA256 "
+                f"Credential={VALUE_SECRET}/20260718/region/service/aws4_request"
+            ),
+            "nested": {"token": VALUE_SECRET},
+            "safe": "保留安全上下文",
+        },
+        ensure_ascii=False,
+    )
+    root = trace.spans[0].model_copy(
+        update={
+            "attributes": {
+                **trace.spans[0].attributes,
+                "tool.result": [encoded, json.dumps(encoded, ensure_ascii=False)],
+            }
+        }
+    )
+    candidate = trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
+
+    view = DiagnosticTraceView.from_trace(candidate)
+    serialized = canonical_json(view)
+
+    assert VALUE_SECRET not in serialized
+    assert "保留安全上下文" in serialized
+    assert sanitize_diagnostic_trace_view(view) == view
+    assert sanitize_diagnostic_trace_view(sanitize_diagnostic_trace_view(view)) == view
+
+
+def test_trace_view_preserves_safe_bearer_prose_and_redacts_token_shaped_bearer() -> None:
+    trace = load_trace("clean-01")
+    safe_message = "Bearer of good news crossed the bridge. 熊猫依旧安全。"
+    root = trace.spans[0].model_copy(
+        update={
+            "attributes": {
+                **trace.spans[0].attributes,
+                "run.final_message": safe_message,
+                "tool.error.message": f"Bearer {VALUE_SECRET}; safe tail",
+            }
+        }
+    )
+    candidate = trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
+
+    view = DiagnosticTraceView.from_trace(candidate)
+
+    assert view.spans[0].attributes["run.final_message"] == safe_message
+    assert VALUE_SECRET not in canonical_json(view)
+    assert "safe tail" in canonical_json(view)

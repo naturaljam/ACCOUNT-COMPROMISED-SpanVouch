@@ -295,9 +295,14 @@ class ReviewInputSnapshot(ReviewModel):
             raise ValueError("view_json must be valid JSON") from error
         if self.view_json != canonical_json(parsed):
             raise ValueError("view_json must use canonical JSON")
-        if self.input_sha256 != canonical_sha256(parsed):
-            raise ValueError("input_sha256 does not match view_json")
-        view = self.trace_view()
+        view = DiagnosticTraceView.model_validate(parsed)
+        sanitized_view_json = canonical_json(view)
+        if self.view_json != sanitized_view_json:
+            raise ValueError(
+                "view_json must match the sanitized canonical diagnostic trace view"
+            )
+        if self.input_sha256 != canonical_sha256(view):
+            raise ValueError("input_sha256 does not match sanitized view_json")
         if not view.spans:
             raise ValueError("view_json must contain a diagnostic trace view")
         return self
