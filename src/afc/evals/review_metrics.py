@@ -6,6 +6,7 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from afc.diagnosis.errors import ProviderError
 from afc.diagnosis.trace_view import DiagnosticTraceView
 from afc.evals.generate_review_dataset import MutationKind, ReviewCandidate
 from afc.evals.review_labels import (
@@ -44,6 +45,10 @@ class ReviewMetrics(BaseModel):
     evidence_gap_precision: float
     structured_output_success_rate: float
     operational_error_rate: float
+    semantic_verdict_distribution: dict[str, int] = Field(default_factory=dict)
+    verifier_disagreement_rate: float = 0.0
+    semantic_structured_output_success_rate: float = 0.0
+    semantic_operational_error_rate: float = 0.0
 
 
 class ReviewSampleResult(BaseModel):
@@ -54,6 +59,8 @@ class ReviewSampleResult(BaseModel):
     mutation_kind: MutationKind
     verifier_report: VerifierReport | None = None
     operational_error: str | None = None
+    semantic_verifier_report: VerifierReport | None = None
+    semantic_operational_error: str | None = None
 
 
 class ReviewUsageSummary(BaseModel):
@@ -97,11 +104,13 @@ def _percentile(values: tuple[float, ...], quantile: float) -> float | None:
 
 
 def _usage(samples: tuple[ReviewSampleResult, ...]) -> ReviewUsageSummary:
-    usages = tuple(
-        sample.verifier_report.usage
+    reports = tuple(
+        report
         for sample in samples
-        if sample.verifier_report is not None and sample.verifier_report.usage is not None
+        for report in (sample.verifier_report, sample.semantic_verifier_report)
+        if report is not None
     )
+    usages = tuple(report.usage for report in reports if report.usage is not None)
     latencies = tuple(usage.latency_ms for usage in usages)
     return ReviewUsageSummary(
         provider_sample_count=len(usages),
@@ -185,6 +194,35 @@ def _compute_metrics(
             correct_gaps += gap.finding_code in expected
 
     valid_passes = sum(valid_pass(candidate) for candidate in valid)
+    semantic_attempts = tuple(
+        sample
+        for sample in samples
+        if sample.semantic_verifier_report is not None
+        or sample.semantic_operational_error is not None
+    )
+    semantic_reports = tuple(
+        sample for sample in semantic_attempts if sample.semantic_verifier_report is not None
+    )
+    semantic_structured = tuple(
+        sample
+        for sample in semantic_reports
+        if sample.semantic_verifier_report is not None
+        and not any(
+            finding.code is FindingCode.INVALID_VERIFIER_OUTPUT
+            for finding in sample.semantic_verifier_report.findings
+        )
+    )
+    semantic_distribution = Counter(
+        sample.semantic_verifier_report.verdict.value
+        for sample in semantic_reports
+        if sample.semantic_verifier_report is not None
+    )
+    disagreements = sum(
+        sample.verifier_report is not None
+        and sample.semantic_verifier_report is not None
+        and sample.verifier_report.verdict is not sample.semantic_verifier_report.verdict
+        for sample in semantic_structured
+    )
     return ReviewMetrics(
         valid_report_pass_rate=_ratio(valid_passes, len(valid)),
         hard_defect_recall=_ratio(
@@ -208,6 +246,15 @@ def _compute_metrics(
         operational_error_rate=_ratio(
             sum(sample.operational_error is not None for sample in samples), len(samples)
         ),
+        semantic_verdict_distribution=dict(sorted(semantic_distribution.items())),
+        verifier_disagreement_rate=_ratio(disagreements, len(semantic_structured)),
+        semantic_structured_output_success_rate=_ratio(
+            len(semantic_structured), len(semantic_attempts)
+        ),
+        semantic_operational_error_rate=_ratio(
+            sum(sample.semantic_operational_error is not None for sample in semantic_attempts),
+            len(semantic_attempts),
+        ),
     )
 
 
@@ -230,13 +277,22 @@ async def evaluate_review_candidates(
     traces: tuple[TraceIR, ...],
     verifier: ReviewVerifier,
     policy_version: str,
+    semantic_verifier: ReviewVerifier | None = None,
+    semantic_candidate_ids: tuple[str, ...] = (),
 ) -> ReviewEvaluationReport:
     source_run_ids = tuple(trace.run_id for trace in traces)
     if len(source_run_ids) != len(set(source_run_ids)):
         raise ValueError("duplicate Phase 2 source run_id")
-    validate_review_cohort(
-        candidates, labels, {trace.run_id: trace.trace_id for trace in traces}
-    )
+    validate_review_cohort(candidates, labels, {trace.run_id: trace.trace_id for trace in traces})
+    selected_ids = set(semantic_candidate_ids)
+    if len(selected_ids) != len(semantic_candidate_ids):
+        raise ValueError("duplicate semantic candidate_id")
+    known_candidate_ids = {candidate.candidate_id for candidate in candidates}
+    unknown_ids = sorted(selected_ids - known_candidate_ids)
+    if unknown_ids:
+        raise ValueError(f"unknown semantic candidate_id: {', '.join(unknown_ids)}")
+    if semantic_verifier is not None and not selected_ids:
+        selected_ids = known_candidate_ids
     traces_by_run: Mapping[str, TraceIR] = {trace.run_id: trace for trace in traces}
     samples: list[ReviewSampleResult] = []
     for candidate in sorted(
@@ -259,19 +315,32 @@ async def evaluate_review_candidates(
                 )
             )
         else:
+            semantic_report: VerifierReport | None = None
+            semantic_error: str | None = None
+            if semantic_verifier is not None and candidate.candidate_id in selected_ids:
+                try:
+                    semantic_report = await semantic_verifier.verify(input_)
+                except ProviderError as exc:
+                    semantic_error = type(exc).__name__
             samples.append(
                 ReviewSampleResult(
                     candidate_id=candidate.candidate_id,
                     source_run_id=candidate.source_run_id,
                     mutation_kind=candidate.mutation_kind,
                     verifier_report=verifier_report,
+                    semantic_verifier_report=semantic_report,
+                    semantic_operational_error=semantic_error,
                 )
             )
     ordered_samples = tuple(samples)
     return ReviewEvaluationReport(
         status=(
             "partial"
-            if any(sample.operational_error is not None for sample in ordered_samples)
+            if any(
+                sample.operational_error is not None
+                or sample.semantic_operational_error is not None
+                for sample in ordered_samples
+            )
             else "complete"
         ),
         candidate_count=len(candidates),
