@@ -40,6 +40,7 @@ def _result(
     explanation: str,
     failure_type: FailureType | None = None,
     evidence: tuple[EvidenceRef, ...] = (),
+    scope: RuleScope = RuleScope.SUPPORTED,
 ) -> InvariantResult:
     failed = status is InvariantStatus.FAILED
     return InvariantResult(
@@ -48,7 +49,7 @@ def _result(
         status=status,
         severity=Severity.ERROR if failed else Severity.INFO,
         failure_type=failure_type,
-        scope=RuleScope.SUPPORTED,
+        scope=scope,
         evidence=evidence,
         explanation=explanation,
         hard_failure=failed,
@@ -243,6 +244,127 @@ class FinalStateRule:
         )
 
 
+class MissingPreconditionGuard:
+    rule_id = "scope.missing_precondition"
+    rule_version = "1.0"
+
+    def evaluate(self, context: RuleContext) -> InvariantResult:
+        submits = _spans_named(context, "submit_refund")
+        policies = _spans_named(context, "get_refund_policy")
+        if submits and not policies:
+            return _result(
+                self,
+                status=InvariantStatus.FAILED,
+                evidence=(
+                    _evidence(
+                        context,
+                        submits[-1],
+                        "name",
+                        "High-risk call made without a policy lookup.",
+                    ),
+                ),
+                scope=RuleScope.UNSUPPORTED_GUARD,
+                explanation="A required precondition is missing and is outside MVP scope.",
+            )
+        return _result(
+            self,
+            status=InvariantStatus.PASSED,
+            scope=RuleScope.UNSUPPORTED_GUARD,
+            explanation="No missing-precondition scope signal found.",
+        )
+
+
+class IgnoredToolErrorGuard:
+    rule_id = "scope.ignored_tool_error"
+    rule_version = "1.0"
+
+    def evaluate(self, context: RuleContext) -> InvariantResult:
+        root = next(span for span in context.view.spans if span.parent_span_id is None)
+        failed_tools = tuple(
+            span
+            for span in context.view.spans
+            if span.kind.value == "tool" and span.status.value == "error"
+        )
+        if root.attributes.get("run.outcome") == "succeeded" and failed_tools:
+            failed = failed_tools[-1]
+            return _result(
+                self,
+                status=InvariantStatus.FAILED,
+                evidence=(
+                    _evidence(context, failed, "status", "Failed tool status."),
+                    _evidence(
+                        context,
+                        root,
+                        "attributes.run.outcome",
+                        "Run incorrectly reports success.",
+                    ),
+                ),
+                scope=RuleScope.UNSUPPORTED_GUARD,
+                explanation="A tool error was ignored and is outside MVP scope.",
+            )
+        return _result(
+            self,
+            status=InvariantStatus.PASSED,
+            scope=RuleScope.UNSUPPORTED_GUARD,
+            explanation="No ignored-tool-error scope signal found.",
+        )
+
+
+class ContextCorruptionGuard:
+    rule_id = "scope.context_corruption"
+    rule_version = "1.0"
+
+    def evaluate(self, context: RuleContext) -> InvariantResult:
+        submits = _spans_named(context, "submit_refund")
+        customers = _spans_named(context, "get_customer")
+        if not submits:
+            return _result(
+                self,
+                status=InvariantStatus.NOT_APPLICABLE,
+                scope=RuleScope.UNSUPPORTED_GUARD,
+                explanation="No refund submission is present.",
+            )
+        submit = submits[-1]
+        submitted_customer = submit.attributes.get("tool.arguments.customer_id")
+        known_customer = (
+            customers[-1].attributes.get("tool.arguments.customer_id") if customers else None
+        )
+        error = submit.attributes.get("tool.error.message")
+        if error == "customer_mismatch" or (
+            known_customer is not None and submitted_customer != known_customer
+        ):
+            evidence = [
+                _evidence(
+                    context,
+                    submit,
+                    "attributes.tool.arguments.customer_id",
+                    "Submitted customer identity.",
+                )
+            ]
+            if error is not None:
+                evidence.append(
+                    _evidence(
+                        context,
+                        submit,
+                        "attributes.tool.error.message",
+                        "Identity mismatch error.",
+                    )
+                )
+            return _result(
+                self,
+                status=InvariantStatus.FAILED,
+                evidence=tuple(evidence),
+                scope=RuleScope.UNSUPPORTED_GUARD,
+                explanation="Customer context is inconsistent and outside MVP scope.",
+            )
+        return _result(
+            self,
+            status=InvariantStatus.PASSED,
+            scope=RuleScope.UNSUPPORTED_GUARD,
+            explanation="No context-corruption scope signal found.",
+        )
+
+
 def supported_rules() -> tuple[InvariantRule, ...]:
     return (
         KnownToolRule(),
@@ -251,3 +373,15 @@ def supported_rules() -> tuple[InvariantRule, ...]:
         StepBudgetRule(),
         FinalStateRule(),
     )
+
+
+def unsupported_guards() -> tuple[InvariantRule, ...]:
+    return (
+        MissingPreconditionGuard(),
+        IgnoredToolErrorGuard(),
+        ContextCorruptionGuard(),
+    )
+
+
+def supportlab_rules() -> tuple[InvariantRule, ...]:
+    return supported_rules() + unsupported_guards()
