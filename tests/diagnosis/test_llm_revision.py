@@ -18,6 +18,7 @@ from afc.diagnosis.protocols import (
     RevisionCapableDiagnoser,
 )
 from afc.diagnosis.rule_diagnoser import RuleDiagnoser
+from afc.diagnosis.trace_view import SECRET_REDACTION
 from afc.invariants.engine import InvariantEngine
 from afc.review.errors import ReviewConflictError
 from afc.review.models import (
@@ -340,6 +341,12 @@ async def test_revision_prompt_is_a_canonical_sanitized_boundary() -> None:
                     rf'\"api_key\":\"[REDACTED]top {VALUE_SECRET}\"' "\n"
                     f"api_key.{('x' * 96)}={VALUE_SECRET}\n"
                     f"{('x' * 96)}.token_count=7; long metadata remains safe\n"
+                    f"headers[api_key]={VALUE_SECRET}\n"
+                    rf'credentials[\"api_key\"]={VALUE_SECRET}' "\n"
+                    f"api$key={VALUE_SECRET}\n"
+                    "https://auth.example.com:443/path?status=ok\n"
+                    "https://token.example.com:8443/health\n"
+                    f"https://agent:{VALUE_SECRET}@cookie.internal:8080/health\n"
                     "cookie: recipe; instructions remain safe\n"
                     "Browser cookie: recipe; instructions remain safe\n"
                     "Cookie=recipe; instructions remain safe\n"
@@ -418,6 +425,9 @@ async def test_revision_prompt_is_a_canonical_sanitized_boundary() -> None:
     assert "a_1" not in prompt
     assert "session_cookie_count=3; metadata remains safe" in prompt
     assert "long metadata remains safe" in prompt
+    assert "https://auth.example.com:443/path?status=ok" in prompt
+    assert "https://token.example.com:8443/health" in prompt
+    assert f"https://{SECRET_REDACTION}@cookie.internal:8080/health" in prompt
     for forbidden in (
         "semantic-trace-id-secret",
         "semantic-run-id-secret",

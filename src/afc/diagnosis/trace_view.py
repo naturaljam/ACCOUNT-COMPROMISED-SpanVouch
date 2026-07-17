@@ -157,7 +157,11 @@ _PROVIDER_KEY = re.compile(
     r"(?<![A-Za-z0-9])(?:ghp|github_pat|xox[baprs])_[A-Za-z0-9_-]{16,}"
     r"(?![A-Za-z0-9])"
 )
+_URL_SCHEME = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://")
 _URL_USERINFO = re.compile(r"(?i)(?P<scheme>\b[a-z][a-z0-9+.-]*://)(?P<userinfo>[^/@\s]+)@")
+_STRUCTURAL_FIELD_BOUNDARIES = frozenset(";,|")
+_URL_AUTHORITY_TERMINATORS = frozenset("/?#;,|")
+_URL_LABEL_BOUNDARIES = frozenset("/?#&")
 
 
 @dataclass
@@ -305,24 +309,85 @@ def _redact_structural_value(prefix: str, value: str) -> str:
     return f"{prefix}{SECRET_REDACTION}{structural_suffix}"
 
 
-def _is_structural_label_character(character: str) -> bool:
-    return character.isascii() and (
-        character.isalnum() or character in "_. /-\t\"'\\"
+def _structural_url_contexts(line: str) -> tuple[tuple[int, int, int], ...]:
+    contexts: list[tuple[int, int, int]] = []
+    token_end = 0
+    for match in _URL_SCHEME.finditer(line):
+        authority_end = match.end()
+        while (
+            authority_end < len(line)
+            and not line[authority_end].isspace()
+            and line[authority_end] not in _URL_AUTHORITY_TERMINATORS
+        ):
+            authority_end += 1
+
+        if match.start() >= token_end:
+            token_end = authority_end
+            while (
+                token_end < len(line)
+                and not line[token_end].isspace()
+                and line[token_end] not in _STRUCTURAL_FIELD_BOUNDARIES
+            ):
+                token_end += 1
+
+        contexts.append((match.start(), authority_end, token_end))
+    return tuple(contexts)
+
+
+def _extract_structural_label(
+    line: str,
+    candidate_start: int,
+    delimiter_index: int,
+    url_context: tuple[int, int, int] | None,
+) -> str:
+    label_start = delimiter_index
+    is_url_path_or_query = (
+        url_context is not None and delimiter_index >= url_context[1]
     )
+    while label_start > candidate_start:
+        previous = line[label_start - 1]
+        if previous in _STRUCTURAL_FIELD_BOUNDARIES or (
+            is_url_path_or_query and previous in _URL_LABEL_BOUNDARIES
+        ):
+            break
+        label_start -= 1
+    return line[label_start:delimiter_index].strip(" \t")
 
 
 def _sanitize_structural_credential_line(line: str) -> str:
+    url_contexts = _structural_url_contexts(line)
+    url_context_index = 0
+    url_context: tuple[int, int, int] | None = None
     candidate_start = 0
     index = 0
     while index < len(line):
+        if url_context is not None and index >= url_context[2]:
+            candidate_start = max(
+                candidate_start,
+                url_context[2],
+            )
+            url_context = None
+        while (
+            url_context_index < len(url_contexts)
+            and url_contexts[url_context_index][0] <= index
+        ):
+            url_context = url_contexts[url_context_index]
+            url_context_index += 1
+
         character = line[index]
         if character not in ":=":
-            if not _is_structural_label_character(character):
-                candidate_start = index + 1
+            index += 1
+            continue
+        if url_context is not None and index < url_context[1]:
             index += 1
             continue
 
-        label = line[candidate_start:index].strip(" \t")
+        label = _extract_structural_label(
+            line,
+            candidate_start,
+            index,
+            url_context,
+        )
         value_start = index + 1
         while value_start < len(line) and line[value_start] in " \t":
             value_start += 1

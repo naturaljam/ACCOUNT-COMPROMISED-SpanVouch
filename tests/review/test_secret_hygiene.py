@@ -160,6 +160,12 @@ def _trace_with_value_secrets() -> TraceIR:
                     rf'\"api_key\":\"{SECRET_REDACTION}top {SENTINEL_KEY}\"' "\n"
                     f"api_key.{('x' * 96)}={SENTINEL_KEY}\n"
                     f"{('x' * 96)}.token_count=7; long metadata remains safe\n"
+                    f"headers[api_key]={SENTINEL_KEY}\n"
+                    rf'credentials[\"api_key\"]={SENTINEL_KEY}' "\n"
+                    f"api$key={SENTINEL_KEY}\n"
+                    "https://auth.example.com:443/path?status=ok\n"
+                    "https://token.example.com:8443/health\n"
+                    f"https://agent:{SENTINEL_KEY}@cookie.internal:8080/health\n"
                     "Bearer Qaz; HTTP 401\n"
                     "A cookie: recipe; instructions remain safe\n"
                     "cookie: recipe; instructions remain safe\n"
@@ -364,6 +370,9 @@ def test_allowed_trace_value_secrets_never_reach_sqlite_or_public_aggregate(
     assert "a_1" not in view_json[0]
     assert "session_cookie_count=3; metadata remains safe" in view_json[0]
     assert "long metadata remains safe" in view_json[0]
+    assert "https://auth.example.com:443/path?status=ok" in view_json[0]
+    assert "https://token.example.com:8443/health" in view_json[0]
+    assert f"https://{SECRET_REDACTION}@cookie.internal:8080/health" in view_json[0]
     assert "Bearer of; good news" in view_json[0]
 
 

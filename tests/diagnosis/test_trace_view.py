@@ -992,3 +992,107 @@ def test_structural_label_scanning_has_no_fail_open_length_threshold() -> None:
             f"{label}=topsecret",
             f"{label}={SECRET_REDACTION}",
         )
+
+
+def test_structural_punctuation_labels_share_mapping_key_normalization() -> None:
+    label_pairs = (
+        ("headers[api_key]", "headers[token_count]"),
+        (r'credentials[\"api_key\"]', r'credentials[\"token_count\"]'),
+        ('credentials["api_key"]', 'credentials["token_count"]'),
+        ("[api_key]", "[token_count]"),
+        ("api$key", "token$count"),
+        ("headers(api_key)", "headers(token_count)"),
+        ("headers{api_key}", "headers{token_count}"),
+        ("headers@api-key", "headers@token-count"),
+        ("headers/api/key", "headers/token/count"),
+        ("headers→api_key", "headers→token_count"),
+        ("headers【api_key】", "headers【token_count】"),
+    )
+
+    for sensitive_label, safe_label in label_pairs:
+        for prefix in ("", "status=ok; ", "status=ok | "):
+            _assert_sanitizer_fixed_point(
+                f"{prefix}{sensitive_label}=topsecret",
+                f"{prefix}{sensitive_label}={SECRET_REDACTION}",
+            )
+
+        safe_source = f"{safe_label}=7; punctuation metadata remains safe"
+        _assert_sanitizer_fixed_point(safe_source, safe_source)
+
+
+def test_url_authorities_are_not_structural_assignment_labels() -> None:
+    safe_urls = (
+        "https://auth.example.com:443/path",
+        "https://token.example.com:8443/health",
+        "http://cookie.internal:8080/health",
+        "https://api-key.example:8443/v1",
+        "https://auth.example.com:443/path?status=ok&token_count=7#healthy",
+        (
+            "https://example.test/path?redirect="
+            "https://auth.example.com:443/health"
+        ),
+    )
+
+    for safe_url in safe_urls:
+        _assert_sanitizer_fixed_point(safe_url, safe_url)
+
+    _assert_sanitizer_fixed_point(
+        "https://agent:topsecret@auth.example.com:443/path?status=ok",
+        f"https://{SECRET_REDACTION}@auth.example.com:443/path?status=ok",
+    )
+    _assert_sanitizer_fixed_point(
+        "https://auth.example.com:443/path?api_key=topsecret",
+        f"https://auth.example.com:443/path?api_key={SECRET_REDACTION}",
+    )
+    _assert_sanitizer_fixed_point(
+        "https://example.test/path/api$key=topsecret",
+        f"https://example.test/path/api$key={SECRET_REDACTION}",
+    )
+    _assert_sanitizer_fixed_point(
+        "https://auth.example.com:443\N{NO-BREAK SPACE}api_key=topsecret",
+        (
+            "https://auth.example.com:443\N{NO-BREAK SPACE}"
+            f"api_key={SECRET_REDACTION}"
+        ),
+    )
+
+
+def test_structural_scanner_stays_stable_for_many_segments_and_urls() -> None:
+    safe_url = "https://auth.example.com:443/path?status=ok"
+    repeated_urls = " ".join(safe_url for _ in range(3_000))
+    _assert_sanitizer_fixed_point(repeated_urls, repeated_urls)
+
+    safe_assignments = ";".join(f"field_{index}=ok" for index in range(10_000))
+    source = f"{safe_assignments};headers[api_key]=topsecret"
+    expected = f"{safe_assignments};headers[api_key]={SECRET_REDACTION}"
+    _assert_sanitizer_fixed_point(source, expected)
+
+
+def test_trace_view_preserves_safe_urls_and_redacts_punctuation_labels() -> None:
+    trace = load_trace("clean-01")
+    root = trace.spans[0].model_copy(
+        update={
+            "attributes": {
+                **trace.spans[0].attributes,
+                "tool.error.message": (
+                    f"headers[api_key]={VALUE_SECRET}\n"
+                    rf'credentials[\"api_key\"]={VALUE_SECRET}' "\n"
+                    f"api$key={VALUE_SECRET}\n"
+                    "https://auth.example.com:443/path?status=ok\n"
+                    f"https://agent:{VALUE_SECRET}@token.example.com:8443/health"
+                ),
+            }
+        }
+    )
+    candidate = trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
+
+    view = DiagnosticTraceView.from_trace(candidate)
+    message = view.spans[0].attributes["tool.error.message"]
+
+    assert isinstance(message, str)
+    assert VALUE_SECRET not in message
+    assert "https://auth.example.com:443/path?status=ok" in message
+    assert (
+        f"https://{SECRET_REDACTION}@token.example.com:8443/health" in message
+    )
+    assert sanitize_diagnostic_trace_view(view) == view
