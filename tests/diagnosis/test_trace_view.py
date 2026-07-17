@@ -178,3 +178,41 @@ def test_trace_view_preserves_safe_bearer_prose_and_redacts_token_shaped_bearer(
     assert view.spans[0].attributes["run.final_message"] == safe_message
     assert VALUE_SECRET not in canonical_json(view)
     assert "safe tail" in canonical_json(view)
+
+
+def test_trace_view_redacts_opaque_bearer_tokens_only_at_value_boundaries() -> None:
+    trace = load_trace("clean-01")
+    opaque_letters = "qwertyuiopasdfghjklzxcvbnm"
+    short_token = "zzq"
+    safe_prose = "Bearer of good news remains ordinary prose. 熊猫仍然安全。"
+    root = trace.spans[0].model_copy(
+        update={
+            "attributes": {
+                **trace.spans[0].attributes,
+                "tool.result": [
+                    f"opaque=Bearer {opaque_letters}",
+                    f"short=Bearer {short_token},next=retry",
+                    json.dumps(
+                        {"credential": f"Bearer {short_token}"},
+                        ensure_ascii=False,
+                    ),
+                ],
+                "tool.error.message": (
+                    f"Authorization: Custom {short_token}; auth context survives"
+                ),
+                "run.final_message": safe_prose,
+            }
+        }
+    )
+    candidate = trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
+
+    view = DiagnosticTraceView.from_trace(candidate)
+    serialized = canonical_json(view)
+
+    assert f"Bearer {opaque_letters}" not in serialized
+    assert f"Bearer {short_token}" not in serialized
+    assert "next=retry" in serialized
+    assert "auth context survives" in serialized
+    assert view.spans[0].attributes["run.final_message"] == safe_prose
+    assert sanitize_diagnostic_trace_view(view) == view
+    assert sanitize_diagnostic_trace_view(sanitize_diagnostic_trace_view(view)) == view

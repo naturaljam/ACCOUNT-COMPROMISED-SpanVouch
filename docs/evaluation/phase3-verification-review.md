@@ -65,7 +65,7 @@ The 2026-07-17 offline gate produced the following fresh evidence:
 - `uv sync --frozen --group dev`: 60 packages audited;
 - Ruff: clean;
 - strict mypy: 63 source files, no issues;
-- pytest with coverage: 485 passed at 93% total coverage; after the final whole-branch review fixes and follow-up hardening, the fresh repository suite passed 553 tests, with only the pre-existing Starlette/httpx deprecation warning;
+- pytest with coverage: 485 passed at 93% total coverage; after the final whole-branch review fixes and follow-up hardening, the fresh repository suite passed 554 tests, with only the pre-existing Starlette/httpx deprecation warning;
 - deterministic review report: `status=complete`, 36 candidates, all six recorded quality rates at their accepted value, 0 operational errors, and 0 provider tokens;
 - Docker image build and health check: passed;
 - real persisted case: one revision, one deterministic verifier report, five ordered events, terminal `confirm` decision;

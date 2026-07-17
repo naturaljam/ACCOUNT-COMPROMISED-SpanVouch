@@ -43,7 +43,7 @@ _AUTHORIZATION = re.compile(
 )
 _BEARER = re.compile(
     r"(?i)(?P<prefix>\bbearer\s+)(?P<value>(?!\[REDACTED\])"
-    r"[A-Za-z0-9._~+/=-]{20,})(?=$|[\s,;}\]])"
+    r"[A-Za-z0-9._~+/=-]+)(?=$|[\"',;|)}\]])"
 )
 _PROVIDER_KEY = re.compile(
     r"(?<![A-Za-z0-9])(?:sk|rk|pk)-[A-Za-z0-9_-]{16,}(?![A-Za-z0-9])|"
@@ -60,16 +60,6 @@ def _redact_match(match: re.Match[str]) -> str:
     value = match.group("value")
     if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
         return f"{match.group('prefix')}{value[0]}{SECRET_REDACTION}{value[0]}"
-    return f"{match.group('prefix')}{SECRET_REDACTION}"
-
-
-def _redact_token_shaped_bearer(match: re.Match[str]) -> str:
-    value = match.group("value")
-    shape_evidence = sum(
-        character.isdigit() or character in "._~+/=-" for character in value
-    )
-    if shape_evidence < 2:
-        return match.group(0)
     return f"{match.group('prefix')}{SECRET_REDACTION}"
 
 
@@ -101,7 +91,7 @@ def _sanitize_string(value: str, *, encoded_json_depth: int) -> str:
         value,
     )
     sanitized = _AUTHORIZATION.sub(_redact_match, sanitized)
-    sanitized = _BEARER.sub(_redact_token_shaped_bearer, sanitized)
+    sanitized = _BEARER.sub(_redact_match, sanitized)
     sanitized = _ASSIGNMENT.sub(_redact_match, sanitized)
     return _PROVIDER_KEY.sub(SECRET_REDACTION, sanitized)
 
