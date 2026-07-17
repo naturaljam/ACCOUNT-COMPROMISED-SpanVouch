@@ -1,8 +1,17 @@
 from pathlib import Path
 
-from afc.diagnosis.models import DiagnoserKind
+from afc.diagnosis.evidence import EvidenceCatalog
+from afc.diagnosis.models import (
+    DiagnoserKind,
+    DiagnosisDecision,
+    DiagnosisExecution,
+    DiagnosisProvenance,
+    DiagnosisStatus,
+    ProviderUsage,
+)
 from afc.diagnosis.rule_diagnoser import RuleDiagnoser
 from afc.diagnosis.service import DiagnosisService
+from afc.diagnosis.trace_view import DiagnosticTraceView
 from afc.evals.diagnosis_labels import load_diagnosis_labels
 from afc.evals.diagnosis_metrics import evaluate_diagnoser
 from afc.invariants.engine import InvariantEngine
@@ -51,3 +60,63 @@ async def test_rule_diagnoser_meets_twenty_trace_hard_gate() -> None:
         "weak_rule_only",
     )
     assert all(item.supported_accuracy < 1.0 for item in report.weak_baselines)
+    assert report.usage.provider_sample_count == 0
+    assert report.usage.total_tokens == 0
+    assert report.usage.latency_p50_ms is None
+    assert report.usage.latency_p95_ms is None
+
+
+class _UsageDiagnoser:
+    version_fingerprint = "usage-test-v1"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def diagnose(
+        self, view: DiagnosticTraceView, evidence: EvidenceCatalog
+    ) -> DiagnosisExecution:
+        self.calls += 1
+        latency = 10.0 if self.calls == 1 else 30.0
+        return DiagnosisExecution(
+            decision=DiagnosisDecision(
+                status=DiagnosisStatus.NO_FAILURE,
+                failure_type="no_failure",
+                confidence=1.0,
+            ),
+            provenance=DiagnosisProvenance(
+                taxonomy_version="1.0",
+                diagnoser_version="usage-test-v1",
+                model="test-model",
+                provider="test-provider",
+            ),
+            usage=ProviderUsage(
+                input_tokens=10 * self.calls,
+                output_tokens=2 * self.calls,
+                total_tokens=12 * self.calls,
+                latency_ms=latency,
+                request_id=f"request-{self.calls}",
+            ),
+        )
+
+
+async def test_evaluation_aggregates_provider_usage_and_latency_percentiles() -> None:
+    all_traces = traces()
+    all_labels = load_diagnosis_labels(DATASET / "diagnosis-labels-v1.jsonl")
+    run_ids = ("clean-01", "clean-02")
+    selected_traces = tuple(trace for trace in all_traces if trace.run_id in run_ids)
+    selected_labels = tuple(label for label in all_labels if label.run_id in run_ids)
+
+    report = await evaluate_diagnoser(
+        traces=selected_traces,
+        labels=selected_labels,
+        service=DiagnosisService({DiagnoserKind.DEEPSEEK: _UsageDiagnoser()}),
+        kind=DiagnoserKind.DEEPSEEK,
+    )
+
+    assert report.usage.provider_sample_count == 2
+    assert report.usage.input_tokens == 30
+    assert report.usage.output_tokens == 6
+    assert report.usage.total_tokens == 36
+    assert report.usage.latency_p50_ms == 20.0
+    assert report.usage.latency_p95_ms == 29.0
+    assert report.usage.estimated_cost_usd is None

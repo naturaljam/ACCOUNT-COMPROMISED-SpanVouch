@@ -47,6 +47,18 @@ class WeakBaselineSummary(BaseModel):
     coverage: float
 
 
+class DiagnosisUsageSummary(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    provider_sample_count: int = Field(ge=0)
+    input_tokens: int = Field(ge=0)
+    output_tokens: int = Field(ge=0)
+    total_tokens: int = Field(ge=0)
+    latency_p50_ms: float | None = Field(default=None, ge=0.0)
+    latency_p95_ms: float | None = Field(default=None, ge=0.0)
+    estimated_cost_usd: float | None = Field(default=None, ge=0.0)
+
+
 class DiagnosisEvaluationReport(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -56,11 +68,40 @@ class DiagnosisEvaluationReport(BaseModel):
     trace_count: int = Field(ge=1)
     samples: tuple[DiagnosisSampleResult, ...]
     metrics: DiagnosisMetrics
+    usage: DiagnosisUsageSummary
     weak_baselines: tuple[WeakBaselineSummary, ...]
 
 
 def _ratio(numerator: int, denominator: int) -> float | None:
     return numerator / denominator if denominator else None
+
+
+def _percentile(values: tuple[float, ...], quantile: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * quantile
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    fraction = position - lower
+    return ordered[lower] + (ordered[upper] - ordered[lower]) * fraction
+
+
+def _summarize_usage(samples: tuple[DiagnosisSampleResult, ...]) -> DiagnosisUsageSummary:
+    usages = tuple(
+        sample.report.usage
+        for sample in samples
+        if sample.report is not None and sample.report.usage is not None
+    )
+    latencies = tuple(usage.latency_ms for usage in usages)
+    return DiagnosisUsageSummary(
+        provider_sample_count=len(usages),
+        input_tokens=sum(usage.input_tokens for usage in usages),
+        output_tokens=sum(usage.output_tokens for usage in usages),
+        total_tokens=sum(usage.total_tokens for usage in usages),
+        latency_p50_ms=_percentile(latencies, 0.5),
+        latency_p95_ms=_percentile(latencies, 0.95),
+    )
 
 
 async def evaluate_diagnoser(
@@ -101,6 +142,7 @@ async def evaluate_diagnoser(
         trace_count=len(traces),
         samples=tuple(samples),
         metrics=metrics,
+        usage=_summarize_usage(tuple(samples)),
         weak_baselines=_evaluate_weak_baselines(traces_by_run, labels),
     )
 

@@ -13,7 +13,7 @@ def test_frozen_dataset_fixtures_are_checked_out_with_lf_endings() -> None:
     assert attributes_file.is_file(), "repository .gitattributes must define fixture EOLs"
 
     dataset = ROOT / "evals" / "datasets" / "supportlab-v1"
-    fixture_paths = sorted(dataset.glob("*.jsonl")) + [dataset / "manifest.json"]
+    fixture_paths = sorted(dataset.glob("*.jsonl")) + sorted(dataset.glob("*.json"))
     relative_paths = [path.relative_to(ROOT).as_posix() for path in fixture_paths]
     result = subprocess.run(
         ["git", "check-attr", "text", "eol", "--", *relative_paths],
@@ -29,6 +29,52 @@ def test_frozen_dataset_fixtures_are_checked_out_with_lf_endings() -> None:
         for attribute, value in (("text", "set"), ("eol", "lf"))
     }
     assert set(result.stdout.splitlines()) == expected
+
+
+def test_phase_2_delivery_is_safe_and_reproducible() -> None:
+    required_files = (
+        ".env.example",
+        "docs/evaluation/phase2-diagnosis-evaluation.md",
+    )
+    missing = [path for path in required_files if not (ROOT / path).is_file()]
+    assert not missing, f"missing Phase 2 delivery files: {missing}"
+
+    environment = (ROOT / ".env.example").read_text(encoding="utf-8")
+    assert re.search(r"(?m)^DEEPSEEK_API_KEY=$", environment)
+    assert re.search(r"(?m)^DEEPSEEK_MODEL=deepseek-v4-flash$", environment)
+
+    gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
+    assert "evals/reports/generated/" in gitignore
+
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "afc-evaluate-diagnosis" in readme
+    assert "--allow-live-api" in readme
+    assert "POST /v1/traces/{trace_id}/diagnoses" in readme
+    assert "rules" in readme and "DEEPSEEK_API_KEY" in readme
+
+
+def test_no_tracked_file_contains_a_populated_deepseek_key() -> None:
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+    ).stdout.split(b"\0")
+    offenders: list[str] = []
+    for encoded_path in tracked:
+        if not encoded_path:
+            continue
+        relative = encoded_path.decode("utf-8")
+        content = (ROOT / relative).read_bytes()
+        if b"\0" in content:
+            continue
+        text = content.decode("utf-8", errors="replace")
+        if re.search(
+            r"(?m)^[ \t]*DEEPSEEK_API_KEY[ \t]*=[ \t]*[^\s#]+",
+            text,
+        ):
+            offenders.append(relative)
+    assert not offenders, f"tracked files contain populated DeepSeek keys: {offenders}"
 
 
 def test_phase_1_delivery_configuration_is_reproducible() -> None:
