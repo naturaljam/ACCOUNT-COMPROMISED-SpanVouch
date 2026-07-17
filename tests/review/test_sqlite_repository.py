@@ -14,6 +14,7 @@ from afc.review.commands import (
     ApplyHumanDecision,
     ClaimReviewWork,
     CreateReviewCase,
+    RouteRevisionFailureToHuman,
     RouteToHumanReview,
     WorkflowEventType,
 )
@@ -144,6 +145,22 @@ def _revision_command() -> AppendDiagnosisRevision:
     )
 
 
+def _revision_failure_command(
+    *, expected_version: int = 3, event_id: str = "event-revision-provider-failed-1"
+) -> RouteRevisionFailureToHuman:
+    return RouteRevisionFailureToHuman(
+        case_id="case-review-1",
+        expected_version=expected_version,
+        prior_status=ReviewStatus.REVISING,
+        target_status=ReviewStatus.AWAITING_HUMAN_REVIEW,
+        composite_verdict=VerifierVerdict.REVIEW_REQUIRED,
+        event_id=event_id,
+        event_type=WorkflowEventType.REVISION_PROVIDER_FAILED,
+        event_metadata_json=canonical_json({"code": "revision_provider_failed", "retryable": True}),
+        occurred_at=NOW + timedelta(seconds=3),
+    )
+
+
 def _decision_command(
     *,
     decision_id: str,
@@ -186,6 +203,27 @@ async def _create_and_verify(repository: SQLiteReviewRepository) -> None:
     await repository.create_case(_create_command())
     await repository.claim_work(_claim_command())
     await repository.append_verifier_run(_verifier_command())
+
+
+async def _create_and_claim_revision(repository: SQLiteReviewRepository) -> None:
+    await repository.create_case(_create_command())
+    await repository.claim_work(_claim_command())
+    await repository.append_verifier_run(
+        _verifier_command(
+            verdict=VerifierVerdict.NEEDS_EVIDENCE,
+            target_status=ReviewStatus.REVISION_REQUESTED,
+        )
+    )
+    await repository.claim_work(
+        _claim_command(
+            expected_version=2,
+            prior_status=ReviewStatus.REVISION_REQUESTED,
+            target_status=ReviewStatus.REVISING,
+            event_id="event-revision-started-1",
+            event_type=WorkflowEventType.REVISION_STARTED,
+            now=NOW + timedelta(seconds=2),
+        )
+    )
 
 
 def _counts(database: Path) -> dict[str, int]:
@@ -584,6 +622,128 @@ async def test_repository_rejects_forged_revision_transition(tmp_path: Path) -> 
 
     assert (await repository.get_detail("case-review-1")).case == before
     assert _counts(database)["diagnosis_revisions"] == 1
+
+
+def test_revision_failure_command_accepts_only_exact_review_transition() -> None:
+    command = _revision_failure_command()
+
+    with pytest.raises(ValidationError, match="invalid revision-failure transition"):
+        _revalidate(
+            command,
+            {"prior_status": ReviewStatus.REVISION_REQUESTED},
+        )
+    with pytest.raises(ValidationError, match="invalid revision-failure transition"):
+        _revalidate(
+            command,
+            {"event_type": WorkflowEventType.PROVIDER_FAILED},
+        )
+    with pytest.raises(ValidationError, match="revision failure must require human review"):
+        _revalidate(
+            command,
+            {"composite_verdict": VerifierVerdict.NEEDS_EVIDENCE},
+        )
+
+
+async def test_revision_failure_routes_to_human_without_fabricated_rows(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "revision-failure.sqlite3"
+    repository = SQLiteReviewRepository(database)
+    await repository.initialize()
+    await _create_and_claim_revision(repository)
+    before_counts = _counts(database)
+
+    routed = await repository.route_revision_failure(_revision_failure_command())
+
+    assert routed.status is ReviewStatus.AWAITING_HUMAN_REVIEW
+    assert routed.version == 4
+    assert routed.composite_verdict is VerifierVerdict.REVIEW_REQUIRED
+    assert _counts(database) == {
+        **before_counts,
+        "workflow_events": before_counts["workflow_events"] + 1,
+    }
+    with connect_database(database) as connection:
+        case_row = connection.execute(
+            "SELECT lease_owner, lease_expires_at FROM review_cases WHERE case_id = ?",
+            ("case-review-1",),
+        ).fetchone()
+        event_row = connection.execute(
+            "SELECT event_type, metadata_json FROM workflow_events "
+            "WHERE case_id = ? ORDER BY event_sequence DESC LIMIT 1",
+            ("case-review-1",),
+        ).fetchone()
+    assert case_row == (None, None)
+    assert event_row == (
+        "revision_provider_failed",
+        canonical_json({"code": "revision_provider_failed", "retryable": True}),
+    )
+
+
+async def test_revision_failure_revalidates_model_copy_and_enforces_cas(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "revision-failure-cas.sqlite3"
+    repository = SQLiteReviewRepository(database)
+    await repository.initialize()
+    await _create_and_claim_revision(repository)
+    before = await repository.get_detail("case-review-1")
+
+    forged = _revision_failure_command().model_copy(
+        update={"prior_status": ReviewStatus.REVISION_REQUESTED}
+    )
+    with pytest.raises(ReviewConflictError, match="invalid revision failure command"):
+        await repository.route_revision_failure(forged)
+    with pytest.raises(ReviewConflictError, match="compare-and-swap conflict"):
+        await repository.route_revision_failure(_revision_failure_command(expected_version=99))
+
+    assert await repository.get_detail("case-review-1") == before
+
+
+async def test_revision_failure_duplicate_is_exactly_once_and_changed_event_conflicts(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "revision-failure-duplicate.sqlite3"
+    repository = SQLiteReviewRepository(database)
+    await repository.initialize()
+    await _create_and_claim_revision(repository)
+    command = _revision_failure_command()
+
+    original = await repository.route_revision_failure(command)
+    replay = await repository.route_revision_failure(command)
+    assert replay == original
+    counts = _counts(database)
+
+    changed = command.model_copy(
+        update={
+            "event_metadata_json": canonical_json(
+                {"code": "revision_provider_failed", "retryable": False}
+            )
+        }
+    )
+    with pytest.raises(ReviewConflictError, match="duplicate workflow event"):
+        await repository.route_revision_failure(changed)
+    assert _counts(database) == counts
+
+
+async def test_revision_failure_rolls_back_state_and_event(tmp_path: Path) -> None:
+    database = tmp_path / "revision-failure-rollback.sqlite3"
+
+    def fail_after_event(stage: str) -> None:
+        if stage == "workflow_event":
+            raise RuntimeError("forced transaction failure")
+
+    setup_repository = SQLiteReviewRepository(database)
+    await setup_repository.initialize()
+    await _create_and_claim_revision(setup_repository)
+    before = await setup_repository.get_detail("case-review-1")
+    before_counts = _counts(database)
+    repository = SQLiteReviewRepository(database, failure_injector=fail_after_event)
+
+    with pytest.raises(RuntimeError, match="forced transaction failure"):
+        await repository.route_revision_failure(_revision_failure_command())
+
+    assert await setup_repository.get_detail("case-review-1") == before
+    assert _counts(database) == before_counts
 
 
 async def test_repository_rejects_forged_route_and_decision_transitions(

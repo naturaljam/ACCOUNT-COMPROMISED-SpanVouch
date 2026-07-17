@@ -21,6 +21,7 @@ from afc.review.commands import (
     ApplyHumanDecision,
     ClaimReviewWork,
     CreateReviewCase,
+    RouteRevisionFailureToHuman,
     RouteToHumanReview,
     TransitionCommand,
 )
@@ -133,6 +134,16 @@ class SQLiteReviewRepository:
             RouteToHumanReview, command, "invalid route to human command"
         )
         return await asyncio.to_thread(self._route_to_human, command)
+
+    async def route_revision_failure(
+        self, command: RouteRevisionFailureToHuman
+    ) -> DiagnosisReviewCase:
+        command = self._revalidate_command(
+            RouteRevisionFailureToHuman,
+            command,
+            "invalid revision failure command",
+        )
+        return await asyncio.to_thread(self._route_revision_failure, command)
 
     async def apply_human_decision(
         self, command: ApplyHumanDecision
@@ -506,6 +517,47 @@ class SQLiteReviewRepository:
                 "WHERE case_id = ? AND version = ? AND status = ?",
                 (
                     command.target_status.value,
+                    _timestamp(command.occurred_at),
+                    command.case_id,
+                    command.expected_version,
+                    command.prior_status.value,
+                ),
+            )
+            self._require_updated(cursor)
+            self._insert_transition_event(connection, command)
+            return self._read_case(connection, command.case_id)
+
+    def _route_revision_failure(
+        self, command: RouteRevisionFailureToHuman
+    ) -> DiagnosisReviewCase:
+        with self._transaction(write=True) as connection:
+            self._require_valid_transition(command)
+            if self._event_exists(connection, command.event_id):
+                if self._event_matches(
+                    connection,
+                    event_id=command.event_id,
+                    command=command,
+                    case_version=command.expected_version + 1,
+                ):
+                    state = self._require_state(connection, command.case_id)
+                    if (
+                        int(state["version"]) == command.expected_version + 1
+                        and str(state["status"]) == command.target_status.value
+                        and state["composite_verdict"] == command.composite_verdict.value
+                        and state["lease_owner"] is None
+                        and state["lease_expires_at"] is None
+                    ):
+                        return self._read_case(connection, command.case_id)
+                raise ReviewConflictError("duplicate workflow event")
+            state = self._require_state(connection, command.case_id)
+            self._require_cas(state, command.expected_version, command.prior_status)
+            cursor = connection.execute(
+                "UPDATE review_cases SET status = ?, version = version + 1, "
+                "composite_verdict = ?, lease_owner = NULL, lease_expires_at = NULL, "
+                "updated_at = ? WHERE case_id = ? AND version = ? AND status = ?",
+                (
+                    command.target_status.value,
+                    command.composite_verdict.value,
                     _timestamp(command.occurred_at),
                     command.case_id,
                     command.expected_version,

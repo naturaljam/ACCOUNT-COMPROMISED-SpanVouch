@@ -33,6 +33,7 @@ class WorkflowEventType(StrEnum):
     HUMAN_CORRECTED = "human_corrected"
     HUMAN_REJECTED = "human_rejected"
     PROVIDER_FAILED = "provider_failed"
+    REVISION_PROVIDER_FAILED = "revision_provider_failed"
 
 
 def human_decision_transition(
@@ -239,6 +240,26 @@ class RouteToHumanReview(TransitionCommand):
     @model_validator(mode="after")
     def validate_route(self) -> Self:
         self.require_valid_transition()
+        return self
+
+
+class RouteRevisionFailureToHuman(TransitionCommand):
+    composite_verdict: VerifierVerdict
+
+    def require_valid_transition(self) -> None:
+        expected = (
+            ReviewStatus.REVISING,
+            ReviewStatus.AWAITING_HUMAN_REVIEW,
+            WorkflowEventType.REVISION_PROVIDER_FAILED,
+        )
+        if (self.prior_status, self.target_status, self.event_type) != expected:
+            raise ValueError("invalid revision-failure transition")
+
+    @model_validator(mode="after")
+    def validate_route(self) -> Self:
+        self.require_valid_transition()
+        if self.composite_verdict is not VerifierVerdict.REVIEW_REQUIRED:
+            raise ValueError("revision failure must require human review")
         return self
 
 

@@ -1,16 +1,19 @@
 from typing import Protocol
 
+from afc.diagnosis.models import DiagnoserKind, DiagnosisReport
 from afc.review.commands import (
     AppendDiagnosisRevision,
     AppendVerifierRun,
     ApplyHumanDecision,
     ClaimReviewWork,
     CreateReviewCase,
+    RouteRevisionFailureToHuman,
     RouteToHumanReview,
 )
 from afc.review.models import (
     DiagnosisReviewCase,
     DiagnosisReviewDetail,
+    EvidenceGap,
     ReviewRuntimeBundle,
     VerificationInput,
     VerifierKind,
@@ -27,10 +30,22 @@ class Verifier(Protocol):
 
 
 class ReviewWorkflowRunner(Protocol):
-    async def run(self, case_id: str) -> None:
+    async def run(self, case_id: str) -> DiagnosisReviewDetail:
         raise NotImplementedError
 
-    async def resume(self, case_id: str) -> None:
+    async def resume(self, case_id: str) -> DiagnosisReviewDetail:
+        raise NotImplementedError
+
+
+class ReviewReviser(Protocol):
+    def supports(self, diagnoser_kind: DiagnoserKind) -> bool:
+        raise NotImplementedError
+
+    async def revise(
+        self,
+        runtime_bundle: ReviewRuntimeBundle,
+        evidence_gaps: tuple[EvidenceGap, ...],
+    ) -> DiagnosisReport:
         raise NotImplementedError
 
 
@@ -67,6 +82,11 @@ class ReviewRepository(Protocol):
         raise NotImplementedError
 
     async def route_to_human(self, command: RouteToHumanReview) -> DiagnosisReviewCase:
+        raise NotImplementedError
+
+    async def route_revision_failure(
+        self, command: RouteRevisionFailureToHuman
+    ) -> DiagnosisReviewCase:
         raise NotImplementedError
 
     async def apply_human_decision(
