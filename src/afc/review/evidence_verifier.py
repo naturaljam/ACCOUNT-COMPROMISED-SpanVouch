@@ -6,9 +6,17 @@ from pydantic import JsonValue, ValidationError
 
 from afc.diagnosis.evidence import EvidenceCatalog
 from afc.diagnosis.evidence import canonical_json as evidence_json
-from afc.diagnosis.models import DiagnoserKind, DiagnosisReport, DiagnosisStatus, EvidenceSelector
+from afc.diagnosis.models import (
+    AbstainReason,
+    DiagnoserKind,
+    DiagnosisReport,
+    DiagnosisStatus,
+    EvidenceSelector,
+)
 from afc.diagnosis.trace_view import DiagnosticTraceView
+from afc.failure_types import FailureType
 from afc.invariants.engine import InvariantEngine
+from afc.invariants.models import InvariantResult, InvariantStatus, RuleContext, RuleScope
 from afc.review.models import (
     EvidenceGap,
     FindingCode,
@@ -31,6 +39,10 @@ _FINDING_ORDER = {
     FindingCode.EVIDENCE_HASH_MISMATCH: 4,
     FindingCode.CLAIM_NOT_GROUNDED: 5,
     FindingCode.CRITICAL_SPAN_NOT_GROUNDED: 6,
+    FindingCode.EVIDENCE_BUDGET_EXCEEDED: 7,
+    FindingCode.CLEAN_TRACE_CONFLICT: 8,
+    FindingCode.UNSUPPORTED_SCOPE: 9,
+    FindingCode.DIAGNOSIS_CONFLICT: 10,
 }
 
 _MESSAGES = {
@@ -47,7 +59,22 @@ _MESSAGES = {
     FindingCode.CRITICAL_SPAN_NOT_GROUNDED: (
         "A critical span has no evidence from the same span."
     ),
+    FindingCode.EVIDENCE_BUDGET_EXCEEDED: (
+        "The diagnosis report exceeds the deterministic evidence budget."
+    ),
+    FindingCode.CLEAN_TRACE_CONFLICT: (
+        "A diagnosed failure conflicts with the stored successful root outcome."
+    ),
+    FindingCode.UNSUPPORTED_SCOPE: (
+        "An unsupported scope guard requires an unsupported-failure abstention."
+    ),
+    FindingCode.DIAGNOSIS_CONFLICT: (
+        "The diagnosis type conflicts with a supported hard invariant."
+    ),
 }
+
+_MAX_CLAIM_EVIDENCE = 4
+_MAX_REPORT_EVIDENCE = 8
 
 
 def _stable_id(
@@ -132,6 +159,45 @@ def _resolve_selector(
         evidence_json(resolved.observed_value).encode("utf-8")
     ).hexdigest()
     return resolved.observed_value, recomputed_sha256
+
+
+def _rule_context(
+    view: DiagnosticTraceView,
+    catalog: EvidenceCatalog,
+) -> RuleContext:
+    return RuleContext(view=view, evidence=catalog)
+
+
+def _result_selectors(results: Iterable[InvariantResult]) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                evidence.canonical
+                for result in results
+                for evidence in result.evidence
+            }
+        )
+    )
+
+
+def _result_spans(results: Iterable[InvariantResult]) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                evidence.span_id
+                for result in results
+                for evidence in result.evidence
+            }
+        )
+    )
+
+
+def _locally_known_selectors(
+    catalog: EvidenceCatalog,
+    selectors: Iterable[str],
+) -> tuple[str, ...]:
+    known = set(catalog.selectors)
+    return tuple(sorted(set(selectors) & known))
 
 
 def _ungrounded_critical_spans(report: DiagnosisReport) -> tuple[str, ...]:
@@ -248,7 +314,7 @@ class EvidenceVerifier:
             except ValueError:
                 binding_valid = False
                 add_finding(FindingCode.INVALID_VERIFIER_OUTPUT, revisable=False)
-        if catalog is not None:
+        if catalog is not None and view is not None:
             for evidence in report.evidence:
                 resolved = _resolve_selector(
                     catalog,
@@ -306,6 +372,47 @@ class EvidenceVerifier:
                         if evidence_id in known_evidence
                     )
                     unknown_ids = set(claim.evidence_ids) - set(known_evidence)
+                    if len(set(claim.evidence_ids)) > _MAX_CLAIM_EVIDENCE:
+                        allowed = _locally_known_selectors(
+                            catalog,
+                            (evidence.canonical for evidence in referenced),
+                        )
+                        claim_spans = tuple(
+                            sorted(
+                                {
+                                    evidence.span_id
+                                    for evidence in referenced
+                                    if evidence.canonical in allowed
+                                }
+                            )
+                        )
+                        add_finding(
+                            FindingCode.EVIDENCE_BUDGET_EXCEEDED,
+                            revisable=True,
+                            selectors=allowed,
+                            span_ids=claim_spans,
+                        )
+                        gaps.append(
+                            EvidenceGap(
+                                gap_id=_gap_id(
+                                    policy_version=self._policy_version,
+                                    code=FindingCode.EVIDENCE_BUDGET_EXCEEDED,
+                                    report_sha256=report_hash,
+                                    selectors=allowed,
+                                    discriminator=f"claim:{claim_index}",
+                                ),
+                                finding_code=FindingCode.EVIDENCE_BUDGET_EXCEEDED,
+                                claim_index=claim_index,
+                                stage=claim.stage,
+                                required_evidence_kind="claim_evidence_budget",
+                                allowed_selectors=allowed,
+                                related_span_ids=claim_spans,
+                                instruction=(
+                                    "Reduce this claim to at most four decisive evidence "
+                                    "references."
+                                ),
+                            )
+                        )
                     if not claim.evidence_ids or unknown_ids:
                         claim_spans = tuple(evidence.span_id for evidence in referenced)
                         if not claim_spans:
@@ -362,6 +469,158 @@ class EvidenceVerifier:
                             instruction="Add evidence resolved from the critical span.",
                         )
                     )
+
+            unique_report_evidence = {
+                evidence.evidence_id: evidence for evidence in report.evidence
+            }
+            if len(unique_report_evidence) > _MAX_REPORT_EVIDENCE:
+                allowed = _locally_known_selectors(
+                    catalog,
+                    (evidence.canonical for evidence in unique_report_evidence.values()),
+                )
+                report_spans = tuple(
+                    sorted(
+                        {
+                            evidence.span_id
+                            for evidence in unique_report_evidence.values()
+                            if evidence.canonical in allowed
+                        }
+                    )
+                )
+                add_finding(
+                    FindingCode.EVIDENCE_BUDGET_EXCEEDED,
+                    revisable=True,
+                    selectors=allowed,
+                    span_ids=report_spans,
+                )
+                gaps.append(
+                    EvidenceGap(
+                        gap_id=_gap_id(
+                            policy_version=self._policy_version,
+                            code=FindingCode.EVIDENCE_BUDGET_EXCEEDED,
+                            report_sha256=report_hash,
+                            selectors=allowed,
+                            discriminator="report",
+                        ),
+                        finding_code=FindingCode.EVIDENCE_BUDGET_EXCEEDED,
+                        required_evidence_kind="report_evidence_budget",
+                        allowed_selectors=allowed,
+                        related_span_ids=report_spans,
+                        instruction=(
+                            "Reduce the report to at most eight decisive evidence references."
+                        ),
+                    )
+                )
+
+            invariant_results = self._engine.run(_rule_context(view, catalog))
+            unsupported_failures = tuple(
+                result
+                for result in invariant_results
+                if result.scope is RuleScope.UNSUPPORTED_GUARD
+                and result.status is InvariantStatus.FAILED
+                and result.hard_failure
+            )
+            accepted_unsupported = (
+                report.status is DiagnosisStatus.ABSTAINED
+                and report.abstain_reason is AbstainReason.UNSUPPORTED_FAILURE_TYPE
+            )
+            if unsupported_failures and not accepted_unsupported:
+                add_finding(
+                    FindingCode.UNSUPPORTED_SCOPE,
+                    revisable=False,
+                    selectors=_result_selectors(unsupported_failures),
+                    span_ids=_result_spans(unsupported_failures),
+                )
+
+            supported_failures = tuple(
+                result
+                for result in invariant_results
+                if result.scope is RuleScope.SUPPORTED
+                and result.status is InvariantStatus.FAILED
+                and result.hard_failure
+                and result.failure_type is not None
+            )
+            root = next(
+                (span for span in view.spans if span.parent_span_id is None),
+                None,
+            )
+            if (
+                root is not None
+                and root.attributes.get("run.outcome") == "succeeded"
+                and report.status is DiagnosisStatus.DIAGNOSED
+                and not supported_failures
+                and not unsupported_failures
+            ):
+                add_finding(
+                    FindingCode.CLEAN_TRACE_CONFLICT,
+                    revisable=False,
+                    selectors=_locally_known_selectors(
+                        catalog,
+                        (f"{root.span_id}::attributes.run.outcome",),
+                    ),
+                    span_ids=(root.span_id,),
+                )
+
+            if report.status is DiagnosisStatus.DIAGNOSED:
+                conflicts = tuple(
+                    result
+                    for result in supported_failures
+                    if result.failure_type is not report.failure_type
+                )
+            elif report.status is DiagnosisStatus.NO_FAILURE:
+                conflicts = supported_failures
+            else:
+                conflicts = ()
+            if conflicts:
+                add_finding(
+                    FindingCode.DIAGNOSIS_CONFLICT,
+                    revisable=False,
+                    selectors=_result_selectors(conflicts),
+                    span_ids=_result_spans(conflicts),
+                )
+
+            if report.status is DiagnosisStatus.DIAGNOSED:
+                loop_failures = tuple(
+                    result
+                    for result in supported_failures
+                    if result.failure_type is FailureType.LOOP_OR_BUDGET_EXHAUSTION
+                    and result.evidence
+                )
+                if (
+                    report.failure_type is FailureType.LOOP_OR_BUDGET_EXHAUSTION
+                    and loop_failures
+                ):
+                    expected_span = loop_failures[0].evidence[0].span_id
+                    reported_span = report.critical_span_ids[0]
+                    if reported_span != expected_span:
+                        allowed = _selectors_for_spans(catalog, (expected_span,))
+                        add_finding(
+                            FindingCode.CRITICAL_SPAN_NOT_GROUNDED,
+                            revisable=True,
+                            selectors=allowed,
+                            span_ids=(expected_span,),
+                        )
+                        gaps.append(
+                            EvidenceGap(
+                                gap_id=_gap_id(
+                                    policy_version=self._policy_version,
+                                    code=FindingCode.CRITICAL_SPAN_NOT_GROUNDED,
+                                    report_sha256=report_hash,
+                                    selectors=allowed,
+                                    discriminator=(
+                                        f"loop-span:{reported_span}:{expected_span}"
+                                    ),
+                                ),
+                                finding_code=FindingCode.CRITICAL_SPAN_NOT_GROUNDED,
+                                required_evidence_kind="loop_critical_span_grounding",
+                                allowed_selectors=allowed,
+                                related_span_ids=(expected_span,),
+                                instruction=(
+                                    "Ground the loop diagnosis in the deterministic last "
+                                    "repeated span."
+                                ),
+                            )
+                        )
 
         ordered_findings = tuple(
             VerificationFinding(
