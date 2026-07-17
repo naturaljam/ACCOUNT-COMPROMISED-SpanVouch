@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -79,7 +80,13 @@ class SQLiteReviewRepository:
         *,
         failure_injector: FailureInjector | None = None,
     ) -> None:
-        self._database = Path(database)
+        value = os.fspath(database)
+        if value == ":memory:" or value.startswith("file:"):
+            raise ValueError(
+                "review database must be a filesystem path; "
+                "SQLite memory databases and file: URIs are unsupported"
+            )
+        self._database = Path(value)
         self._failure_injector = failure_injector
 
     async def initialize(self) -> None:
@@ -90,6 +97,26 @@ class SQLiteReviewRepository:
             CreateReviewCase, command, "invalid create review command"
         )
         return await asyncio.to_thread(self._create_case, command)
+
+    async def reserve_create(
+        self,
+        scope: str,
+        idempotency_key: str,
+        request_sha256: str,
+        *,
+        reservation_id: str,
+        now: datetime,
+        lease_expires_at: datetime,
+    ) -> DiagnosisReviewDetail | None:
+        return await asyncio.to_thread(
+            self._reserve_create,
+            scope,
+            idempotency_key,
+            request_sha256,
+            reservation_id,
+            now,
+            lease_expires_at,
+        )
 
     async def replay_detail(
         self,
@@ -190,18 +217,88 @@ class SQLiteReviewRepository:
         if self._failure_injector is not None:
             self._failure_injector(stage)
 
+    def _reserve_create(
+        self,
+        scope: str,
+        idempotency_key: str,
+        request_sha256: str,
+        reservation_id: str,
+        now: datetime,
+        lease_expires_at: datetime,
+    ) -> DiagnosisReviewDetail | None:
+        if lease_expires_at <= now:
+            raise ReviewConflictError("idempotency reservation lease must be positive")
+        with self._transaction(write=True) as connection:
+            row = self._idempotency_row(connection, scope, idempotency_key)
+            if row is None:
+                connection.execute(
+                    "INSERT INTO idempotency_keys("
+                    "scope, idempotency_key, request_sha256, result_type, result_id, "
+                    "reservation_id, lease_expires_at, created_at, updated_at"
+                    ") VALUES (?, ?, ?, 'review_case', NULL, ?, ?, ?, ?)",
+                    (
+                        scope,
+                        idempotency_key,
+                        request_sha256,
+                        reservation_id,
+                        _timestamp(lease_expires_at),
+                        _timestamp(now),
+                        _timestamp(now),
+                    ),
+                )
+                return None
+            if str(row["request_sha256"]) != request_sha256:
+                raise ReviewConflictError("idempotency key conflict")
+            if str(row["result_type"]) != "review_case":
+                raise ReviewPersistenceError("stored review data is invalid")
+            result_id = row["result_id"]
+            if result_id is not None:
+                try:
+                    return self._read_detail(connection, str(result_id))
+                except ReviewNotFoundError:
+                    raise ReviewPersistenceError("stored review data is invalid") from None
+            stored_lease = row["lease_expires_at"]
+            if stored_lease is None:
+                raise ReviewPersistenceError("stored review data is invalid")
+            if _parse_timestamp(str(stored_lease)) > now:
+                raise ReviewConflictError("idempotency request is in progress")
+            cursor = connection.execute(
+                "UPDATE idempotency_keys SET reservation_id = ?, lease_expires_at = ?, "
+                "updated_at = ? WHERE scope = ? AND idempotency_key = ? "
+                "AND request_sha256 = ? AND result_id IS NULL",
+                (
+                    reservation_id,
+                    _timestamp(lease_expires_at),
+                    _timestamp(now),
+                    scope,
+                    idempotency_key,
+                    request_sha256,
+                ),
+            )
+            self._require_updated(cursor)
+            return None
+
     def _create_case(self, command: CreateReviewCase) -> DiagnosisReviewDetail:
         with self._transaction(write=True) as connection:
-            replay = self._idempotency_replay(
+            idempotency_row = self._idempotency_row(
                 connection, command.idempotency_scope, command.idempotency_key
             )
-            if replay is not None:
-                fingerprint, result_type, result_id = replay
-                if fingerprint != command.request_sha256:
+            if idempotency_row is not None:
+                if str(idempotency_row["request_sha256"]) != command.request_sha256:
                     raise ReviewConflictError("idempotency key conflict")
-                if result_type != "review_case":
+                if str(idempotency_row["result_type"]) != "review_case":
                     raise ReviewPersistenceError("stored review data is invalid")
-                return self._read_detail(connection, result_id)
+                result_id = idempotency_row["result_id"]
+                if result_id is not None:
+                    return self._read_detail(connection, str(result_id))
+                if (
+                    command.idempotency_reservation_id is None
+                    or str(idempotency_row["reservation_id"])
+                    != command.idempotency_reservation_id
+                ):
+                    raise ReviewConflictError("idempotency reservation is not owned")
+            elif command.idempotency_reservation_id is not None:
+                raise ReviewConflictError("idempotency reservation is missing")
 
             connection.execute(
                 "INSERT INTO review_cases("
@@ -248,15 +345,32 @@ class SQLiteReviewRepository:
                 created_at=command.created_at,
             )
             self._after_insert("workflow_event")
-            self._insert_idempotency(
-                connection,
-                scope=command.idempotency_scope,
-                key=command.idempotency_key,
-                fingerprint=command.request_sha256,
-                result_type="review_case",
-                result_id=command.case_id,
-                created_at=command.created_at,
-            )
+            if idempotency_row is None:
+                self._insert_idempotency(
+                    connection,
+                    scope=command.idempotency_scope,
+                    key=command.idempotency_key,
+                    fingerprint=command.request_sha256,
+                    result_type="review_case",
+                    result_id=command.case_id,
+                    created_at=command.created_at,
+                )
+            else:
+                cursor = connection.execute(
+                    "UPDATE idempotency_keys SET result_id = ?, reservation_id = NULL, "
+                    "lease_expires_at = NULL, updated_at = ? "
+                    "WHERE scope = ? AND idempotency_key = ? AND request_sha256 = ? "
+                    "AND reservation_id = ? AND result_id IS NULL",
+                    (
+                        command.case_id,
+                        _timestamp(command.created_at),
+                        command.idempotency_scope,
+                        command.idempotency_key,
+                        command.request_sha256,
+                        command.idempotency_reservation_id,
+                    ),
+                )
+                self._require_updated(cursor)
             self._after_insert("idempotency_key")
             return self._read_detail(connection, command.case_id)
 
@@ -632,8 +746,9 @@ class SQLiteReviewRepository:
                 if correction_verifier.report_sha256 != correction.report_sha256:
                     raise ReviewConflictError("human correction verification binding conflict")
                 existing_verifier = connection.execute(
-                    "SELECT 1 FROM verifier_runs WHERE verifier_run_id = ?",
-                    (correction_verifier.verifier_run_id,),
+                    "SELECT 1 FROM verifier_runs "
+                    "WHERE case_id = ? AND verifier_run_id = ?",
+                    (command.case_id, correction_verifier.verifier_run_id),
                 ).fetchone()
                 if existing_verifier is not None:
                     raise ReviewConflictError("duplicate verifier result")
@@ -716,20 +831,32 @@ class SQLiteReviewRepository:
             raise ReviewConflictError(str(error)) from None
 
     @staticmethod
-    def _idempotency_replay(
+    def _idempotency_row(
         connection: sqlite3.Connection, scope: str, key: str
+    ) -> sqlite3.Row | None:
+        return cast(
+            sqlite3.Row | None,
+            connection.execute(
+                "SELECT * FROM idempotency_keys "
+                "WHERE scope = ? AND idempotency_key = ?",
+                (scope, key),
+            ).fetchone(),
+        )
+
+    @classmethod
+    def _idempotency_replay(
+        cls, connection: sqlite3.Connection, scope: str, key: str
     ) -> tuple[str, str, str] | None:
-        row = connection.execute(
-            "SELECT request_sha256, result_type, result_id FROM idempotency_keys "
-            "WHERE scope = ? AND idempotency_key = ?",
-            (scope, key),
-        ).fetchone()
+        row = cls._idempotency_row(connection, scope, key)
         if row is None:
             return None
+        result_id = row["result_id"]
+        if result_id is None:
+            raise ReviewConflictError("idempotency request is in progress")
         return (
             str(row["request_sha256"]),
             str(row["result_type"]),
-            str(row["result_id"]),
+            str(result_id),
         )
 
     @staticmethod
@@ -745,9 +872,18 @@ class SQLiteReviewRepository:
     ) -> None:
         connection.execute(
             "INSERT INTO idempotency_keys("
-            "scope, idempotency_key, request_sha256, result_type, result_id, created_at"
-            ") VALUES (?, ?, ?, ?, ?, ?)",
-            (scope, key, fingerprint, result_type, result_id, _timestamp(created_at)),
+            "scope, idempotency_key, request_sha256, result_type, result_id, "
+            "reservation_id, lease_expires_at, created_at, updated_at"
+            ") VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?)",
+            (
+                scope,
+                key,
+                fingerprint,
+                result_type,
+                result_id,
+                _timestamp(created_at),
+                _timestamp(created_at),
+            ),
         )
 
     @staticmethod

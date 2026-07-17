@@ -25,7 +25,7 @@ def _table_names(connection: sqlite3.Connection) -> set[str]:
     return {str(row[0]) for row in rows}
 
 
-def test_initialize_creates_exact_schema_v1_and_is_repeatable(tmp_path: Path) -> None:
+def test_initialize_creates_exact_schema_v2_and_is_repeatable(tmp_path: Path) -> None:
     database = tmp_path / "reviews.sqlite3"
 
     initialize_database(database)
@@ -35,8 +35,8 @@ def test_initialize_creates_exact_schema_v1_and_is_repeatable(tmp_path: Path) ->
         assert _table_names(connection) == REQUIRED_TABLES
         assert connection.execute(
             "SELECT schema_version FROM schema_metadata WHERE singleton_key = 1"
-        ).fetchone() == (1,)
-    assert SCHEMA_VERSION == 1
+        ).fetchone() == (2,)
+    assert SCHEMA_VERSION == 2
 
 
 def test_connections_apply_required_pragmas(tmp_path: Path) -> None:
@@ -49,7 +49,7 @@ def test_connections_apply_required_pragmas(tmp_path: Path) -> None:
         assert connection.execute("PRAGMA busy_timeout").fetchone()[0] > 0
 
 
-@pytest.mark.parametrize("schema_version", [0, 2, 99])
+@pytest.mark.parametrize("schema_version", [0, 1, 99])
 def test_initialize_refuses_unknown_schema_versions(
     tmp_path: Path, schema_version: int
 ) -> None:
@@ -68,7 +68,7 @@ def test_initialize_refuses_unknown_schema_versions(
         initialize_database(database)
 
 
-def test_initialize_refuses_incomplete_database_labeled_schema_v1(tmp_path: Path) -> None:
+def test_initialize_refuses_incomplete_database_labeled_schema_v2(tmp_path: Path) -> None:
     database = tmp_path / "reviews.sqlite3"
     with sqlite3.connect(database) as connection:
         connection.execute(
@@ -77,7 +77,7 @@ def test_initialize_refuses_incomplete_database_labeled_schema_v1(tmp_path: Path
             "schema_version INTEGER NOT NULL)"
         )
         connection.execute(
-            "INSERT INTO schema_metadata(singleton_key, schema_version) VALUES (1, 1)"
+            "INSERT INTO schema_metadata(singleton_key, schema_version) VALUES (1, 2)"
         )
 
     with pytest.raises(ReviewSchemaError, match="schema structure"):
@@ -174,7 +174,10 @@ def test_schema_constraints_reject_invalid_audit_rows(tmp_path: Path) -> None:
                 "request_sha256",
                 "result_type",
                 "result_id",
+                "reservation_id",
+                "lease_expires_at",
                 "created_at",
+                "updated_at",
             ),
         }
 
@@ -190,9 +193,10 @@ def test_schema_constraints_reject_invalid_audit_rows(tmp_path: Path) -> None:
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute(
                 "INSERT INTO idempotency_keys("
-                "scope, idempotency_key, request_sha256, result_type, result_id, created_at"
+                "scope, idempotency_key, request_sha256, result_type, result_id, "
+                "created_at, updated_at"
                 ") VALUES ('create', 'key', 'short', 'case', 'case-1', "
-                "'2026-07-17T00:00:00Z')"
+                "'2026-07-17T00:00:00Z', '2026-07-17T00:00:00Z')"
             )
 
 
@@ -279,9 +283,10 @@ def test_schema_enforces_required_uniqueness_and_sha256_lengths(tmp_path: Path) 
 
         idempotency_sql = (
             "INSERT INTO idempotency_keys("
-            "scope, idempotency_key, request_sha256, result_type, result_id, created_at"
+            "scope, idempotency_key, request_sha256, result_type, result_id, "
+            "created_at, updated_at"
             ") VALUES ('scope', 'key', ?, 'review_case', 'case-1', "
-            "'2026-07-17T00:00:00Z')"
+            "'2026-07-17T00:00:00Z', '2026-07-17T00:00:00Z')"
         )
         connection.execute(idempotency_sql, (sha256,))
         with pytest.raises(sqlite3.IntegrityError):

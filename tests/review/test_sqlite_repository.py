@@ -44,6 +44,17 @@ from tests.review.factories import (
 )
 
 
+@pytest.mark.parametrize(
+    "database",
+    (":memory:", "file:review-memory?mode=memory&cache=shared", "file:review.sqlite3"),
+)
+def test_repository_rejects_unsupported_sqlite_memory_and_uri_paths(
+    database: str,
+) -> None:
+    with pytest.raises(ValueError, match="filesystem path"):
+        SQLiteReviewRepository(database)
+
+
 def _create_command() -> CreateReviewCase:
     return CreateReviewCase(
         case_id="case-review-1",
@@ -1598,6 +1609,85 @@ async def test_duplicate_verifier_effect_and_event_do_not_duplicate_rows(
     with pytest.raises(ReviewConflictError, match="duplicate workflow event"):
         await repository.append_verifier_run(duplicate_event)
     assert _counts(database)["verifier_runs"] == 1
+
+
+async def test_correction_verifier_run_identity_is_scoped_to_case(tmp_path: Path) -> None:
+    repository = SQLiteReviewRepository(tmp_path / "case-scoped-corrections.sqlite3")
+    await repository.initialize()
+
+    async def prepare_case(case_id: str, suffix: str) -> None:
+        create = _create_command()
+        revision = create.initial_revision.model_copy(
+            update={"case_id": case_id, "revision_id": f"revision-0-{suffix}"}
+        )
+        await repository.create_case(
+            create.model_copy(
+                update={
+                    "case_id": case_id,
+                    "initial_revision": revision,
+                    "idempotency_scope": f"review.create:{case_id}",
+                    "idempotency_key": f"create-{suffix}",
+                    "event_id": f"event-created-{suffix}",
+                }
+            )
+        )
+        await repository.claim_work(
+            _claim_command().model_copy(
+                update={"case_id": case_id, "event_id": f"event-claim-{suffix}"}
+            )
+        )
+        await repository.append_verifier_run(
+            _verifier_command().model_copy(
+                update={"case_id": case_id, "event_id": f"event-verified-{suffix}"}
+            )
+        )
+        await repository.route_to_human(
+            _route_command().model_copy(
+                update={"case_id": case_id, "event_id": f"event-human-{suffix}"}
+            )
+        )
+
+    async def correct_case(case_id: str, suffix: str) -> None:
+        command = _correction_decision_command()
+        assert command.correction_revision is not None
+        assert command.correction_verifier_report is not None
+        revision = command.correction_revision.model_copy(
+            update={"case_id": case_id, "revision_id": f"revision-correction-{suffix}"}
+        )
+        verifier_report = command.correction_verifier_report.model_copy(
+            update={
+                "verifier_run_id": "verifier-shared-content-id",
+                "report_sha256": revision.report_sha256,
+            }
+        )
+        decision = command.decision.model_copy(
+            update={
+                "case_id": case_id,
+                "decision_id": f"decision-correction-{suffix}",
+                "resulting_revision_id": revision.revision_id,
+            }
+        )
+        await repository.apply_human_decision(
+            command.model_copy(
+                update={
+                    "case_id": case_id,
+                    "decision": decision,
+                    "correction_revision": revision,
+                    "correction_verifier_report": verifier_report,
+                    "idempotency_scope": f"review.decision:{case_id}",
+                    "idempotency_key": f"correction-{suffix}",
+                    "event_id": f"event-correction-{suffix}",
+                }
+            )
+        )
+
+    await prepare_case("case-review-1", "one")
+    await prepare_case("case-review-2", "two")
+    await correct_case("case-review-1", "one")
+    await correct_case("case-review-2", "two")
+
+    assert (await repository.get_detail("case-review-1")).case.status is ReviewStatus.CORRECTED
+    assert (await repository.get_detail("case-review-2")).case.status is ReviewStatus.CORRECTED
 
 
 async def test_exactly_one_terminal_human_decision_wins_concurrent_race(

@@ -72,10 +72,7 @@ def _utc_now() -> datetime:
 
 
 def _ensure_database_parent(database: str | Path) -> None:
-    value = os.fspath(database)
-    if value == ":memory:" or value.startswith("file:"):
-        return
-    Path(value).expanduser().parent.mkdir(parents=True, exist_ok=True)
+    Path(database).expanduser().parent.mkdir(parents=True, exist_ok=True)
 
 
 def build_default_diagnosis_service() -> DiagnosisService:

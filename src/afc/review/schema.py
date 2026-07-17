@@ -3,7 +3,7 @@ from pathlib import Path
 
 from afc.review.errors import ReviewSchemaError
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 BUSY_TIMEOUT_MS = 5_000
 
 _SCHEMA_SQL = """
@@ -115,8 +115,17 @@ CREATE TABLE idempotency_keys (
     idempotency_key TEXT NOT NULL,
     request_sha256 TEXT NOT NULL CHECK (length(request_sha256) = 64),
     result_type TEXT NOT NULL,
-    result_id TEXT NOT NULL,
+    result_id TEXT,
+    reservation_id TEXT,
+    lease_expires_at TEXT,
     created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK (
+        (result_id IS NOT NULL AND reservation_id IS NULL AND lease_expires_at IS NULL)
+        OR
+        (result_id IS NULL AND result_type = 'review_case'
+            AND reservation_id IS NOT NULL AND lease_expires_at IS NOT NULL)
+    ),
     PRIMARY KEY (scope, idempotency_key)
 );
 """
@@ -133,7 +142,7 @@ _EXPECTED_SCHEMA_SQL = {
 }
 
 
-def _validate_schema_v1(connection: sqlite3.Connection) -> None:
+def _validate_schema_v2(connection: sqlite3.Connection) -> None:
     rows = connection.execute(
         "SELECT name, sql FROM sqlite_master "
         "WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
@@ -144,7 +153,7 @@ def _validate_schema_v1(connection: sqlite3.Connection) -> None:
         if sql is not None
     }
     if actual != _EXPECTED_SCHEMA_SQL:
-        raise ReviewSchemaError("review schema structure does not match version 1")
+        raise ReviewSchemaError("review schema structure does not match version 2")
 
 
 def connect_database(database: str | Path) -> sqlite3.Connection:
@@ -161,7 +170,7 @@ def connect_database(database: str | Path) -> sqlite3.Connection:
 
 
 def initialize_database(database: str | Path) -> None:
-    """Create schema v1 or verify that an existing database is exactly v1."""
+    """Create schema v2 or verify that an existing database is exactly v2."""
     connection = connect_database(database)
     try:
         connection.execute("BEGIN IMMEDIATE")
@@ -174,7 +183,7 @@ def initialize_database(database: str | Path) -> None:
             ).fetchone()
             if row != (SCHEMA_VERSION,):
                 raise ReviewSchemaError("unsupported review schema version")
-            _validate_schema_v1(connection)
+            _validate_schema_v2(connection)
         else:
             for statement in _SCHEMA_SQL.split(";"):
                 if statement.strip():

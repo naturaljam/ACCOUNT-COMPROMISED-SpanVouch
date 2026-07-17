@@ -118,9 +118,10 @@ def test_offline_resume_preflights_case_then_posts_explicit_false_consent(
             return httpx.Response(
                 200,
                 json={
+                    "resume_requires_live_api": False,
                     "case": {
                         "status": "verifying",
-                        "verification_mode": "deterministic",
+                        "verification_mode": "hybrid",
                         "diagnoser": "rules",
                     }
                 },
@@ -140,6 +141,39 @@ def test_offline_resume_preflights_case_then_posts_explicit_false_consent(
     ]
     assert json.loads(seen[1].content) == {"allow_live_api": False}
     assert capsys.readouterr().err == ""
+
+
+def test_authoritative_resume_requirement_blocks_status_mode_false_negative(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "resume_requires_live_api": True,
+                "case": {
+                    "status": "pending_verification",
+                    "verification_mode": "deterministic",
+                    "diagnoser": "deepseek",
+                },
+            },
+            request=request,
+        )
+
+    assert main(
+        ["resume", "--case-id", "case-1"],
+        transport=_transport(handler),
+        environ={},
+    ) == 2
+    assert [(request.method, request.url.path) for request in seen] == [
+        ("GET", "/v1/diagnosis-reviews/case-1")
+    ]
+    assert capsys.readouterr().err == (
+        "afc-review: live API use requires --allow-live-api\n"
+    )
 
 
 @pytest.mark.parametrize(
@@ -169,7 +203,11 @@ def test_paid_capable_resume_without_flag_stops_after_safe_get(
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
-        return httpx.Response(200, json={"case": case}, request=request)
+        return httpx.Response(
+            200,
+            json={"case": case, "resume_requires_live_api": True},
+            request=request,
+        )
 
     assert main(
         ["resume", "--case-id", "case-1"],

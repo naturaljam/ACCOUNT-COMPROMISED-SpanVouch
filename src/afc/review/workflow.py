@@ -360,6 +360,7 @@ class ReviewWorkflow:
             snapshot=runtime.snapshot,
             report=revision.report,
             report_sha256=revision.report_sha256,
+            revision_number=runtime.case.current_revision_number,
         )
 
     @staticmethod

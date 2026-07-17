@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -89,6 +90,30 @@ class FailingDiagnoser:
         raise AssertionError("diagnoser must not run during durable preflight")
 
 
+class BlockingDiagnoser(SelectorDiagnoser):
+    def __init__(self, selector: EvidenceSelector) -> None:
+        super().__init__(selector)
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def diagnose(self, view: Any, evidence: Any) -> DiagnosisExecution:
+        self.started.set()
+        await self.release.wait()
+        return await super().diagnose(view, evidence)
+
+
+class CrashingDiagnoser:
+    version_fingerprint = "crashing-diagnoser-v1"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def diagnose(self, view: Any, evidence: Any) -> DiagnosisExecution:
+        del view, evidence
+        self.calls += 1
+        raise RuntimeError("diagnosis process crashed")
+
+
 class RecordingRepository:
     def __init__(self) -> None:
         self.detail: DiagnosisReviewDetail | None = None
@@ -97,6 +122,9 @@ class RecordingRepository:
         self.decision_commands: list[ApplyHumanDecision] = []
         self._create_keys: dict[tuple[str, str], tuple[str, DiagnosisReviewDetail]] = {}
         self._decision_keys: dict[tuple[str, str], tuple[str, DiagnosisReviewDetail]] = {}
+        self._create_reservations: dict[
+            tuple[str, str], tuple[str, str, datetime]
+        ] = {}
         self.fail_decision = False
         self.preflight_calls: list[tuple[str, str, str, str]] = []
 
@@ -129,6 +157,12 @@ class RecordingRepository:
             if fingerprint != command.request_sha256:
                 raise ReviewConflictError("idempotency key conflict")
             return detail
+        reservation = self._create_reservations.get(key)
+        if command.idempotency_reservation_id is not None and (
+            reservation is None
+            or reservation[1] != command.idempotency_reservation_id
+        ):
+            raise ReviewConflictError("idempotency reservation is not owned")
         case = DiagnosisReviewCase(
             case_id=command.case_id,
             trace_id=command.snapshot.trace_id,
@@ -145,7 +179,42 @@ class RecordingRepository:
         self.snapshot = command.snapshot
         self.detail = DiagnosisReviewDetail(case=case, revisions=(command.initial_revision,))
         self._create_keys[key] = (command.request_sha256, self.detail)
+        self._create_reservations.pop(key, None)
         return self.detail
+
+    async def reserve_create(
+        self,
+        scope: str,
+        idempotency_key: str,
+        request_sha256: str,
+        *,
+        reservation_id: str,
+        now: datetime,
+        lease_expires_at: datetime,
+    ) -> DiagnosisReviewDetail | None:
+        self.preflight_calls.append(
+            (scope, idempotency_key, request_sha256, "review_case")
+        )
+        key = (scope, idempotency_key)
+        replay = self._create_keys.get(key)
+        if replay is not None:
+            fingerprint, detail = replay
+            if fingerprint != request_sha256:
+                raise ReviewConflictError("idempotency key conflict")
+            return detail
+        reservation = self._create_reservations.get(key)
+        if reservation is not None:
+            fingerprint, _, expires_at = reservation
+            if fingerprint != request_sha256:
+                raise ReviewConflictError("idempotency key conflict")
+            if expires_at > now:
+                raise ReviewConflictError("idempotency request is in progress")
+        self._create_reservations[key] = (
+            request_sha256,
+            reservation_id,
+            lease_expires_at,
+        )
+        return None
 
     async def get_detail(self, case_id: str) -> DiagnosisReviewDetail:
         assert self.detail is not None and self.detail.case.case_id == case_id
@@ -463,6 +532,131 @@ async def test_create_key_is_scoped_to_trace_but_changed_payload_on_same_trace_c
         )
 
 
+async def test_concurrent_create_reservation_blocks_duplicates_before_diagnosis(
+    tmp_path: Path,
+) -> None:
+    repository = SQLiteReviewRepository(tmp_path / "concurrent-create.sqlite3")
+    await repository.initialize()
+    selector = EvidenceSelector(
+        span_id="span-005",
+        field_path="attributes.tool.error.type",
+    )
+    diagnoser = BlockingDiagnoser(selector)
+    service = ReviewService(
+        diagnosis_service=DiagnosisService({DiagnoserKind.RULES: diagnoser}),
+        repository=repository,
+        workflow=NoopWorkflow(),
+        deterministic_verifier=RecordingVerifier(),
+        id_factory=id_factory(),
+        clock=lambda: NOW,
+    )
+    trace = load_trace("policy_violation-01")
+    first_task = asyncio.create_task(
+        service.create(
+            trace,
+            diagnoser=DiagnoserKind.RULES,
+            verification_mode=VerificationMode.DETERMINISTIC,
+            idempotency_key="concurrent-key",
+        )
+    )
+    await diagnoser.started.wait()
+
+    try:
+        with pytest.raises(ReviewConflictError, match="idempotency key conflict"):
+            await asyncio.wait_for(
+                service.create(
+                    trace,
+                    diagnoser=DiagnoserKind.RULES,
+                    verification_mode=VerificationMode.HYBRID,
+                    idempotency_key="concurrent-key",
+                ),
+                timeout=0.5,
+            )
+        with pytest.raises(ReviewConflictError, match="idempotency request is in progress"):
+            await asyncio.wait_for(
+                service.create(
+                    trace,
+                    diagnoser=DiagnoserKind.RULES,
+                    verification_mode=VerificationMode.DETERMINISTIC,
+                    idempotency_key="concurrent-key",
+                ),
+                timeout=0.5,
+            )
+        assert diagnoser.calls == 0
+    finally:
+        diagnoser.release.set()
+
+    first = await first_task
+    replay = await service.create(
+        trace,
+        diagnoser=DiagnoserKind.RULES,
+        verification_mode=VerificationMode.DETERMINISTIC,
+        idempotency_key="concurrent-key",
+    )
+    assert replay == first
+    assert diagnoser.calls == 1
+
+
+async def test_stale_create_reservation_allows_same_fingerprint_takeover_only(
+    tmp_path: Path,
+) -> None:
+    repository = SQLiteReviewRepository(tmp_path / "stale-create.sqlite3")
+    await repository.initialize()
+    clock = NOW
+    crashing = CrashingDiagnoser()
+    first = ReviewService(
+        diagnosis_service=DiagnosisService({DiagnoserKind.RULES: crashing}),
+        repository=repository,
+        workflow=NoopWorkflow(),
+        deterministic_verifier=RecordingVerifier(),
+        id_factory=id_factory(),
+        clock=lambda: clock,
+        idempotency_lease_duration=timedelta(seconds=30),
+    )
+    trace = load_trace("policy_violation-01")
+    with pytest.raises(RuntimeError, match="process crashed"):
+        await first.create(
+            trace,
+            diagnoser=DiagnoserKind.RULES,
+            verification_mode=VerificationMode.DETERMINISTIC,
+            idempotency_key="stale-key",
+        )
+    assert crashing.calls == 1
+
+    clock += timedelta(seconds=31)
+    recovered_diagnoser = SelectorDiagnoser(
+        EvidenceSelector(
+            span_id="span-005",
+            field_path="attributes.tool.error.type",
+        )
+    )
+    recovered = ReviewService(
+        diagnosis_service=DiagnosisService({DiagnoserKind.RULES: recovered_diagnoser}),
+        repository=repository,
+        workflow=NoopWorkflow(),
+        deterministic_verifier=RecordingVerifier(),
+        id_factory=id_factory(),
+        clock=lambda: clock,
+        idempotency_lease_duration=timedelta(seconds=30),
+    )
+
+    with pytest.raises(ReviewConflictError, match="idempotency key conflict"):
+        await recovered.create(
+            trace,
+            diagnoser=DiagnoserKind.RULES,
+            verification_mode=VerificationMode.HYBRID,
+            idempotency_key="stale-key",
+        )
+    detail = await recovered.create(
+        trace,
+        diagnoser=DiagnoserKind.RULES,
+        verification_mode=VerificationMode.DETERMINISTIC,
+        idempotency_key="stale-key",
+    )
+    assert detail.case.trace_id == trace.trace_id
+    assert recovered_diagnoser.calls == 1
+
+
 def test_create_has_no_service_owned_diagnoser_or_mode_defaults() -> None:
     repository = RecordingRepository()
     service, _, _, _ = make_service(repository)
@@ -524,6 +718,52 @@ async def test_resume_requires_explicit_consent_before_paid_capable_work(
     assert workflow.resumes == []
 
     await service.resume(created.case.case_id, allow_live_api=True)
+    assert workflow.resumes == [created.case.case_id]
+
+
+async def test_resume_requires_consent_when_deepseek_revision_may_follow_deterministic() -> None:
+    repository = RecordingRepository()
+    service, _, workflow, _ = make_service(repository)
+    created = await create_case(service, repository)
+    assert repository.detail is not None
+    repository.detail = repository.detail.model_copy(
+        update={
+            "case": repository.detail.case.model_copy(
+                update={
+                    "status": ReviewStatus.PENDING_VERIFICATION,
+                    "verification_mode": VerificationMode.DETERMINISTIC,
+                    "diagnoser": DiagnoserKind.DEEPSEEK,
+                }
+            )
+        }
+    )
+
+    with pytest.raises(ReviewConflictError, match="live API"):
+        await service.resume(created.case.case_id)
+    assert workflow.resumes == []
+
+
+async def test_resume_stays_offline_after_hard_deterministic_report_is_persisted() -> None:
+    repository = RecordingRepository()
+    service, _, workflow, _ = make_service(repository)
+    created = await create_case(service, repository)
+    assert repository.detail is not None
+    report = make_verifier_report(verdict=VerifierVerdict.REVIEW_REQUIRED)
+    repository.detail = repository.detail.model_copy(
+        update={
+            "case": repository.detail.case.model_copy(
+                update={
+                    "status": ReviewStatus.VERIFYING,
+                    "verification_mode": VerificationMode.HYBRID,
+                    "deterministic_run_id": report.verifier_run_id,
+                    "composite_verdict": report.verdict,
+                }
+            ),
+            "verifier_reports": (report,),
+        }
+    )
+
+    await service.resume(created.case.case_id)
     assert workflow.resumes == [created.case.case_id]
 
 

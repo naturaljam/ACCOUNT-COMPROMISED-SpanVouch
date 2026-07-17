@@ -147,6 +147,7 @@ class SemanticVerifier:
             "verifier_version": self.version_fingerprint,
             "input_sha256": input_.snapshot.input_sha256,
             "report_sha256": input_.report_sha256,
+            "revision_number": input_.revision_number,
             "prompt_sha256": prompt_sha256,
             "request_id": response.usage.request_id,
         }
@@ -155,6 +156,7 @@ class SemanticVerifier:
             return self._invalid_report(
                 run_id,
                 input_.report_sha256,
+                input_.revision_number,
                 provenance,
                 response.usage,
                 started_at,
@@ -176,6 +178,7 @@ class SemanticVerifier:
             return self._invalid_report(
                 run_id,
                 input_.report_sha256,
+                input_.revision_number,
                 provenance,
                 response.usage,
                 started_at,
@@ -221,6 +224,7 @@ class SemanticVerifier:
                 "verifier_version": self.version_fingerprint,
                 "input_sha256": input_.snapshot.input_sha256,
                 "report_sha256": input_.report_sha256,
+                "revision_number": input_.revision_number,
                 "failure": "invalid_verifier_input",
             },
         )
@@ -234,6 +238,7 @@ class SemanticVerifier:
         return self._invalid_report(
             run_id,
             input_.report_sha256,
+            input_.revision_number,
             provenance,
             None,
             input_.snapshot.created_at,
@@ -378,7 +383,7 @@ class SemanticVerifier:
             )
         return VerifierReport(
             verifier_run_id=run_id,
-            revision_number=0,
+            revision_number=input_.revision_number,
             report_sha256=input_.report_sha256,
             verifier_kind=self.kind,
             verdict=draft.verdict,
@@ -396,6 +401,7 @@ class SemanticVerifier:
         self,
         run_id: str,
         report_sha256: str,
+        revision_number: int,
         provenance: VerifierProvenance,
         usage: ProviderUsage | None,
         started_at: datetime,
@@ -413,7 +419,7 @@ class SemanticVerifier:
         )
         return VerifierReport(
             verifier_run_id=run_id,
-            revision_number=0,
+            revision_number=revision_number,
             report_sha256=report_sha256,
             verifier_kind=self.kind,
             verdict=VerifierVerdict.REVIEW_REQUIRED,

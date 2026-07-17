@@ -69,7 +69,7 @@ def _add_runtime_options(parser: argparse.ArgumentParser, *, command: bool) -> N
         "--allow-live-api",
         dest=f"{suffix}_allow_live_api",
         action="store_true",
-        help="explicitly allow a create request that can invoke a paid model API",
+        help="explicitly allow create or resume work that can invoke a paid model API",
     )
 
 
@@ -228,19 +228,10 @@ def _canonical_json(payload: object) -> str:
 def _resume_can_call_live(payload: object) -> bool:
     if not isinstance(payload, dict):
         raise _InvalidResponseError
-    case = payload.get("case")
-    if not isinstance(case, dict):
+    requires_live_api = payload.get("resume_requires_live_api")
+    if not isinstance(requires_live_api, bool):
         raise _InvalidResponseError
-    status = case.get("status")
-    verification_mode = case.get("verification_mode")
-    diagnoser = case.get("diagnoser")
-    if not all(isinstance(value, str) for value in (status, verification_mode, diagnoser)):
-        raise _InvalidResponseError
-    if status in {"pending_verification", "verifying"}:
-        return verification_mode == "hybrid"
-    if status in {"revision_requested", "revising"}:
-        return diagnoser == "deepseek"
-    return False
+    return requires_live_api
 
 
 def main(

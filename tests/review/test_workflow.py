@@ -3,8 +3,18 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from afc.diagnosis.models import DiagnoserKind, DiagnosisProvenance, DiagnosisReport
+from afc.diagnosis.evidence import EvidenceCatalog
+from afc.diagnosis.models import (
+    ClaimStage,
+    DiagnoserKind,
+    DiagnosisClaim,
+    DiagnosisProvenance,
+    DiagnosisReport,
+    EvidenceSelector,
+)
+from afc.invariants.engine import InvariantEngine
 from afc.review.commands import CreateReviewCase, WorkflowEventType
+from afc.review.evidence_verifier import EvidenceVerifier
 from afc.review.models import (
     DiagnosisRevision,
     EvidenceGap,
@@ -28,6 +38,7 @@ from tests.review.factories import (
     make_diagnosis_report,
     make_review_snapshot,
     make_revision,
+    make_trace_view,
     make_verifier_report,
 )
 
@@ -379,6 +390,82 @@ async def test_one_evidence_revision_is_append_only_and_fully_reverified(
     assert detail.revisions[1].triggering_gap_ids == ("gap-d0",)
     assert [report.revision_number for report in detail.verifier_reports] == [0, 1]
     assert len(reviser.calls) == 1
+
+
+async def test_identical_report_bytes_reverify_with_revision_safe_run_identity(
+    tmp_path: Path,
+) -> None:
+    repository = SQLiteReviewRepository(tmp_path / "same-report-revision.sqlite3")
+    await repository.initialize()
+    source = _deepseek_report()
+    decoy = EvidenceCatalog.from_view(make_trace_view()).resolve(
+        EvidenceSelector(span_id="span-root", field_path="status"),
+        description="The root span ended in an error state.",
+    )
+    same_report = DiagnosisReport(
+        **{
+            **source.model_dump(exclude={"causal_chain", "evidence"}),
+            "causal_chain": (
+                DiagnosisClaim(
+                    stage=ClaimStage.CAUSE,
+                    statement=source.causal_chain[0].statement,
+                    evidence_ids=(decoy.evidence_id,),
+                ),
+            ),
+            "evidence": (*source.evidence, decoy),
+        }
+    )
+    initial_revision = DiagnosisRevision(
+        revision_id="revision-0",
+        case_id="case-review-1",
+        revision_number=0,
+        origin=RevisionOrigin.INITIAL_DIAGNOSIS,
+        report=same_report,
+        report_sha256=canonical_sha256(same_report),
+        provenance=same_report.provenance,
+        created_at=NOW,
+    )
+    await repository.create_case(
+        CreateReviewCase(
+            case_id="case-review-1",
+            snapshot=make_review_snapshot(),
+            initial_revision=initial_revision,
+            target_status=ReviewStatus.PENDING_VERIFICATION,
+            verification_mode=VerificationMode.DETERMINISTIC,
+            diagnoser=DiagnoserKind.DEEPSEEK,
+            idempotency_scope="review.create",
+            idempotency_key="same-report-create",
+            request_sha256="c" * 64,
+            event_id="same-report-created",
+            event_type=WorkflowEventType.CASE_CREATED,
+            event_metadata_json=canonical_json({"source": "revision-identity-test"}),
+            created_at=NOW,
+        )
+    )
+    verifier = EvidenceVerifier(InvariantEngine(()), policy_version="review-policy-v1")
+    reviser = FakeReviser(
+        supported=(DiagnoserKind.DEEPSEEK,), outcomes=[same_report]
+    )
+    workflow = ReviewWorkflow(
+        repository=repository,
+        deterministic_verifier=verifier,
+        semantic_verifier=None,
+        reviser=reviser,
+        id_factory=SequenceIds(),
+        clock=MutableClock(),
+        lease_owner="workflow-worker",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    detail = await workflow.run("case-review-1")
+
+    assert detail.case.status is ReviewStatus.AWAITING_HUMAN_REVIEW
+    assert [revision.report_sha256 for revision in detail.revisions] == [
+        canonical_sha256(same_report),
+        canonical_sha256(same_report),
+    ]
+    assert [report.revision_number for report in detail.verifier_reports] == [0, 1]
+    assert len({report.verifier_run_id for report in detail.verifier_reports}) == 2
 
 
 async def test_hybrid_revision_reruns_both_verifiers_against_revision_one(

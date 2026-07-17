@@ -202,6 +202,7 @@ def test_default_review_is_offline_deterministic_and_persists_across_restart(
     payload = created.json()
     assert payload["case"]["status"] == "awaiting_human_review"
     assert payload["case"]["verification_mode"] == "deterministic"
+    assert payload["resume_requires_live_api"] is False
     assert len(payload["revisions"]) == 1
     assert [report["verifier_kind"] for report in payload["verifier_reports"]] == [
         "deterministic"
@@ -243,6 +244,15 @@ def test_lifespan_creates_nested_database_parent_but_app_construction_does_not(
         assert client.get("/health").status_code == 200
         assert database.parent.is_dir()
         assert database.is_file()
+
+
+@pytest.mark.parametrize(
+    "database",
+    (":memory:", "file:review-memory?mode=memory&cache=shared", "file:review.sqlite3"),
+)
+def test_app_rejects_unsupported_sqlite_memory_and_uri_paths(database: str) -> None:
+    with pytest.raises(ValueError, match="filesystem path"):
+        create_app(review_database=database)
 
 
 def test_create_and_decision_replay_the_original_result(tmp_path: Path) -> None:
@@ -321,6 +331,7 @@ def test_missing_semantic_provider_routes_durably_before_503(tmp_path: Path) -> 
     assert durable.status_code == 200
     payload = durable.json()
     assert payload["case"]["status"] == "awaiting_human_review"
+    assert payload["resume_requires_live_api"] is False
     assert payload["verifier_reports"][-1]["operational_error"]["code"] == (
         "provider_not_configured"
     )

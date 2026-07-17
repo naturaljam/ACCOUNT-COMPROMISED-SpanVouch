@@ -4,7 +4,15 @@ from enum import StrEnum
 from hashlib import sha256
 from typing import Any, Self, cast
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 from afc.diagnosis.models import (
     AbstainReason,
@@ -302,6 +310,7 @@ class VerificationInput(ReviewModel):
     snapshot: ReviewInputSnapshot
     report: DiagnosisReport
     report_sha256: str = Field(pattern=SHA256_PATTERN)
+    revision_number: int = Field(default=0, ge=0)
 
     @model_validator(mode="after")
     def validate_binding(self) -> Self:
@@ -440,12 +449,60 @@ class WorkflowEvent(ReviewModel):
     created_at: datetime
 
 
+def resume_requires_live_api(
+    case: DiagnosisReviewCase,
+    verifier_reports: tuple[VerifierReport, ...],
+) -> bool:
+    if case.status in {ReviewStatus.REVISION_REQUESTED, ReviewStatus.REVISING}:
+        return case.diagnoser is DiagnoserKind.DEEPSEEK
+    if case.status not in {
+        ReviewStatus.PENDING_VERIFICATION,
+        ReviewStatus.VERIFYING,
+    }:
+        return False
+
+    current_reports = tuple(
+        report
+        for report in verifier_reports
+        if report.revision_number == case.current_revision_number
+    )
+    deterministic = next(
+        (
+            report
+            for report in current_reports
+            if report.verifier_kind is VerifierKind.DETERMINISTIC
+        ),
+        None,
+    )
+    if deterministic is None:
+        if case.verification_mode is VerificationMode.HYBRID:
+            return True
+        return (
+            case.diagnoser is DiagnoserKind.DEEPSEEK
+            and case.current_revision_number == 0
+            and case.evidence_revision_count == 0
+        )
+    if deterministic.verdict is not VerifierVerdict.VERIFIED:
+        return False
+    if case.verification_mode is not VerificationMode.HYBRID:
+        return False
+    return not any(
+        report.verifier_kind is VerifierKind.SEMANTIC
+        for report in current_reports
+    )
+
+
 class DiagnosisReviewDetail(ReviewModel):
     case: DiagnosisReviewCase
     revisions: tuple[DiagnosisRevision, ...]
     verifier_reports: tuple[VerifierReport, ...] = ()
     events: tuple[WorkflowEvent, ...] = ()
     decision: HumanReviewDecision | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def resume_requires_live_api(self) -> bool:
+        return resume_requires_live_api(self.case, self.verifier_reports)
 
 
 class ReviewRuntimeBundle(ReviewModel):

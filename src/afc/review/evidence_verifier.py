@@ -567,6 +567,15 @@ class EvidenceVerifier:
                 and result.hard_failure
                 and result.failure_type is not None
             )
+            if accepted_unsupported:
+                unsupported_span_ids = set(_result_spans(unsupported_failures))
+                supported_failures = tuple(
+                    result
+                    for result in supported_failures
+                    if not set(_result_spans((result,))).intersection(
+                        unsupported_span_ids
+                    )
+                )
             root = next(
                 (span for span in view.spans if span.parent_span_id is None),
                 None,
@@ -589,9 +598,7 @@ class EvidenceVerifier:
                 )
 
             conflicts: tuple[InvariantResult, ...]
-            if accepted_unsupported and unsupported_failures:
-                conflicts = ()
-            elif report.status is DiagnosisStatus.DIAGNOSED:
+            if report.status is DiagnosisStatus.DIAGNOSED:
                 conflicts = tuple(
                     result
                     for result in supported_failures
@@ -678,12 +685,13 @@ class EvidenceVerifier:
             verdict = VerifierVerdict.REVIEW_REQUIRED
 
         run_source = (
-            f"{self.version_fingerprint}:{report_hash}:{input_.snapshot.input_sha256}"
+            f"{self.version_fingerprint}:{report_hash}:{input_.snapshot.input_sha256}:"
+            f"{input_.revision_number}"
         )
         verifier_run_id = f"verifier-{sha256(run_source.encode('utf-8')).hexdigest()}"
         return VerifierReport(
             verifier_run_id=verifier_run_id,
-            revision_number=0,
+            revision_number=input_.revision_number,
             report_sha256=report_hash,
             verifier_kind=self.kind,
             verdict=verdict,

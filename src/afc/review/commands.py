@@ -92,6 +92,7 @@ class CreateReviewCase(EventCommand):
     idempotency_scope: str = Field(min_length=1)
     idempotency_key: str = Field(min_length=1)
     request_sha256: str = Field(pattern=SHA256_PATTERN)
+    idempotency_reservation_id: str | None = Field(default=None, min_length=1)
     created_at: datetime
 
     @model_validator(mode="after")

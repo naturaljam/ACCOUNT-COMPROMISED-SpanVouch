@@ -4,15 +4,19 @@ import pytest
 
 from afc.diagnosis.evidence import EvidenceCatalog
 from afc.diagnosis.models import (
+    AbstainReason,
     ClaimStage,
+    DiagnoserKind,
     DiagnosisClaim,
     DiagnosisProvenance,
     DiagnosisReport,
+    DiagnosisStatus,
     EvidenceRef,
     EvidenceSelector,
 )
 from afc.diagnosis.trace_view import DiagnosticTraceView
 from afc.invariants.engine import InvariantEngine
+from afc.invariants.supportlab import supportlab_rules
 from afc.review.evidence_verifier import EvidenceVerifier
 from afc.review.models import (
     FindingCode,
@@ -364,3 +368,53 @@ async def test_all_applicable_findings_are_emitted_in_stable_order(
         FindingCode.INVALID_SELECTOR,
     )
     assert len(verified.evidence_gaps) == 1
+
+
+async def test_unsupported_abstention_preserves_separate_supported_hard_conflict() -> None:
+    view = make_trace_view()
+    succeeded_root = view.spans[0].model_copy(
+        update={"attributes": {"run.outcome": "succeeded"}}
+    )
+    unsupported_submit = view.spans[1].model_copy(
+        update={
+            "span_id": "span-unsupported-submit",
+            "name": "submit_refund",
+            "attributes": {"tool.error.message": "temporary_failure"},
+        }
+    )
+    overlap_view = DiagnosticTraceView(
+        spans=(succeeded_root, view.spans[1], unsupported_submit)
+    )
+    view_json = canonical_json(overlap_view)
+    snapshot = ReviewInputSnapshot(
+        trace_id="trace-review-1",
+        run_id="run-review-1",
+        view_json=view_json,
+        input_sha256=canonical_sha256(view_json),
+        catalog_version="evidence-catalog-v1",
+        created_at=make_review_snapshot().created_at,
+    )
+    report = DiagnosisReport(
+        trace_id=snapshot.trace_id,
+        run_id=snapshot.run_id,
+        diagnoser=DiagnoserKind.RULES,
+        status=DiagnosisStatus.ABSTAINED,
+        confidence=1.0,
+        abstain_reason=AbstainReason.UNSUPPORTED_FAILURE_TYPE,
+        provenance=DiagnosisProvenance(
+            taxonomy_version="1.0",
+            diagnoser_version="overlap-rules-v1",
+            ruleset_version="overlap-rules-v1",
+        ),
+    )
+    verifier = EvidenceVerifier(
+        InvariantEngine(supportlab_rules()),
+        policy_version="review-policy-v1",
+    )
+
+    verified = await verifier.verify(_verification_input(report, snapshot=snapshot))
+
+    assert tuple(finding.code for finding in verified.findings) == (
+        FindingCode.DIAGNOSIS_CONFLICT,
+    )
+    assert verified.verdict is VerifierVerdict.REVIEW_REQUIRED

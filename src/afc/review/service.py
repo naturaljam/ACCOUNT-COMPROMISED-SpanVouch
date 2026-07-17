@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from hashlib import sha256
 
 from afc.diagnosis.evidence import EvidenceCatalog
@@ -29,7 +29,6 @@ from afc.review.models import (
     HumanDecisionDraft,
     HumanReviewDecision,
     ReviewInputSnapshot,
-    ReviewRuntimeBundle,
     ReviewStatus,
     RevisionOrigin,
     VerificationInput,
@@ -39,12 +38,14 @@ from afc.review.models import (
     VerifierVerdict,
     canonical_json,
     canonical_sha256,
+    resume_requires_live_api,
 )
 from afc.review.protocols import ReviewRepository, ReviewWorkflowRunner, Verifier
 from afc.trace_ir.models import TraceIR
 
 CATALOG_VERSION = "evidence-catalog-v1"
 HUMAN_CORRECTION_VERSION = "human-correction-v1"
+DEFAULT_CREATE_RESERVATION_LEASE = timedelta(seconds=30)
 
 
 def _require_aware_utc(value: datetime) -> datetime:
@@ -52,15 +53,6 @@ def _require_aware_utc(value: datetime) -> datetime:
     if value.tzinfo is None or offset is None or offset.total_seconds() != 0:
         raise ValueError("clock must return an aware UTC timestamp")
     return value
-
-
-def _resume_can_call_live(runtime: ReviewRuntimeBundle) -> bool:
-    case = runtime.case
-    if case.status in {ReviewStatus.PENDING_VERIFICATION, ReviewStatus.VERIFYING}:
-        return case.verification_mode is VerificationMode.HYBRID
-    if case.status in {ReviewStatus.REVISION_REQUESTED, ReviewStatus.REVISING}:
-        return case.diagnoser is DiagnoserKind.DEEPSEEK
-    return False
 
 
 def _build_corrected_report(
@@ -136,6 +128,7 @@ class ReviewService:
         deterministic_verifier: Verifier,
         id_factory: Callable[[], str],
         clock: Callable[[], datetime],
+        idempotency_lease_duration: timedelta = DEFAULT_CREATE_RESERVATION_LEASE,
     ) -> None:
         self._diagnosis_service = diagnosis_service
         self._repository = repository
@@ -145,6 +138,9 @@ class ReviewService:
         self._deterministic_verifier = deterministic_verifier
         self._id_factory = id_factory
         self._clock = clock
+        if idempotency_lease_duration <= timedelta(0):
+            raise ValueError("idempotency lease duration must be positive")
+        self._idempotency_lease_duration = idempotency_lease_duration
         _require_aware_utc(clock())
 
     def _now(self) -> datetime:
@@ -171,15 +167,26 @@ class ReviewService:
             }
         )
         idempotency_scope = f"review.create:{trace.trace_id}"
-        replay = await self._repository.replay_detail(
+        now = self._now()
+        reservation_source = canonical_json(
+            {
+                "scope": idempotency_scope,
+                "idempotency_key": idempotency_key,
+                "request_sha256": request_sha256,
+                "reserved_at": now.isoformat(),
+            }
+        )
+        reservation_id = sha256(reservation_source.encode("utf-8")).hexdigest()
+        replay = await self._repository.reserve_create(
             idempotency_scope,
             idempotency_key,
             request_sha256,
-            result_type="review_case",
+            reservation_id=reservation_id,
+            now=now,
+            lease_expires_at=now + self._idempotency_lease_duration,
         )
         if replay is not None:
             return replay
-        now = self._now()
         snapshot = ReviewInputSnapshot(
             trace_id=trace.trace_id,
             run_id=trace.run_id,
@@ -210,6 +217,7 @@ class ReviewService:
             idempotency_scope=idempotency_scope,
             idempotency_key=idempotency_key,
             request_sha256=request_sha256,
+            idempotency_reservation_id=reservation_id,
             event_id=self._id_factory(),
             event_type=WorkflowEventType.CASE_CREATED,
             event_metadata_json=canonical_json(
@@ -230,7 +238,10 @@ class ReviewService:
         self, case_id: str, *, allow_live_api: bool = False
     ) -> DiagnosisReviewDetail:
         runtime = await self._repository.load_runtime(case_id)
-        if _resume_can_call_live(runtime) and not allow_live_api:
+        if (
+            resume_requires_live_api(runtime.case, runtime.verifier_reports)
+            and not allow_live_api
+        ):
             raise ReviewConflictError("live API resume requires explicit consent")
         await self._workflow.resume(case_id)
         return await self._repository.get_detail(case_id)
@@ -283,6 +294,7 @@ class ReviewService:
                         snapshot=runtime.snapshot,
                         report=report,
                         report_sha256=report_sha256,
+                        revision_number=runtime.case.current_revision_number + 1,
                     )
                 )
             except Exception:

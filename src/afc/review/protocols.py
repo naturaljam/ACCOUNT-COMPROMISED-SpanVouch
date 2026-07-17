@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Protocol
 
 from afc.diagnosis.models import DiagnoserKind, DiagnosisReport
@@ -54,6 +55,18 @@ class ReviewRepository(Protocol):
         raise NotImplementedError
 
     async def create_case(self, command: CreateReviewCase) -> DiagnosisReviewDetail:
+        raise NotImplementedError
+
+    async def reserve_create(
+        self,
+        scope: str,
+        idempotency_key: str,
+        request_sha256: str,
+        *,
+        reservation_id: str,
+        now: datetime,
+        lease_expires_at: datetime,
+    ) -> DiagnosisReviewDetail | None:
         raise NotImplementedError
 
     async def replay_detail(
