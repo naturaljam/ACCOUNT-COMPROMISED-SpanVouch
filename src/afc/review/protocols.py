@@ -69,6 +69,18 @@ class ReviewRepository(Protocol):
     ) -> DiagnosisReviewDetail | None:
         raise NotImplementedError
 
+    async def renew_create_reservation(
+        self,
+        scope: str,
+        idempotency_key: str,
+        request_sha256: str,
+        *,
+        reservation_id: str,
+        now: datetime,
+        lease_expires_at: datetime,
+    ) -> None:
+        raise NotImplementedError
+
     async def replay_detail(
         self,
         scope: str,

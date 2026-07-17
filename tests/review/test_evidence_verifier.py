@@ -27,6 +27,7 @@ from afc.review.models import (
     canonical_json,
     canonical_sha256,
 )
+from afc.trace_ir.models import SpanStatus
 from tests.review.factories import (
     make_diagnosis_report,
     make_review_snapshot,
@@ -405,6 +406,77 @@ async def test_unsupported_abstention_preserves_separate_supported_hard_conflict
             taxonomy_version="1.0",
             diagnoser_version="overlap-rules-v1",
             ruleset_version="overlap-rules-v1",
+        ),
+    )
+    verifier = EvidenceVerifier(
+        InvariantEngine(supportlab_rules()),
+        policy_version="review-policy-v1",
+    )
+
+    verified = await verifier.verify(_verification_input(report, snapshot=snapshot))
+
+    assert tuple(finding.code for finding in verified.findings) == (
+        FindingCode.DIAGNOSIS_CONFLICT,
+    )
+    assert verified.verdict is VerifierVerdict.REVIEW_REQUIRED
+
+
+async def test_unsupported_abstention_preserves_same_span_different_invariant() -> None:
+    view = make_trace_view()
+    succeeded_root = view.spans[0].model_copy(
+        update={"attributes": {"run.outcome": "succeeded"}}
+    )
+    policy_lookup = view.spans[1].model_copy(
+        update={
+            "span_id": "span-policy",
+            "name": "get_refund_policy",
+            "status": SpanStatus.OK,
+            "attributes": {"tool.result": "manager_approval_required"},
+        }
+    )
+    calculation = view.spans[1].model_copy(
+        update={
+            "span_id": "span-calculation",
+            "name": "calculate_refund",
+            "status": SpanStatus.OK,
+            "attributes": {"tool.result": "10.00"},
+        }
+    )
+    failed_submit = view.spans[1].model_copy(
+        update={
+            "span_id": "span-submit",
+            "name": "submit_refund",
+            "status": SpanStatus.ERROR,
+            "attributes": {
+                "tool.arguments.amount": "20.00",
+                "tool.arguments.approval": "manager",
+                "tool.error.message": "temporary_failure",
+            },
+        }
+    )
+    same_span_view = DiagnosticTraceView(
+        spans=(succeeded_root, policy_lookup, calculation, failed_submit)
+    )
+    view_json = canonical_json(same_span_view)
+    snapshot = ReviewInputSnapshot(
+        trace_id="trace-review-1",
+        run_id="run-review-1",
+        view_json=view_json,
+        input_sha256=canonical_sha256(view_json),
+        catalog_version="evidence-catalog-v1",
+        created_at=make_review_snapshot().created_at,
+    )
+    report = DiagnosisReport(
+        trace_id=snapshot.trace_id,
+        run_id=snapshot.run_id,
+        diagnoser=DiagnoserKind.RULES,
+        status=DiagnosisStatus.ABSTAINED,
+        confidence=1.0,
+        abstain_reason=AbstainReason.UNSUPPORTED_FAILURE_TYPE,
+        provenance=DiagnosisProvenance(
+            taxonomy_version="1.0",
+            diagnoser_version="same-span-rules-v1",
+            ruleset_version="same-span-rules-v1",
         ),
     )
     verifier = EvidenceVerifier(

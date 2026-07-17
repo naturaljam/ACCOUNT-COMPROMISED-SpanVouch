@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -95,11 +96,17 @@ class BlockingDiagnoser(SelectorDiagnoser):
         super().__init__(selector)
         self.started = asyncio.Event()
         self.release = asyncio.Event()
+        self.cancelled = False
 
     async def diagnose(self, view: Any, evidence: Any) -> DiagnosisExecution:
+        execution = await super().diagnose(view, evidence)
         self.started.set()
-        await self.release.wait()
-        return await super().diagnose(view, evidence)
+        try:
+            await self.release.wait()
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        return execution
 
 
 class CrashingDiagnoser:
@@ -126,6 +133,9 @@ class RecordingRepository:
             tuple[str, str], tuple[str, str, datetime]
         ] = {}
         self.fail_decision = False
+        self.fail_renewal = False
+        self.renewal_calls = 0
+        self.renewal_started = asyncio.Event()
         self.preflight_calls: list[tuple[str, str, str, str]] = []
 
     async def replay_detail(
@@ -215,6 +225,33 @@ class RecordingRepository:
             lease_expires_at,
         )
         return None
+
+    async def renew_create_reservation(
+        self,
+        scope: str,
+        idempotency_key: str,
+        request_sha256: str,
+        *,
+        reservation_id: str,
+        now: datetime,
+        lease_expires_at: datetime,
+    ) -> None:
+        self.renewal_calls += 1
+        self.renewal_started.set()
+        if self.fail_renewal:
+            raise ReviewConflictError("injected lease renewal failure")
+        key = (scope, idempotency_key)
+        reservation = self._create_reservations.get(key)
+        if reservation is None or reservation[:2] != (
+            request_sha256,
+            reservation_id,
+        ):
+            raise ReviewConflictError("idempotency reservation is not owned")
+        self._create_reservations[key] = (
+            request_sha256,
+            reservation_id,
+            lease_expires_at,
+        )
 
     async def get_detail(self, case_id: str) -> DiagnosisReviewDetail:
         assert self.detail is not None and self.detail.case.case_id == case_id
@@ -327,6 +364,23 @@ class NoopWorkflow:
 def id_factory() -> Callable[[], str]:
     values = iter(f"id-{number}" for number in range(100))
     return lambda: next(values)
+
+
+async def _wait_for_reservation_lease(
+    database: Path, *, later_than: datetime
+) -> datetime:
+    for _ in range(100):
+        with sqlite3.connect(database) as connection:
+            row = connection.execute(
+                "SELECT lease_expires_at FROM idempotency_keys "
+                "WHERE result_id IS NULL"
+            ).fetchone()
+        if row is not None:
+            lease_expires_at = datetime.fromisoformat(str(row[0]))
+            if lease_expires_at > later_than:
+                return lease_expires_at
+        await asyncio.sleep(0.005)
+    raise AssertionError("active create reservation lease was not renewed")
 
 
 def make_service(
@@ -582,7 +636,7 @@ async def test_concurrent_create_reservation_blocks_duplicates_before_diagnosis(
                 ),
                 timeout=0.5,
             )
-        assert diagnoser.calls == 0
+        assert diagnoser.calls == 1
     finally:
         diagnoser.release.set()
 
@@ -595,6 +649,151 @@ async def test_concurrent_create_reservation_blocks_duplicates_before_diagnosis(
     )
     assert replay == first
     assert diagnoser.calls == 1
+
+
+async def test_active_create_heartbeat_prevents_takeover_after_original_expiry(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "heartbeat-create.sqlite3"
+    repository = SQLiteReviewRepository(database)
+    await repository.initialize()
+    clock = [NOW]
+    selector = EvidenceSelector(
+        span_id="span-005",
+        field_path="attributes.tool.error.type",
+    )
+    diagnoser = BlockingDiagnoser(selector)
+    first = ReviewService(
+        diagnosis_service=DiagnosisService({DiagnoserKind.RULES: diagnoser}),
+        repository=repository,
+        workflow=NoopWorkflow(),
+        deterministic_verifier=RecordingVerifier(),
+        id_factory=id_factory(),
+        clock=lambda: clock[0],
+        idempotency_lease_duration=timedelta(seconds=30),
+        idempotency_heartbeat_interval=timedelta(milliseconds=10),
+    )
+    duplicate = ReviewService(
+        diagnosis_service=DiagnosisService({DiagnoserKind.RULES: diagnoser}),
+        repository=repository,
+        workflow=NoopWorkflow(),
+        deterministic_verifier=RecordingVerifier(),
+        id_factory=id_factory(),
+        clock=lambda: clock[0],
+        idempotency_lease_duration=timedelta(seconds=30),
+        idempotency_heartbeat_interval=timedelta(milliseconds=10),
+    )
+    trace = load_trace("policy_violation-01")
+    first_task = asyncio.create_task(
+        first.create(
+            trace,
+            diagnoser=DiagnoserKind.RULES,
+            verification_mode=VerificationMode.DETERMINISTIC,
+            idempotency_key="heartbeat-key",
+        )
+    )
+    await diagnoser.started.wait()
+
+    try:
+        clock[0] = NOW + timedelta(seconds=20)
+        renewed_until = await _wait_for_reservation_lease(
+            database, later_than=NOW + timedelta(seconds=30)
+        )
+        assert renewed_until == NOW + timedelta(seconds=50)
+
+        clock[0] = NOW + timedelta(seconds=31)
+        with pytest.raises(
+            ReviewConflictError, match="idempotency request is in progress"
+        ):
+            await asyncio.wait_for(
+                duplicate.create(
+                    trace,
+                    diagnoser=DiagnoserKind.RULES,
+                    verification_mode=VerificationMode.DETERMINISTIC,
+                    idempotency_key="heartbeat-key",
+                ),
+                timeout=0.5,
+            )
+        assert diagnoser.calls == 1
+    finally:
+        diagnoser.release.set()
+
+    detail = await first_task
+    assert detail.case.trace_id == trace.trace_id
+    assert diagnoser.calls == 1
+
+
+async def test_create_heartbeat_failure_cancels_in_flight_diagnosis() -> None:
+    repository = RecordingRepository()
+    repository.fail_renewal = True
+    diagnoser = BlockingDiagnoser(
+        EvidenceSelector(
+            span_id="span-005",
+            field_path="attributes.tool.error.type",
+        )
+    )
+    service = ReviewService(
+        diagnosis_service=DiagnosisService({DiagnoserKind.RULES: diagnoser}),
+        repository=repository,
+        workflow=NoopWorkflow(),
+        deterministic_verifier=RecordingVerifier(),
+        id_factory=id_factory(),
+        clock=lambda: NOW,
+        idempotency_lease_duration=timedelta(seconds=30),
+        idempotency_heartbeat_interval=timedelta(milliseconds=10),
+    )
+    create_task = asyncio.create_task(
+        service.create(
+            load_trace("policy_violation-01"),
+            diagnoser=DiagnoserKind.RULES,
+            verification_mode=VerificationMode.DETERMINISTIC,
+            idempotency_key="failed-heartbeat-key",
+        )
+    )
+    await diagnoser.started.wait()
+
+    try:
+        with pytest.raises(ReviewConflictError, match="lease renewal failure"):
+            await asyncio.wait_for(create_task, timeout=0.5)
+    finally:
+        diagnoser.release.set()
+
+    assert repository.renewal_calls == 1
+    assert repository.create_commands == []
+    assert diagnoser.calls == 1
+    assert diagnoser.cancelled is True
+
+
+async def test_stale_create_owner_cannot_renew_after_takeover(tmp_path: Path) -> None:
+    repository = SQLiteReviewRepository(tmp_path / "owner-fencing.sqlite3")
+    await repository.initialize()
+    await repository.reserve_create(
+        "review.create:trace-1",
+        "owner-key",
+        "a" * 64,
+        reservation_id="owner-1",
+        now=NOW,
+        lease_expires_at=NOW + timedelta(seconds=30),
+    )
+    takeover_at = NOW + timedelta(seconds=31)
+    await repository.reserve_create(
+        "review.create:trace-1",
+        "owner-key",
+        "a" * 64,
+        reservation_id="owner-2",
+        now=takeover_at,
+        lease_expires_at=takeover_at + timedelta(seconds=30),
+    )
+
+    with pytest.raises(ReviewConflictError, match="reservation is not owned"):
+        await repository.renew_create_reservation(
+            "review.create:trace-1",
+            "owner-key",
+            "a" * 64,
+            reservation_id="owner-1",
+            now=takeover_at,
+            lease_expires_at=takeover_at + timedelta(seconds=30),
+        )
 
 
 async def test_stale_create_reservation_allows_same_fingerprint_takeover_only(

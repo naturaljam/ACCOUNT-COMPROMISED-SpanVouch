@@ -118,6 +118,26 @@ class SQLiteReviewRepository:
             lease_expires_at,
         )
 
+    async def renew_create_reservation(
+        self,
+        scope: str,
+        idempotency_key: str,
+        request_sha256: str,
+        *,
+        reservation_id: str,
+        now: datetime,
+        lease_expires_at: datetime,
+    ) -> None:
+        await asyncio.to_thread(
+            self._renew_create_reservation,
+            scope,
+            idempotency_key,
+            request_sha256,
+            reservation_id,
+            now,
+            lease_expires_at,
+        )
+
     async def replay_detail(
         self,
         scope: str,
@@ -277,6 +297,43 @@ class SQLiteReviewRepository:
             )
             self._require_updated(cursor)
             return None
+
+    def _renew_create_reservation(
+        self,
+        scope: str,
+        idempotency_key: str,
+        request_sha256: str,
+        reservation_id: str,
+        now: datetime,
+        lease_expires_at: datetime,
+    ) -> None:
+        if lease_expires_at <= now:
+            raise ReviewConflictError("idempotency reservation lease must be positive")
+        with self._transaction(write=True) as connection:
+            row = self._idempotency_row(connection, scope, idempotency_key)
+            if row is None:
+                raise ReviewConflictError("idempotency reservation is missing")
+            if str(row["request_sha256"]) != request_sha256:
+                raise ReviewConflictError("idempotency key conflict")
+            if str(row["result_type"]) != "review_case":
+                raise ReviewPersistenceError("stored review data is invalid")
+            if row["result_id"] is not None or str(row["reservation_id"]) != reservation_id:
+                raise ReviewConflictError("idempotency reservation is not owned")
+            cursor = connection.execute(
+                "UPDATE idempotency_keys SET lease_expires_at = ?, updated_at = ? "
+                "WHERE scope = ? AND idempotency_key = ? AND request_sha256 = ? "
+                "AND result_type = 'review_case' AND result_id IS NULL "
+                "AND reservation_id = ?",
+                (
+                    _timestamp(lease_expires_at),
+                    _timestamp(now),
+                    scope,
+                    idempotency_key,
+                    request_sha256,
+                    reservation_id,
+                ),
+            )
+            self._require_updated(cursor)
 
     def _create_case(self, command: CreateReviewCase) -> DiagnosisReviewDetail:
         with self._transaction(write=True) as connection:

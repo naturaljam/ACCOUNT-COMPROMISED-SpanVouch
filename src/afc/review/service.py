@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
+from contextlib import suppress
 from datetime import datetime, timedelta
 from hashlib import sha256
 
@@ -46,6 +48,7 @@ from afc.trace_ir.models import TraceIR
 CATALOG_VERSION = "evidence-catalog-v1"
 HUMAN_CORRECTION_VERSION = "human-correction-v1"
 DEFAULT_CREATE_RESERVATION_LEASE = timedelta(seconds=30)
+DEFAULT_CREATE_RESERVATION_HEARTBEAT = timedelta(seconds=10)
 
 
 def _require_aware_utc(value: datetime) -> datetime:
@@ -129,6 +132,7 @@ class ReviewService:
         id_factory: Callable[[], str],
         clock: Callable[[], datetime],
         idempotency_lease_duration: timedelta = DEFAULT_CREATE_RESERVATION_LEASE,
+        idempotency_heartbeat_interval: timedelta = DEFAULT_CREATE_RESERVATION_HEARTBEAT,
     ) -> None:
         self._diagnosis_service = diagnosis_service
         self._repository = repository
@@ -140,11 +144,87 @@ class ReviewService:
         self._clock = clock
         if idempotency_lease_duration <= timedelta(0):
             raise ValueError("idempotency lease duration must be positive")
+        if not timedelta(0) < idempotency_heartbeat_interval < idempotency_lease_duration:
+            raise ValueError(
+                "idempotency heartbeat interval must be positive and shorter than the lease"
+            )
         self._idempotency_lease_duration = idempotency_lease_duration
+        self._idempotency_heartbeat_interval = idempotency_heartbeat_interval
         _require_aware_utc(clock())
 
     def _now(self) -> datetime:
         return _require_aware_utc(self._clock())
+
+    async def _renew_create_reservation_until_stopped(
+        self,
+        *,
+        scope: str,
+        idempotency_key: str,
+        request_sha256: str,
+        reservation_id: str,
+        stopped: asyncio.Event,
+    ) -> None:
+        heartbeat_seconds = self._idempotency_heartbeat_interval.total_seconds()
+        while True:
+            try:
+                await asyncio.wait_for(stopped.wait(), timeout=heartbeat_seconds)
+                return
+            except TimeoutError:
+                now = self._now()
+                await self._repository.renew_create_reservation(
+                    scope,
+                    idempotency_key,
+                    request_sha256,
+                    reservation_id=reservation_id,
+                    now=now,
+                    lease_expires_at=now + self._idempotency_lease_duration,
+                )
+
+    async def _diagnose_with_reservation_heartbeat(
+        self,
+        trace: TraceIR,
+        diagnoser: DiagnoserKind,
+        *,
+        scope: str,
+        idempotency_key: str,
+        request_sha256: str,
+        reservation_id: str,
+    ) -> DiagnosisReport:
+        stopped = asyncio.Event()
+        diagnosis_task = asyncio.create_task(
+            self._diagnosis_service.diagnose(trace, diagnoser)
+        )
+        heartbeat_task = asyncio.create_task(
+            self._renew_create_reservation_until_stopped(
+                scope=scope,
+                idempotency_key=idempotency_key,
+                request_sha256=request_sha256,
+                reservation_id=reservation_id,
+                stopped=stopped,
+            )
+        )
+        try:
+            completed, _ = await asyncio.wait(
+                (diagnosis_task, heartbeat_task),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if heartbeat_task in completed:
+                diagnosis_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await diagnosis_task
+                await heartbeat_task
+                raise ReviewConflictError("idempotency reservation heartbeat stopped")
+            return await diagnosis_task
+        except BaseException:
+            if not diagnosis_task.done():
+                diagnosis_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await diagnosis_task
+            raise
+        finally:
+            stopped.set()
+            if not heartbeat_task.done():
+                await heartbeat_task
 
     async def create(
         self,
@@ -195,7 +275,14 @@ class ReviewService:
             catalog_version=CATALOG_VERSION,
             created_at=now,
         )
-        report = await self._diagnosis_service.diagnose(trace, diagnoser)
+        report = await self._diagnose_with_reservation_heartbeat(
+            trace,
+            diagnoser,
+            scope=idempotency_scope,
+            idempotency_key=idempotency_key,
+            request_sha256=request_sha256,
+            reservation_id=reservation_id,
+        )
         case_id = self._id_factory()
         revision = DiagnosisRevision(
             revision_id=self._id_factory(),

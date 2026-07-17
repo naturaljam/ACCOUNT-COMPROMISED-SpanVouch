@@ -76,6 +76,14 @@ _MESSAGES = {
 
 _MAX_CLAIM_EVIDENCE = 4
 _MAX_REPORT_EVIDENCE = 8
+_UNSUPPORTED_SHADOW_CORRELATIONS = {
+    (
+        "scope.ignored_tool_error",
+        "1.0",
+        "submit_refund.policy",
+        "1.0",
+    ): ("status", "attributes.tool.error.message"),
+}
 
 
 def _stable_id(
@@ -191,6 +199,37 @@ def _result_spans(results: Iterable[InvariantResult]) -> tuple[str, ...]:
             }
         )
     )
+
+
+def _is_explicit_unsupported_shadow(
+    supported: InvariantResult,
+    unsupported_failures: Iterable[InvariantResult],
+) -> bool:
+    for unsupported in unsupported_failures:
+        selector_paths = _UNSUPPORTED_SHADOW_CORRELATIONS.get(
+            (
+                unsupported.rule_id,
+                unsupported.rule_version,
+                supported.rule_id,
+                supported.rule_version,
+            )
+        )
+        if selector_paths is None:
+            continue
+        unsupported_path, supported_path = selector_paths
+        unsupported_spans = {
+            evidence.span_id
+            for evidence in unsupported.evidence
+            if evidence.field_path == unsupported_path
+        }
+        supported_spans = {
+            evidence.span_id
+            for evidence in supported.evidence
+            if evidence.field_path == supported_path
+        }
+        if unsupported_spans.intersection(supported_spans):
+            return True
+    return False
 
 
 def _locally_known_selectors(
@@ -568,12 +607,12 @@ class EvidenceVerifier:
                 and result.failure_type is not None
             )
             if accepted_unsupported:
-                unsupported_span_ids = set(_result_spans(unsupported_failures))
                 supported_failures = tuple(
                     result
                     for result in supported_failures
-                    if not set(_result_spans((result,))).intersection(
-                        unsupported_span_ids
+                    if not _is_explicit_unsupported_shadow(
+                        result,
+                        unsupported_failures,
                     )
                 )
             root = next(
