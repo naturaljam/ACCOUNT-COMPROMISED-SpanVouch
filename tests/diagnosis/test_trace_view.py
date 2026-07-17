@@ -93,7 +93,7 @@ def test_trace_view_recursively_redacts_credentials_inside_allowed_values() -> N
     assert VALUE_SECRET not in serialized
     assert "useful context" in serialized
     assert "request rejected" in serialized
-    assert "retry later" in serialized
+    assert "retry later" not in serialized
     assert "example.test/path failed" in serialized
     assert f"{SECRET_REDACTION}]" not in serialized
     assert DiagnosticTraceView.model_validate(view.model_dump()) == view
@@ -128,7 +128,7 @@ def test_trace_view_redacts_every_authorization_scheme_inside_allowed_strings() 
         serialized = canonical_json(DiagnosticTraceView.from_trace(candidate))
 
         assert VALUE_SECRET not in serialized
-        assert "safe retry context" in serialized
+        assert "safe retry context" not in serialized
 
 
 def test_trace_view_sanitizes_escaped_and_double_encoded_json_idempotently() -> None:
@@ -215,7 +215,7 @@ def test_trace_view_redacts_opaque_bearer_tokens_only_at_value_boundaries() -> N
     assert f"Bearer {opaque_letters}" not in serialized
     assert f"Bearer {short_token}" not in serialized
     assert "next=retry" in serialized
-    assert "auth context survives" in serialized
+    assert "auth context survives" not in serialized
     assert view.spans[0].attributes["run.final_message"] == safe_prose
     assert sanitize_diagnostic_trace_view(view) == view
     assert sanitize_diagnostic_trace_view(sanitize_diagnostic_trace_view(view)) == view
@@ -331,7 +331,7 @@ def test_trace_view_classifies_mapping_labels_after_stripping_delimiters_and_pat
     serialized = canonical_json(view)
 
     assert VALUE_SECRET not in serialized
-    assert "retry remains safe" in serialized
+    assert "retry remains safe" not in serialized
     for key, value in safe_metadata.items():
         assert view.spans[0].attributes["tool.result"][key] == value
     assert sanitize_diagnostic_trace_view(view) == view
@@ -597,23 +597,75 @@ def test_trace_view_fails_closed_for_delimited_keys_and_complete_auth_headers() 
 
 
 @pytest.mark.parametrize(
-    ("header", "secret"),
+    "assignment",
     (
-        (f"Authorization:{SECRET_REDACTION}; Bearer topsecret", "topsecret"),
-        (f"Proxy-Authorization: {SECRET_REDACTION}; tail=topsecret", "topsecret"),
-        (f"Cookie:{SECRET_REDACTION}; csrf=topsecret", "topsecret"),
-        (f"Set-Cookie: {SECRET_REDACTION}; refresh=topsecret", "topsecret"),
-        ("Cookie=session=first; csrf=topsecret", "topsecret"),
-        ("Set-Cookie=sid=first; refresh=topsecret", "topsecret"),
+        f"api_key={SECRET_REDACTION}topsecret",
+        f"api_key='{SECRET_REDACTION}topsecret'",
+        f'api_key="{SECRET_REDACTION}topsecret"',
     ),
 )
-def test_sanitizer_rejects_partial_redaction_credential_header_tails(
-    header: str, secret: str,
+def test_sanitizer_rejects_partial_redaction_assignment_values(
+    assignment: str,
+) -> None:
+    sanitized = sanitize_diagnostic_value(assignment)
+
+    assert "topsecret" not in canonical_json(sanitized)
+    assert sanitize_diagnostic_value(sanitized) == sanitized
+
+
+@pytest.mark.parametrize(
+    "header",
+    (
+        f"Authorization:{SECRET_REDACTION}topsecret",
+        f"Proxy-Authorization={SECRET_REDACTION}topsecret",
+        "Authorization:abc; arbitrary semicolon tail=topsecret",
+        "Proxy-Authorization=abc; refresh=topsecret",
+        'Authorization:"abc"; tail=topsecret',
+        "Proxy-Authorization = 'abc'; tail=topsecret",
+    ),
+)
+def test_sanitizer_redacts_complete_authorization_values(
+    header: str,
 ) -> None:
     sanitized = sanitize_diagnostic_value(header)
 
-    assert secret not in canonical_json(sanitized)
+    assert "topsecret" not in canonical_json(sanitized)
+    assert ";" not in sanitized
     assert sanitize_diagnostic_value(sanitized) == sanitized
+
+
+@pytest.mark.parametrize(
+    "header",
+    (
+        f"Cookie:{SECRET_REDACTION}; csrf=topsecret",
+        f"Set-Cookie: {SECRET_REDACTION}; refresh=topsecret",
+        "Cookie=session=first; csrf=topsecret",
+        "Set-Cookie=sid=first; refresh=topsecret",
+        "Request Cookie: session=first; csrf=topsecret",
+        "headers.cookie: session=first; csrf=topsecret",
+        "HTTP Cookie=session=first; csrf=topsecret",
+        "Response Set-Cookie: sid=first; refresh=topsecret",
+    ),
+)
+def test_sanitizer_redacts_complete_context_qualified_cookie_values(
+    header: str,
+) -> None:
+    sanitized = sanitize_diagnostic_value(header)
+
+    assert "topsecret" not in canonical_json(sanitized)
+    assert ";" not in sanitized
+    assert sanitize_diagnostic_value(sanitized) == sanitized
+
+
+@pytest.mark.parametrize(
+    "header",
+    (
+        "Cookie: qwertyuiopasdfghjklzxcvbnm",
+        "Browser cookie: qwertyuiopasdfghjklzxcvbnm",
+    ),
+)
+def test_sanitizer_redacts_opaque_cookie_credential_values(header: str) -> None:
+    assert sanitize_diagnostic_value(header).endswith(SECRET_REDACTION)
 
 
 @pytest.mark.parametrize(
@@ -625,6 +677,11 @@ def test_sanitizer_rejects_partial_redaction_credential_header_tails(
         f"Set-Cookie: {SECRET_REDACTION}",
         f"Cookie={SECRET_REDACTION}",
         f"Set-Cookie={SECRET_REDACTION}",
+        f"api_key={SECRET_REDACTION}",
+        f"api_key='{SECRET_REDACTION}'",
+        f'api_key="{SECRET_REDACTION}"',
+        f'Authorization="{SECRET_REDACTION}"',
+        f"Proxy-Authorization='{SECRET_REDACTION}'",
     ),
 )
 def test_sanitizer_preserves_only_complete_redacted_header_values(header: str) -> None:
@@ -635,6 +692,8 @@ def test_sanitizer_preserves_only_complete_redacted_header_values(header: str) -
     "safe_prose",
     (
         "A cookie: recipe; instructions remain safe",
+        "cookie: recipe; instructions remain safe",
+        "Browser cookie: recipe; instructions remain safe",
         "Bearer of; good news",
     ),
 )

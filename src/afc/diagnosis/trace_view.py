@@ -138,24 +138,29 @@ _COMPACT_SAFE_METADATA_LABELS = frozenset(
     for terminal in _SAFE_METADATA_TERMINALS
 )
 _COOKIE_HEADER_CONTEXT_PARTS = frozenset(
-    {"browser", "header", "headers", "http", "request", "response", "session", "set"}
+    {"browser", "header", "headers", "http", "request", "response", "set"}
 )
 _ASSIGNMENT = re.compile(
     r"(?i)(?P<prefix>[\"']?(?P<key>[a-z][a-z0-9_. -]{0,80})[\"']?"
     r"\s*(?:=|:)\s*)"
-    r"(?P<value>(?![\"']?\[REDACTED\][\"']?)"
-    r"(?:[\"'][^\"'\r\n]+[\"']|[^\s,;}\]]+))"
+    r"(?P<value>(?:[\"']?\[REDACTED\][\"']?[^\s,;}\]]*"
+    r"|[\"'][^\"'\r\n]+[\"']|[^\s,;}\]]+))"
 )
 _AUTHORIZATION = re.compile(
     r"(?i)(?P<prefix>\b(?:proxy[-_ ]?)?authorization(?:\\?[\"'])?\s*"
-    r"(?:=|:)\s*)(?P<value>(?:[\"']?\[REDACTED\][\"']?"
-    r"(?:;\s*(?:bearer\s+[^\r\n]+|[a-z][a-z0-9_. -]{0,80}\s*=[^\r\n]+))?"
-    r"|[\"'][^\"'\r\n]*[\"']|(?:(?!;\s)[^\r\n])+))"
+    r"(?:=|:)\s*)(?P<value>[^\r\n]*)"
 )
 _COOKIE_HEADER = re.compile(
-    r"(?im)(?P<prefix>(?:^|[({\[;,\"'])(?:set-cookie|cookie)"
-    r"(?:\\?[\"'])?\s*(?::|=)\s*)(?P<value>[^\r\n]*)"
+    r"(?im)(?P<prefix>(?:^|[({\[;,\"'])"
+    r"(?:(?:browser|headers?|http|request|response)[ ._-]+)?"
+    r"(?:set-cookie|cookie)(?:\\?[\"'])?\s*(?::|=)\s*)"
+    r"(?P<value>[^\r\n]*)"
 )
+_COOKIE_PAIR_VALUE = re.compile(
+    r"(?i)(?:^|;\s*)[!#$%&'*+\-.^_`|~0-9A-Za-z]+\s*="
+)
+_OPAQUE_COOKIE_VALUE = re.compile(r"(?i)^(?:bearer\s+)?[A-Za-z0-9._~+/=-]{16,}$")
+_REDACTED_VALUE_PREFIX = re.compile(r"^[\"']?\[REDACTED\]")
 _BEARER = re.compile(
     r"(?i)(?P<prefix>\bbearer\s+)(?P<value>(?!\[REDACTED\])"
     r"[A-Za-z0-9._~+/=-]+)(?=$|[\"',;|)}\]])"
@@ -261,6 +266,27 @@ def _redact_match(match: re.Match[str]) -> str:
     return f"{match.group('prefix')}{SECRET_REDACTION}"
 
 
+def _is_credential_shaped_cookie_value(value: str) -> bool:
+    candidate = value.strip()
+    if (
+        len(candidate) >= 2
+        and candidate[0] == candidate[-1]
+        and candidate[0] in "\"'"
+    ):
+        candidate = candidate[1:-1].strip()
+    return bool(
+        _REDACTED_VALUE_PREFIX.match(candidate)
+        or _COOKIE_PAIR_VALUE.search(candidate)
+        or _OPAQUE_COOKIE_VALUE.fullmatch(candidate)
+    )
+
+
+def _redact_cookie_header(match: re.Match[str]) -> str:
+    if not _is_credential_shaped_cookie_value(match.group("value")):
+        return match.group(0)
+    return _redact_match(match)
+
+
 def _redact_assignment(match: re.Match[str]) -> str:
     label = match.group("key")
     label_parts = _normalize_credential_label(label)
@@ -272,10 +298,17 @@ def _redact_assignment(match: re.Match[str]) -> str:
         or all(part in _COOKIE_HEADER_CONTEXT_PARTS for part in non_cookie_parts)
         or _is_credential_label("_".join(non_cookie_parts))
     )
+    contains_cookie_label = len(non_cookie_parts) != len(label_parts)
     if (
         match.group("prefix").rstrip().endswith(":")
-        and len(non_cookie_parts) != len(label_parts)
-        and not cookie_header_context
+        and contains_cookie_label
+        and (
+            (not cookie_header_context and any(character.isspace() for character in label))
+            or (
+                cookie_header_context
+                and not _is_credential_shaped_cookie_value(match.group("value"))
+            )
+        )
     ):
         return match.group(0)
     trailing_label = label.rsplit(maxsplit=1)[-1]
@@ -337,7 +370,7 @@ def _sanitize_plain_string(value: str) -> str:
         value,
     )
     sanitized = _AUTHORIZATION.sub(_redact_match, sanitized)
-    sanitized = _COOKIE_HEADER.sub(_redact_match, sanitized)
+    sanitized = _COOKIE_HEADER.sub(_redact_cookie_header, sanitized)
     sanitized = _BEARER.sub(_redact_bearer, sanitized)
     sanitized = _ASSIGNMENT.sub(_redact_assignment, sanitized)
     return _PROVIDER_KEY.sub(SECRET_REDACTION, sanitized)

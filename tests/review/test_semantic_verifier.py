@@ -334,7 +334,17 @@ async def test_prompt_contains_only_independent_canonical_allowlist_data() -> No
                     f"Authorization:[REDACTED]; Bearer {VALUE_SECRET}\n"
                     f"Cookie:[REDACTED]; csrf={VALUE_SECRET}\n"
                     f"Cookie=session=first; csrf={VALUE_SECRET}\n"
+                    f"api_key=[REDACTED]{VALUE_SECRET}\n"
+                    f"client_secret='[REDACTED]{VALUE_SECRET}'\n"
+                    f"Authorization:[REDACTED]{VALUE_SECRET}\n"
+                    f"Proxy-Authorization=[REDACTED]{VALUE_SECRET}\n"
+                    f"Authorization:abc; arbitrary={VALUE_SECRET}\n"
+                    f"Proxy-Authorization=abc; refresh={VALUE_SECRET}\n"
+                    f"Request Cookie: session=first; csrf={VALUE_SECRET}\n"
+                    f"headers.cookie: session=first; csrf={VALUE_SECRET}\n"
                     "A cookie: recipe; instructions remain safe\n"
+                    "cookie: recipe; instructions remain safe\n"
+                    "Browser cookie: recipe; instructions remain safe\n"
                     "Bearer of; good news\n"
                     "Bearer Qaz; HTTP 401"
                 ),
@@ -372,6 +382,8 @@ async def test_prompt_contains_only_independent_canonical_allowlist_data() -> No
     assert "Qaz" not in serialized
     assert "csrf=" not in serialized
     assert "A cookie: recipe; instructions remain safe" in serialized
+    assert "cookie: recipe; instructions remain safe" in serialized
+    assert "Browser cookie: recipe; instructions remain safe" in serialized
     assert "Bearer of; good news" in serialized
     assert "trace-review-1" not in serialized
     assert "run-review-1" not in serialized
