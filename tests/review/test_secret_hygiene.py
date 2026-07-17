@@ -1,0 +1,295 @@
+from __future__ import annotations
+
+import asyncio
+import io
+import json
+import re
+import sqlite3
+import subprocess
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from uuid import uuid4
+
+import httpx
+import pytest
+from fastapi.testclient import TestClient
+
+from afc.api.app import create_app
+from afc.cli import review as review_cli
+from afc.diagnosis.errors import ProviderProtocolError
+from afc.diagnosis.models import DiagnoserKind
+from afc.diagnosis.rule_diagnoser import RuleDiagnoser
+from afc.diagnosis.service import DiagnosisService
+from afc.invariants.engine import InvariantEngine
+from afc.invariants.supportlab import supportlab_rules
+from afc.review.evidence_verifier import EvidenceVerifier
+from afc.review.models import VerificationInput, VerificationMode, VerifierKind, VerifierReport
+from afc.review.reviser import DiagnosisReviser
+from afc.review.semantic_verifier import SemanticVerifier
+from afc.review.service import ReviewService
+from afc.review.sqlite_repository import SQLiteReviewRepository
+from afc.review.workflow import ReviewWorkflow, ReviewWorkflowProviderError
+from afc.trace_ir.models import TraceIR
+from afc.trace_ir.repository import InMemoryTraceRepository
+
+ROOT = Path(__file__).resolve().parents[2]
+SENTINEL_KEY = "sentinel" + "-private-deepseek-key"
+RAW_PROVIDER_BODY = "raw" + "-provider-body-must-not-escape"
+_KEY_NAME = "DEEPSEEK" + "_API_KEY"
+_ASSIGNMENT_PATTERNS = (
+    re.compile(
+        rf"(?m)^[ \t]*(?:export[ \t]+)?{re.escape(_KEY_NAME)}[ \t]*="
+        r"[ \t]*(?P<value>[^\r\n#]*)"
+    ),
+    re.compile(
+        rf"(?m)^[ \t]*\$env:{re.escape(_KEY_NAME)}[ \t]*="
+        r"[ \t]*(?P<value>[^\r\n#]*)"
+    ),
+    re.compile(
+        rf"(?m)^[ \t]*(?:[{{,][ \t]*)?[\"']?{re.escape(_KEY_NAME)}[\"']?[ \t]*:"
+        r"[ \t]*(?P<value>[^\r\n#]*)"
+    ),
+)
+_KEY_LITERAL_PATTERN = re.compile(r"(?<![A-Za-z0-9])sk-[A-Za-z0-9]{24,}(?![A-Za-z0-9])")
+_DOCUMENTATION_PLACEHOLDERS = frozenset({"", "<set-locally>"})
+
+
+class FailingSemanticVerifier:
+    kind = VerifierKind.SEMANTIC
+    version_fingerprint = "secret-hygiene-semantic-v1"
+
+    async def verify(self, input_: VerificationInput) -> VerifierReport:
+        del input_
+        raise ProviderProtocolError(f"{SENTINEL_KEY}:{RAW_PROVIDER_BODY}")
+
+
+def _clean_trace() -> TraceIR:
+    dataset = ROOT / "evals" / "datasets" / "supportlab-v1" / "traces.jsonl"
+    return next(
+        trace
+        for line in dataset.read_text(encoding="utf-8").splitlines()
+        if (trace := TraceIR.model_validate_json(line)).run_id == "clean-01"
+    )
+
+
+def _review_runtime(database: Path) -> tuple[ReviewService, SQLiteReviewRepository]:
+    engine = InvariantEngine(supportlab_rules())
+    diagnoser = RuleDiagnoser(engine)
+    diagnosis_service = DiagnosisService({DiagnoserKind.RULES: diagnoser})
+    repository = SQLiteReviewRepository(database)
+    deterministic = EvidenceVerifier(engine, policy_version="supportlab-review-v1")
+    semantic = FailingSemanticVerifier()
+    workflow = ReviewWorkflow(
+        repository=repository,
+        deterministic_verifier=deterministic,
+        semantic_verifier=semantic,
+        reviser=DiagnosisReviser({DiagnoserKind.RULES: diagnoser}),
+        id_factory=lambda: str(uuid4()),
+        clock=lambda: datetime.now(UTC),
+        lease_owner="secret-hygiene-worker",
+        lease_duration=timedelta(seconds=30),
+    )
+    service = ReviewService(
+        diagnosis_service=diagnosis_service,
+        repository=repository,
+        workflow=workflow,
+        deterministic_verifier=deterministic,
+        id_factory=lambda: str(uuid4()),
+        clock=lambda: datetime.now(UTC),
+    )
+    return service, repository
+
+
+def _assert_sanitized(value: object) -> None:
+    serialized = value if isinstance(value, str) else json.dumps(value, default=str)
+    assert SENTINEL_KEY not in serialized
+    assert RAW_PROVIDER_BODY not in serialized
+
+
+def test_provider_failure_is_sanitized_across_error_sqlite_api_cli_and_report(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "review.db"
+    service, repository = _review_runtime(database)
+    asyncio.run(repository.initialize())
+
+    with pytest.raises(ReviewWorkflowProviderError) as raised:
+        asyncio.run(
+            service.create(
+                _clean_trace(),
+                diagnoser=DiagnoserKind.RULES,
+                verification_mode=VerificationMode.HYBRID,
+                idempotency_key="secret-hygiene-create",
+            )
+        )
+
+    case_id = raised.value.case_id
+    _assert_sanitized(str(raised.value))
+    detail = asyncio.run(repository.get_detail(case_id))
+    _assert_sanitized(detail.model_dump(mode="json"))
+    assert detail.verifier_reports[-1].operational_error is not None
+    assert detail.verifier_reports[-1].operational_error.code == "provider_protocol_error"
+    assert detail.events[-2].event_type.value == "provider_failed"
+    assert detail.events[-1].event_type.value == "awaiting_human_review"
+
+    with sqlite3.connect(database) as connection:
+        sqlite_text = "\n".join(
+            str(value)
+            for table in (
+                "review_cases",
+                "verifier_runs",
+                "workflow_events",
+                "idempotency_keys",
+            )
+            for row in connection.execute(f"SELECT * FROM {table}").fetchall()
+            for value in row
+        )
+    _assert_sanitized(sqlite_text)
+
+    trace_repository = InMemoryTraceRepository()
+    application = create_app(
+        trace_repository=trace_repository,
+        review_repository=repository,
+        review_service=service,
+    )
+    with TestClient(application) as client:
+        response = client.get(f"/v1/diagnosis-reviews/{case_id}")
+    assert response.status_code == 200
+    _assert_sanitized(response.text)
+
+    payload = response.json()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == f"/v1/diagnosis-reviews/{case_id}"
+        return httpx.Response(200, json=payload, request=request)
+
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    exit_code = review_cli.main(
+        ["show", "--case-id", case_id],
+        transport=httpx.MockTransport(handler),
+        environ={},
+        stdout=stdout,
+        stderr=stderr,
+    )
+    assert exit_code == 0
+    assert stderr.getvalue() == ""
+    _assert_sanitized(stdout.getvalue())
+
+
+@pytest.mark.asyncio
+async def test_invalid_semantic_provider_body_is_not_copied_into_verifier_report() -> None:
+    from afc.diagnosis.models import ProviderUsage
+    from afc.diagnosis.protocols import ChatMessage, GenerationConfig, ProviderResponse
+    from afc.review.models import VerificationInput, canonical_sha256
+    from tests.review.factories import make_diagnosis_report, make_review_snapshot
+
+    class InvalidBodyProvider:
+        async def complete(
+            self,
+            messages: tuple[ChatMessage, ...],
+            config: GenerationConfig,
+        ) -> ProviderResponse:
+            del messages
+            return ProviderResponse(
+                content=f"{SENTINEL_KEY}:{RAW_PROVIDER_BODY}",
+                model=config.model,
+                response_id="secret-hygiene-response",
+                finish_reason="stop",
+                usage=ProviderUsage(
+                    input_tokens=1,
+                    output_tokens=1,
+                    total_tokens=2,
+                    latency_ms=1.0,
+                    request_id="secret-hygiene-response",
+                ),
+            )
+
+    diagnosis = make_diagnosis_report()
+    report = await SemanticVerifier(InvalidBodyProvider()).verify(
+        VerificationInput(
+            snapshot=make_review_snapshot(),
+            report=diagnosis,
+            report_sha256=canonical_sha256(diagnosis),
+        )
+    )
+
+    _assert_sanitized(report.model_dump(mode="json"))
+
+
+def _credential_findings(relative: str, text: str) -> tuple[str, ...]:
+    findings: list[str] = []
+    is_template = relative.replace("\\", "/") == ".env.example"
+    for pattern in _ASSIGNMENT_PATTERNS:
+        for match in pattern.finditer(text):
+            value = match.group("value").strip().removesuffix(",").strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1].strip()
+            if is_template and value in _DOCUMENTATION_PLACEHOLDERS:
+                continue
+            findings.append("credential_assignment")
+    if _KEY_LITERAL_PATTERN.search(text):
+        findings.append("key_shaped_literal")
+    return tuple(findings)
+
+
+@pytest.mark.parametrize(
+    ("relative", "text"),
+    (
+        ("config.env", _KEY_NAME + "=live-value"),
+        ("profile.sh", "export " + _KEY_NAME + "='live-value'"),
+        ("profile.ps1", "$env:" + _KEY_NAME + ' = "live-value"'),
+        ("config.yaml", _KEY_NAME + ": live-value"),
+        ("config.json", '{"' + _KEY_NAME + '": "live-value"}'),
+        ("settings.py", 'provider_key = "' + "sk-" + "A" * 32 + '"'),
+        ("config.env", _KEY_NAME + "="),
+        (".env.example", _KEY_NAME + "=live-value"),
+    ),
+)
+def test_credential_scanner_detects_assignment_syntaxes_and_key_literals(
+    relative: str,
+    text: str,
+) -> None:
+    assert _credential_findings(relative, text)
+
+
+@pytest.mark.parametrize(
+    ("relative", "text"),
+    (
+        (".env.example", _KEY_NAME + "="),
+        (".env.example", _KEY_NAME + "=<set-locally>"),
+        ("README.md", "Set `" + _KEY_NAME + "` in the local environment."),
+        ("test_client.py", 'sentinel = "sk-private-provider-response"'),
+        ("config.yaml", "# " + _KEY_NAME + ": documented-only"),
+    ),
+)
+def test_credential_scanner_allows_only_non_secret_documentation_forms(
+    relative: str,
+    text: str,
+) -> None:
+    assert _credential_findings(relative, text) == ()
+
+
+def test_tracked_files_do_not_contain_deepseek_credentials() -> None:
+    encoded_paths = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+    ).stdout.split(b"\0")
+    tracked = tuple(
+        encoded_path.decode("utf-8") for encoded_path in encoded_paths if encoded_path
+    )
+    assert ".env" not in tracked, "ignored local environment file must never be scanned"
+
+    offenders: dict[str, tuple[str, ...]] = {}
+    for relative in tracked:
+        content = (ROOT / relative).read_bytes()
+        if b"\0" in content:
+            continue
+        findings = _credential_findings(
+            relative, content.decode("utf-8", errors="replace")
+        )
+        if findings:
+            offenders[relative] = findings
+    assert not offenders, f"tracked files contain populated DeepSeek credentials: {offenders}"

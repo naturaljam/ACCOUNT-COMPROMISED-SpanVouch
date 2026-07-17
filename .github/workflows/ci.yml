@@ -32,6 +32,25 @@ jobs:
           expected = json.loads(Path("evals/datasets/supportlab-v1/manifest.json").read_text())
           actual = json.loads(Path(".cache/ci-dataset/manifest.json").read_text())
           assert expected == actual, (expected, actual)
+      - run: uv run --no-sync afc-evaluate-diagnosis --output .cache/ci-rules-a.json
+      - run: uv run --no-sync afc-evaluate-diagnosis --output .cache/ci-rules-b.json
+      - name: Verify byte-exact deterministic diagnosis reports
+        run: cmp --silent .cache/ci-rules-a.json .cache/ci-rules-b.json
+      - run: uv run --no-sync afc-generate-review-dataset --output .cache/ci-review-dataset --seed 20260717
+      - name: Verify frozen review dataset hashes
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+          expected = json.loads(Path("evals/datasets/supportlab-review-v1/manifest.json").read_text())
+          actual = json.loads(Path(".cache/ci-review-dataset/manifest.json").read_text())
+          assert expected == actual, (expected, actual)
+          for field in ("candidates_sha256", "labels_sha256", "source_manifest_sha256"):
+              assert actual[field] == expected[field], field
+      - run: uv run --no-sync afc-evaluate-review --output .cache/ci-review-a.json
+      - run: uv run --no-sync afc-evaluate-review --output .cache/ci-review-b.json
+      - name: Verify byte-exact deterministic review reports
+        run: cmp --silent .cache/ci-review-a.json .cache/ci-review-b.json
       - run: docker compose config --quiet
       - name: Build API image
         run: docker compose build api
@@ -45,8 +64,8 @@ jobs:
             if [ "$status" -ne 0 ]; then
               docker compose ps --all || true
               docker compose logs --no-color api || true
+              docker compose down --remove-orphans || true
             fi
-            docker compose down --volumes --remove-orphans || true
             exit "$status"
           }
           trap cleanup EXIT
@@ -54,3 +73,57 @@ jobs:
           docker compose up --detach --wait --wait-timeout 90 api
           response="$(curl --fail --show-error --silent http://127.0.0.1:8000/health)"
           python -c 'import json, sys; assert json.loads(sys.argv[1]) == {"status": "ok", "service": "agent-failure-clinic"}' "$response"
+
+          docker compose exec -T api sh -c 'test "$(id -u):$(id -g)" = "10001:10001"'
+          docker compose exec -T api sh -c 'test -w /data && test "$(stat -c %u:%g /data)" = "10001:10001"'
+
+          trace_payload="$(head -n 1 evals/datasets/supportlab-v1/traces.jsonl)"
+          trace_id="$(curl --fail --show-error --silent \
+            -H 'content-type: application/json' \
+            --data "$trace_payload" \
+            http://127.0.0.1:8000/v1/traces \
+            | python -c 'import json,sys; print(json.load(sys.stdin)["trace_id"])')"
+          created="$(uv run --no-sync afc-review create \
+            --trace-id "$trace_id" \
+            --idempotency-key ci-persistence-create)"
+          case_id="$(python -c 'import json,sys; print(json.loads(sys.argv[1])["case"]["case_id"])' "$created")"
+          version="$(python -c 'import json,sys; print(json.loads(sys.argv[1])["case"]["version"])' "$created")"
+
+          uv run --no-sync afc-review show --case-id "$case_id" > .cache/ci-review-before-decision.json
+          uv run --no-sync afc-review decide \
+            --case-id "$case_id" \
+            --action confirm \
+            --expected-version "$version" \
+            --reviewer-label ci-persistence-reviewer \
+            --idempotency-key ci-persistence-decision \
+            > .cache/ci-review-before-restart.json
+
+          docker compose restart api
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8000/health > /dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              exit 1
+            fi
+            sleep 1
+          done
+
+          uv run --no-sync afc-review show --case-id "$case_id" > .cache/ci-review-after-restart.json
+          cmp --silent .cache/ci-review-before-restart.json .cache/ci-review-after-restart.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = json.loads(Path(".cache/ci-review-after-restart.json").read_text())
+          assert payload["case"]["status"] == "confirmed"
+          assert payload["case"]["terminal_decision_id"] == payload["decision"]["decision_id"]
+          assert payload["decision"]["action"] == "confirm"
+          assert len(payload["revisions"]) == 1
+          assert [report["verifier_kind"] for report in payload["verifier_reports"]] == ["deterministic"]
+          assert payload["events"][-2]["event_type"] == "awaiting_human_review"
+          assert payload["events"][-1]["event_type"] == "human_confirmed"
+          assert [event["event_sequence"] for event in payload["events"]] == list(range(len(payload["events"])))
+          PY
+          trap - EXIT
+          docker compose down --volumes --remove-orphans

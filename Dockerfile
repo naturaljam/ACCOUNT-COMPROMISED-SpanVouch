@@ -22,8 +22,8 @@ ENV PATH="/opt/venv/bin:$PATH" \
 
 RUN groupadd --gid 10001 app \
     && useradd --uid 10001 --gid 10001 --create-home --home-dir /home/app app \
-    && mkdir -p /app \
-    && chown 10001:10001 /app
+    && mkdir -p /app /data \
+    && chown 10001:10001 /app /data
 WORKDIR /app
 COPY --from=builder --chown=10001:10001 /opt/venv /opt/venv
 

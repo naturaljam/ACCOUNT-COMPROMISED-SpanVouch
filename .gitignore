@@ -27,6 +27,7 @@ node_modules/
 coverage/
 
 # Runtime data and generated artifacts
+.data/
 *.log
 *.pid
 *.sqlite

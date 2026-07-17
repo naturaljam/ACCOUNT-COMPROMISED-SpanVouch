@@ -1,6 +1,11 @@
 .git
+.env
+.env.*
+!.env.example
 .venv
-.cache
+.cache/
+.data/
+evals/reports/generated/
 __pycache__
 *.pyc
 htmlcov

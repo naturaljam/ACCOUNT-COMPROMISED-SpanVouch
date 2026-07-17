@@ -53,30 +53,6 @@ def test_phase_2_delivery_is_safe_and_reproducible() -> None:
     assert "rules" in readme and "DEEPSEEK_API_KEY" in readme
 
 
-def test_no_tracked_file_contains_a_populated_deepseek_key() -> None:
-    tracked = subprocess.run(
-        ["git", "ls-files", "-z"],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-    ).stdout.split(b"\0")
-    offenders: list[str] = []
-    for encoded_path in tracked:
-        if not encoded_path:
-            continue
-        relative = encoded_path.decode("utf-8")
-        content = (ROOT / relative).read_bytes()
-        if b"\0" in content:
-            continue
-        text = content.decode("utf-8", errors="replace")
-        if re.search(
-            r"(?m)^[ \t]*DEEPSEEK_API_KEY[ \t]*=[ \t]*[^\s#]+",
-            text,
-        ):
-            offenders.append(relative)
-    assert not offenders, f"tracked files contain populated DeepSeek keys: {offenders}"
-
-
 def test_phase_1_delivery_configuration_is_reproducible() -> None:
     required_files = (
         ".dockerignore",
@@ -114,6 +90,107 @@ def test_api_image_is_immutable_unprivileged_and_minimal() -> None:
     assert "/opt/venv/bin/uvicorn" in runtime
     assert "COPY src" not in runtime
     assert "COPY --from=ghcr.io" not in runtime
+
+
+def test_phase_3_sqlite_data_directory_is_owned_and_persisted() -> None:
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    runtime = dockerfile.rsplit("FROM ", maxsplit=1)[1]
+    user_offset = runtime.index("USER 10001:10001")
+
+    assert "mkdir -p /app /data" in runtime[:user_offset]
+    assert "chown 10001:10001 /app /data" in runtime[:user_offset]
+
+    compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
+    api_block, _, volumes_block = compose.partition("  phoenix:")
+    assert re.search(r"(?m)^\s+AFC_DB_PATH:\s*/data/afc\.db$", api_block)
+    assert re.search(r"(?m)^\s+- afc_data:/data$", api_block)
+    assert re.search(r"(?m)^\s{2}afc_data:\s*$", volumes_block)
+
+    environment = (ROOT / ".env.example").read_text(encoding="utf-8")
+    assert re.search(r"(?m)^AFC_DB_PATH=\.data/afc\.db$", environment)
+
+    gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
+    assert re.search(r"(?m)^\.data/$", gitignore)
+    assert re.search(r"(?m)^evals/reports/generated/$", gitignore)
+
+
+def test_docker_build_context_excludes_local_secrets_and_runtime_data() -> None:
+    dockerignore = (ROOT / ".dockerignore").read_text(encoding="utf-8")
+    patterns = set(dockerignore.splitlines())
+
+    assert ".env" in patterns
+    assert ".env.*" in patterns
+    assert "!.env.example" in patterns
+    assert ".data/" in patterns
+    assert ".cache/" in patterns
+    assert "evals/reports/generated/" in patterns
+
+
+def test_phase_3_ci_regenerates_reviews_and_proves_restart_recovery() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+
+    required_fragments = (
+        "afc-generate-review-dataset",
+        "Verify frozen review dataset hashes",
+        "afc-evaluate-review --output .cache/ci-review-a.json",
+        "afc-evaluate-review --output .cache/ci-review-b.json",
+        "cmp --silent .cache/ci-review-a.json .cache/ci-review-b.json",
+        "docker compose restart api",
+        "afc-review show",
+        "afc-review decide",
+        'id -u):$(id -g)" = "10001:10001',
+        "stat -c %u:%g /data",
+        "docker compose down --volumes --remove-orphans",
+    )
+    missing = [fragment for fragment in required_fragments if fragment not in workflow]
+    assert not missing, f"missing Phase 3 CI persistence gates: {missing}"
+
+    assert "DEEPSEEK_API_KEY" not in workflow
+    assert "--allow-live-api" not in workflow
+
+    cleanup = workflow.split("          cleanup() {", maxsplit=1)[1].split(
+        "          trap cleanup EXIT", maxsplit=1
+    )[0]
+    failure_branch = cleanup.split('if [ "$status" -ne 0 ]; then', maxsplit=1)[1].split(
+        "            fi", maxsplit=1
+    )[0]
+    assert "docker compose logs --no-color api" in failure_branch
+    assert "docker compose down --remove-orphans || true" in cleanup
+    assert "docker compose down --volumes" not in cleanup
+    assert 'exit "$status"' in cleanup
+
+    trap = workflow.index("          trap cleanup EXIT")
+    final_audit_assertion = workflow.index(
+        'assert [event["event_sequence"] for event in payload["events"]]'
+    )
+    trap_disabled = workflow.index("          trap - EXIT")
+    destructive_cleanup = workflow.index(
+        "          docker compose down --volumes --remove-orphans"
+    )
+    destructive_line = workflow[destructive_cleanup:].splitlines()[0]
+    assert trap < final_audit_assertion < trap_disabled < destructive_cleanup
+    assert "|| true" not in destructive_line
+    assert workflow.count("docker compose down --volumes --remove-orphans") == 1
+
+
+def test_readme_offline_review_walkthrough_uses_a_frozen_trace_end_to_end() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    required_fragments = (
+        "evals/datasets/supportlab-v1/traces.jsonl",
+        "POST /v1/traces",
+        'trace_id="$(',
+        "--data-binary @.cache/afc-demo-trace.json",
+        'created="$(uv run afc-review create',
+        'case_id="$(python',
+        'version="$(python',
+        'uv run afc-review show --case-id "$case_id"',
+        '--expected-version "$version"',
+    )
+    missing = [fragment for fragment in required_fragments if fragment not in readme]
+    assert not missing, f"README offline walkthrough is not reproducible: {missing}"
 
 
 def test_python_patch_is_shared_by_ci_and_docker() -> None:
