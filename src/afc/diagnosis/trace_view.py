@@ -1,5 +1,6 @@
 import json
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import cast
@@ -157,10 +158,13 @@ _PROVIDER_KEY = re.compile(
     r"(?<![A-Za-z0-9])(?:ghp|github_pat|xox[baprs])_[A-Za-z0-9_-]{16,}"
     r"(?![A-Za-z0-9])"
 )
-_URL_SCHEME = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://")
-_URL_USERINFO = re.compile(r"(?i)(?P<scheme>\b[a-z][a-z0-9+.-]*://)(?P<userinfo>[^/@\s]+)@")
+_URL_SCHEME = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*:(?://|\\/\\/)")
+_URL_USERINFO = re.compile(
+    r"(?i)(?P<scheme>\b[a-z][a-z0-9+.-]*:(?://|\\/\\/))"
+    r"(?P<userinfo>[^/@\s]+)@"
+)
 _STRUCTURAL_FIELD_BOUNDARIES = frozenset(";,|")
-_URL_AUTHORITY_TERMINATORS = frozenset("/?#;,|")
+_URL_AUTHORITY_TERMINATORS = frozenset("/?#")
 _URL_LABEL_BOUNDARIES = frozenset("/?#&")
 
 
@@ -309,6 +313,21 @@ def _redact_structural_value(prefix: str, value: str) -> str:
     return f"{prefix}{SECRET_REDACTION}{structural_suffix}"
 
 
+def _is_structural_field_boundary(character: str) -> bool:
+    if character in _STRUCTURAL_FIELD_BOUNDARIES:
+        return True
+    if character in " \t":
+        return False
+    if character.isspace() or unicodedata.category(character).startswith("Z"):
+        return True
+    if unicodedata.normalize("NFKC", character) in _STRUCTURAL_FIELD_BOUNDARIES:
+        return True
+    name = unicodedata.name(character, "")
+    return unicodedata.category(character) == "Po" and (
+        "COMMA" in name or "SEMICOLON" in name
+    )
+
+
 def _structural_url_contexts(line: str) -> tuple[tuple[int, int, int], ...]:
     contexts: list[tuple[int, int, int]] = []
     token_end = 0
@@ -318,6 +337,7 @@ def _structural_url_contexts(line: str) -> tuple[tuple[int, int, int], ...]:
             authority_end < len(line)
             and not line[authority_end].isspace()
             and line[authority_end] not in _URL_AUTHORITY_TERMINATORS
+            and not _is_structural_field_boundary(line[authority_end])
         ):
             authority_end += 1
 
@@ -326,7 +346,7 @@ def _structural_url_contexts(line: str) -> tuple[tuple[int, int, int], ...]:
             while (
                 token_end < len(line)
                 and not line[token_end].isspace()
-                and line[token_end] not in _STRUCTURAL_FIELD_BOUNDARIES
+                and not _is_structural_field_boundary(line[token_end])
             ):
                 token_end += 1
 
@@ -346,7 +366,7 @@ def _extract_structural_label(
     )
     while label_start > candidate_start:
         previous = line[label_start - 1]
-        if previous in _STRUCTURAL_FIELD_BOUNDARIES or (
+        if _is_structural_field_boundary(previous) or (
             is_url_path_or_query and previous in _URL_LABEL_BOUNDARIES
         ):
             break
@@ -378,7 +398,9 @@ def _sanitize_structural_credential_line(line: str) -> str:
         if character not in ":=":
             index += 1
             continue
-        if url_context is not None and index < url_context[1]:
+        if url_context is not None and (
+            index < url_context[1] or character == ":"
+        ):
             index += 1
             continue
 

@@ -166,6 +166,17 @@ def _trace_with_value_secrets() -> TraceIR:
                     "https://auth.example.com:443/path?status=ok\n"
                     "https://token.example.com:8443/health\n"
                     f"https://agent:{SENTINEL_KEY}@cookie.internal:8080/health\n"
+                    rf"https:\/\/agent:{SENTINEL_KEY}@auth.example.com:443/path"
+                    "\n"
+                    r"https:\/\/auth.example.com:443/path escaped-url-safe"
+                    "\n"
+                    "https://token.example.com:8443/path#auth:section "
+                    "colon-tag-safe\n"
+                    "safe=token_count\N{FULLWIDTH SEMICOLON}field=ok "
+                    "unicode-boundary-safe\n"
+                    f"https://auth.example.com:443\N{IDEOGRAPHIC COMMA}"
+                    f"api_key={SENTINEL_KEY}\n"
+                    f"headers→api_key={SENTINEL_KEY}\n"
                     "Bearer Qaz; HTTP 401\n"
                     "A cookie: recipe; instructions remain safe\n"
                     "cookie: recipe; instructions remain safe\n"
@@ -373,6 +384,9 @@ def test_allowed_trace_value_secrets_never_reach_sqlite_or_public_aggregate(
     assert "https://auth.example.com:443/path?status=ok" in view_json[0]
     assert "https://token.example.com:8443/health" in view_json[0]
     assert f"https://{SECRET_REDACTION}@cookie.internal:8080/health" in view_json[0]
+    assert "escaped-url-safe" in view_json[0]
+    assert "colon-tag-safe" in view_json[0]
+    assert "unicode-boundary-safe" in view_json[0]
     assert "Bearer of; good news" in view_json[0]
 
 

@@ -347,6 +347,17 @@ async def test_revision_prompt_is_a_canonical_sanitized_boundary() -> None:
                     "https://auth.example.com:443/path?status=ok\n"
                     "https://token.example.com:8443/health\n"
                     f"https://agent:{VALUE_SECRET}@cookie.internal:8080/health\n"
+                    rf"https:\/\/agent:{VALUE_SECRET}@auth.example.com:443/path"
+                    "\n"
+                    r"https:\/\/auth.example.com:443/path escaped-url-safe"
+                    "\n"
+                    "https://token.example.com:8443/path#auth:section "
+                    "colon-tag-safe\n"
+                    "safe=token_count\N{FULLWIDTH SEMICOLON}field=ok "
+                    "unicode-boundary-safe\n"
+                    f"https://auth.example.com:443\N{IDEOGRAPHIC COMMA}"
+                    f"api_key={VALUE_SECRET}\n"
+                    f"headers→api_key={VALUE_SECRET}\n"
                     "cookie: recipe; instructions remain safe\n"
                     "Browser cookie: recipe; instructions remain safe\n"
                     "Cookie=recipe; instructions remain safe\n"
@@ -428,6 +439,9 @@ async def test_revision_prompt_is_a_canonical_sanitized_boundary() -> None:
     assert "https://auth.example.com:443/path?status=ok" in prompt
     assert "https://token.example.com:8443/health" in prompt
     assert f"https://{SECRET_REDACTION}@cookie.internal:8080/health" in prompt
+    assert "escaped-url-safe" in prompt
+    assert "colon-tag-safe" in prompt
+    assert "unicode-boundary-safe" in prompt
     for forbidden in (
         "semantic-trace-id-secret",
         "semantic-run-id-secret",

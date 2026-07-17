@@ -366,6 +366,17 @@ async def test_prompt_contains_only_independent_canonical_allowlist_data() -> No
                     "https://auth.example.com:443/path?status=ok\n"
                     "https://token.example.com:8443/health\n"
                     f"https://agent:{VALUE_SECRET}@cookie.internal:8080/health\n"
+                    rf"https:\/\/agent:{VALUE_SECRET}@auth.example.com:443/path"
+                    "\n"
+                    r"https:\/\/auth.example.com:443/path escaped-url-safe"
+                    "\n"
+                    "https://token.example.com:8443/path#auth:section "
+                    "colon-tag-safe\n"
+                    "safe=token_count\N{FULLWIDTH SEMICOLON}field=ok "
+                    "unicode-boundary-safe\n"
+                    f"https://auth.example.com:443\N{IDEOGRAPHIC COMMA}"
+                    f"api_key={VALUE_SECRET}\n"
+                    f"headers→api_key={VALUE_SECRET}\n"
                     "A cookie: recipe; instructions remain safe\n"
                     "cookie: recipe; instructions remain safe\n"
                     "Browser cookie: recipe; instructions remain safe\n"
@@ -418,6 +429,9 @@ async def test_prompt_contains_only_independent_canonical_allowlist_data() -> No
     assert "https://auth.example.com:443/path?status=ok" in serialized
     assert "https://token.example.com:8443/health" in serialized
     assert f"https://{SECRET_REDACTION}@cookie.internal:8080/health" in serialized
+    assert "escaped-url-safe" in serialized
+    assert "colon-tag-safe" in serialized
+    assert "unicode-boundary-safe" in serialized
     assert "Bearer of; good news" in serialized
     assert "trace-review-1" not in serialized
     assert "run-review-1" not in serialized

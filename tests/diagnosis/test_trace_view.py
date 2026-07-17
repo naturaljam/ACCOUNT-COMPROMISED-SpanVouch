@@ -1057,6 +1057,95 @@ def test_url_authorities_are_not_structural_assignment_labels() -> None:
     )
 
 
+def test_escaped_url_schemes_preserve_spelling_and_redact_userinfo() -> None:
+    for safe_url in (
+        r"https:\/\/auth.example.com:443/path",
+        r"https:\/\/token.example.com:8443\/health?status=ok",
+    ):
+        _assert_sanitizer_fixed_point(safe_url, safe_url)
+
+    _assert_sanitizer_fixed_point(
+        r"https:\/\/agent:topsecret@auth.example.com:443/path",
+        rf"https:\/\/{SECRET_REDACTION}@auth.example.com:443/path",
+    )
+    _assert_sanitizer_fixed_point(
+        (
+            r"https://outer.example/path?redirect="
+            r"https:\/\/agent:topsecret@auth.example.com:443/path"
+        ),
+        (
+            r"https://outer.example/path?redirect="
+            rf"https:\/\/{SECRET_REDACTION}@auth.example.com:443/path"
+        ),
+    )
+    _assert_sanitizer_fixed_point(
+        (
+            r"https:\/\/outer.example/path?redirect="
+            r"https:\/\/agent:topsecret@auth.example.com:443/path"
+        ),
+        (
+            r"https:\/\/outer.example/path?redirect="
+            rf"https:\/\/{SECRET_REDACTION}@auth.example.com:443/path"
+        ),
+    )
+
+
+def test_url_path_query_and_fragment_colons_are_safe_tags() -> None:
+    safe_urls = (
+        "https://auth.example.com:443/path/token:latest",
+        "https://token.example.com:8443/path#auth:section",
+        "https://cookie.internal:8080/path?tag=token:latest",
+        "https://api-key.example:8443/path/api_key:secret-one",
+        r"https:\/\/auth.example.com:443\/path#token:latest",
+    )
+    for safe_url in safe_urls:
+        _assert_sanitizer_fixed_point(safe_url, safe_url)
+
+    _assert_sanitizer_fixed_point(
+        "https://auth.example.com:443/path?tag=token:latest&api_key=topsecret",
+        (
+            "https://auth.example.com:443/path?tag=token:latest&"
+            f"api_key={SECRET_REDACTION}"
+        ),
+    )
+
+
+def test_unicode_field_boundaries_do_not_contaminate_later_labels() -> None:
+    boundaries = (
+        "\N{FULLWIDTH SEMICOLON}",
+        "\N{FULLWIDTH COMMA}",
+        "\N{ARABIC SEMICOLON}",
+        "\N{IDEOGRAPHIC COMMA}",
+        "\N{FULLWIDTH VERTICAL LINE}",
+        "\N{NO-BREAK SPACE}",
+        "\N{EM SPACE}",
+    )
+    sensitive_labels = (
+        "headers[api_key]",
+        "api$key",
+        "headers→api_key",
+        "headers【api_key】",
+    )
+
+    for boundary in boundaries:
+        safe_source = f"safe=token_count{boundary}field=ok"
+        _assert_sanitizer_fixed_point(safe_source, safe_source)
+
+        for label in sensitive_labels:
+            _assert_sanitizer_fixed_point(
+                f"safe=token_count{boundary}{label}=topsecret",
+                f"safe=token_count{boundary}{label}={SECRET_REDACTION}",
+            )
+
+        _assert_sanitizer_fixed_point(
+            f"https://auth.example.com:443{boundary}api_key=topsecret",
+            (
+                f"https://auth.example.com:443{boundary}"
+                f"api_key={SECRET_REDACTION}"
+            ),
+        )
+
+
 def test_structural_scanner_stays_stable_for_many_segments_and_urls() -> None:
     safe_url = "https://auth.example.com:443/path?status=ok"
     repeated_urls = " ".join(safe_url for _ in range(3_000))
@@ -1066,6 +1155,15 @@ def test_structural_scanner_stays_stable_for_many_segments_and_urls() -> None:
     source = f"{safe_assignments};headers[api_key]=topsecret"
     expected = f"{safe_assignments};headers[api_key]={SECRET_REDACTION}"
     _assert_sanitizer_fixed_point(source, expected)
+
+    escaped_url = r"https:\/\/auth.example.com:443/path/token:latest"
+    repeated_escaped_urls = " ".join(escaped_url for _ in range(3_000))
+    _assert_sanitizer_fixed_point(repeated_escaped_urls, repeated_escaped_urls)
+
+    unicode_assignments = "\N{FULLWIDTH SEMICOLON}".join(
+        f"field_{index}=ok" for index in range(10_000)
+    )
+    _assert_sanitizer_fixed_point(unicode_assignments, unicode_assignments)
 
 
 def test_trace_view_preserves_safe_urls_and_redacts_punctuation_labels() -> None:
@@ -1079,7 +1177,17 @@ def test_trace_view_preserves_safe_urls_and_redacts_punctuation_labels() -> None
                     rf'credentials[\"api_key\"]={VALUE_SECRET}' "\n"
                     f"api$key={VALUE_SECRET}\n"
                     "https://auth.example.com:443/path?status=ok\n"
-                    f"https://agent:{VALUE_SECRET}@token.example.com:8443/health"
+                    f"https://agent:{VALUE_SECRET}@token.example.com:8443/health\n"
+                    rf"https:\/\/agent:{VALUE_SECRET}@auth.example.com:443/path"
+                    "\n"
+                    r"https:\/\/auth.example.com:443/path escaped-url-safe"
+                    "\n"
+                    "https://token.example.com:8443/path#auth:section "
+                    "colon-tag-safe\n"
+                    "safe=token_count\N{FULLWIDTH SEMICOLON}field=ok "
+                    "unicode-boundary-safe\n"
+                    f"https://auth.example.com:443\N{IDEOGRAPHIC COMMA}"
+                    f"api_key={VALUE_SECRET}"
                 ),
             }
         }
@@ -1095,4 +1203,10 @@ def test_trace_view_preserves_safe_urls_and_redacts_punctuation_labels() -> None
     assert (
         f"https://{SECRET_REDACTION}@token.example.com:8443/health" in message
     )
+    assert (
+        rf"https:\/\/{SECRET_REDACTION}@auth.example.com:443/path" in message
+    )
+    assert "escaped-url-safe" in message
+    assert "colon-tag-safe" in message
+    assert "unicode-boundary-safe" in message
     assert sanitize_diagnostic_trace_view(view) == view
