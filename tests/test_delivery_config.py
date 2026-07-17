@@ -1,10 +1,34 @@
 from __future__ import annotations
 
 import re
+import subprocess
 import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_frozen_dataset_fixtures_are_checked_out_with_lf_endings() -> None:
+    attributes_file = ROOT / ".gitattributes"
+    assert attributes_file.is_file(), "repository .gitattributes must define fixture EOLs"
+
+    dataset = ROOT / "evals" / "datasets" / "supportlab-v1"
+    fixture_paths = sorted(dataset.glob("*.jsonl")) + [dataset / "manifest.json"]
+    relative_paths = [path.relative_to(ROOT).as_posix() for path in fixture_paths]
+    result = subprocess.run(
+        ["git", "check-attr", "text", "eol", "--", *relative_paths],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    expected = {
+        f"{path}: {attribute}: {value}"
+        for path in relative_paths
+        for attribute, value in (("text", "set"), ("eol", "lf"))
+    }
+    assert set(result.stdout.splitlines()) == expected
 
 
 def test_phase_1_delivery_configuration_is_reproducible() -> None:
