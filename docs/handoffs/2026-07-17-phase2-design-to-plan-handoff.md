@@ -6,10 +6,10 @@
 
 - 工作分支：`feature/phase2-diagnosis-mvp`
 - 隔离 worktree：`D:\self agent\.worktrees\phase2-diagnosis-mvp`
-- Phase 1 不需要重做；Phase 2 Task 1–10 已提交，Task 11 的离线实现和交付验证已完成。
+- Phase 1 不需要重做；Phase 2 Task 1–11、离线交付验证和受控 DeepSeek 实验均已完成。
 - remote：`git@github.com:naturaljam/Agent_Failure_Clinic.git`
 - 尚未合并或推送；不要在未经用户选择时操作 main 或 remote。
-- DeepSeek 真实付费实验尚未运行。自动测试、默认评测和 Docker 冒烟均未调用外部模型 API。
+- DeepSeek 两条 smoke 和 20 条完整实验已运行；原始 live artifact 位于 Git 忽略目录，未提交。
 
 ## 已交付能力
 
@@ -26,7 +26,7 @@
 
 ## 2026-07-17 验证证据
 
-- 全量测试：`151 passed`；仅保留一个已知的 Starlette/httpx 弃用警告。
+- 全量测试：`153 passed`；仅保留一个已知的 Starlette/httpx 弃用警告。
 - Ruff：`All checks passed!`
 - mypy：`Success: no issues found in 42 source files`
 - 两次规则评测 SHA-256 均为：
@@ -36,16 +36,18 @@
 - Compose：API 与 Phoenix 健康检查通过；容器运行身份 `10001:10001`；运行镜像无 `/app/src`。
 - API 冒烟：摄取 `invalid_argument-01` 后，rules 返回 `diagnosed / invalid_argument / span-005 / 2 evidence refs`。
 - Compose 服务、网络和测试卷已清理。
+- 初次 DeepSeek smoke 的 2 条结果都被严格 schema 拒绝为 `invalid_model_output`；定位到 prompt 未明确 status/stage/confidence 类型后，以 TDD 补齐精确 JSON 契约，修复提交为 `025c24a`。
+- 修复后的两条 smoke：`invalid_argument-01` 正确命中 `invalid_argument / span-005`，`clean-01` 正确返回 `no_failure`；selector validity 和 gold hit 均为 `1.0`，operational error 为 `0.0`。
+- DeepSeek 完整 20 条：支持集准确率 `0.857`、critical Top-1 `0.800`、selector validity `1.0`、gold hit `1.0`、evidence precision `0.247`、clean FPR `0.0`、unsupported abstain `0.0`、operational error `0.0`。
+- DeepSeek usage：31,557 input + 4,101 output = 35,658 tokens；p50 `2044 ms`，p95 `2888 ms`；按全部 cache miss 估算上限约 USD `0.005566`。
+- 关键误差：2 条 policy violation 被判为 invalid argument；2 条 loop 的 critical Top-1 选中 root；6 条 unsupported 全部未弃答。结果证明证据引用安全，但 scope control 仍需后续改进。
+- live 报告不含 Authorization 或 API key 名称；`.env` 和 `evals/reports/generated/` 均被 Git 忽略。
 
-## 剩余的受控 live 实验
+## 剩余工作
 
-只有真实 DeepSeek 实验需要操作者动作。不要在聊天、commit、命令参数或日志中传递密钥。
-
-1. 操作者在本机 shell 设置 `DEEPSEEK_API_KEY`。
-2. 先运行 `invalid_argument-01` 与 `clean-01` 两条 allowlist smoke。
-3. 检查 schema、证据 selector、本地回填、token、延迟、模型和错误字段；不要提交 live 原始报告。
-4. 两条 smoke 正常后，再由操作者明确执行完整 20 条实验。
-5. 最后按 `finishing-a-development-branch` 选择保留分支、合并或推送；当前不自动集成。
+1. 运行提交后的最终 pytest、Ruff、mypy、双次规则评测、secret scan 和 clean-worktree 检查。
+2. 按 `finishing-a-development-branch` 选择本地合并、推送 PR、保留分支或丢弃；当前不自动集成。
+3. 后续 Phase 可针对 LLM scope control 增加显式 decision policy 或 verifier，但不得把本次结果改写成虚假的高准确率成果。
 
 命令与解释见：
 
