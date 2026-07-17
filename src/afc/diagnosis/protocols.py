@@ -1,10 +1,15 @@
-from typing import Literal, Protocol
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from afc.diagnosis.evidence import EvidenceCatalog
-from afc.diagnosis.models import DiagnosisExecution, ProviderUsage
+from afc.diagnosis.models import DiagnosisExecution, DiagnosisReport, ProviderUsage
 from afc.diagnosis.trace_view import DiagnosticTraceView
+
+if TYPE_CHECKING:
+    from afc.review.models import EvidenceGap
 
 
 class Diagnoser(Protocol):
@@ -12,6 +17,18 @@ class Diagnoser(Protocol):
 
     async def diagnose(
         self, view: DiagnosticTraceView, evidence: EvidenceCatalog
+    ) -> DiagnosisExecution:
+        raise NotImplementedError
+
+
+@runtime_checkable
+class RevisionCapableDiagnoser(Diagnoser, Protocol):
+    async def revise(
+        self,
+        view: DiagnosticTraceView,
+        evidence: EvidenceCatalog,
+        previous_report: DiagnosisReport,
+        evidence_gaps: tuple[EvidenceGap, ...],
     ) -> DiagnosisExecution:
         raise NotImplementedError
 
