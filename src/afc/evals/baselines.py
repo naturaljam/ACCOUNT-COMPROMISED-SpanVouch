@@ -1,6 +1,6 @@
 from pydantic import BaseModel, ConfigDict
 
-from afc.supportlab.scenarios import FailureType
+from afc.failure_types import FailureType
 
 
 class BaselinePrediction(BaseModel):
