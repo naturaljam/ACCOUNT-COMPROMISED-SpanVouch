@@ -21,7 +21,7 @@ from afc.diagnosis.evidence import EvidenceCatalog
 from afc.diagnosis.models import DiagnoserKind, EvidenceSelector
 from afc.diagnosis.rule_diagnoser import RuleDiagnoser
 from afc.diagnosis.service import DiagnosisService
-from afc.diagnosis.trace_view import DiagnosticTraceView
+from afc.diagnosis.trace_view import SECRET_REDACTION, DiagnosticTraceView
 from afc.invariants.engine import InvariantEngine
 from afc.invariants.supportlab import supportlab_rules
 from afc.review.evidence_verifier import EvidenceVerifier
@@ -129,7 +129,15 @@ def _trace_with_value_secrets() -> TraceIR:
                     f"passwordhash: {SENTINEL_KEY}; final context survives\n"
                     f"Cookie: session=first; csrf={SENTINEL_KEY}\n"
                     f"Set-Cookie: sid=first; refresh={SENTINEL_KEY}\n"
+                    f"Authorization:{SECRET_REDACTION}; Bearer {SENTINEL_KEY}\n"
+                    f"Proxy-Authorization: {SECRET_REDACTION}; tail={SENTINEL_KEY}\n"
+                    f"Cookie:{SECRET_REDACTION}; csrf={SENTINEL_KEY}\n"
+                    f"Set-Cookie: {SECRET_REDACTION}; refresh={SENTINEL_KEY}\n"
+                    f"Cookie=session=first; csrf={SENTINEL_KEY}\n"
+                    f"Set-Cookie=sid=first; refresh={SENTINEL_KEY}\n"
                     "Bearer Qaz; HTTP 401\n"
+                    "A cookie: recipe; instructions remain safe\n"
+                    "Bearer of; good news\n"
                     "Bearer of good news remains harmless prose."
                 ),
             },
@@ -319,6 +327,8 @@ def test_allowed_trace_value_secrets_never_reach_sqlite_or_public_aggregate(
     assert "refresh=" not in view_json[0]
     assert "Qaz" not in view_json[0]
     assert "Bearer of good news remains harmless prose." in view_json[0]
+    assert "A cookie: recipe; instructions remain safe" in view_json[0]
+    assert "Bearer of; good news" in view_json[0]
 
 
 @pytest.mark.asyncio

@@ -137,6 +137,9 @@ _COMPACT_SAFE_METADATA_LABELS = frozenset(
     for qualifier in _COMPACT_SAFE_METADATA_QUALIFIERS
     for terminal in _SAFE_METADATA_TERMINALS
 )
+_COOKIE_HEADER_CONTEXT_PARTS = frozenset(
+    {"browser", "header", "headers", "http", "request", "response", "session", "set"}
+)
 _ASSIGNMENT = re.compile(
     r"(?i)(?P<prefix>[\"']?(?P<key>[a-z][a-z0-9_. -]{0,80})[\"']?"
     r"\s*(?:=|:)\s*)"
@@ -145,16 +148,21 @@ _ASSIGNMENT = re.compile(
 )
 _AUTHORIZATION = re.compile(
     r"(?i)(?P<prefix>\b(?:proxy[-_ ]?)?authorization(?:\\?[\"'])?\s*"
-    r"(?:=|:)\s*)(?P<value>(?!\s*[\"']?\[REDACTED\][\"']?)"
-    r"(?:[\"'][^\"'\r\n]*[\"']|(?:(?!;\s)[^\r\n])+))"
+    r"(?:=|:)\s*)(?P<value>(?:[\"']?\[REDACTED\][\"']?"
+    r"(?:;\s*(?:bearer\s+[^\r\n]+|[a-z][a-z0-9_. -]{0,80}\s*=[^\r\n]+))?"
+    r"|[\"'][^\"'\r\n]*[\"']|(?:(?!;\s)[^\r\n])+))"
 )
 _COOKIE_HEADER = re.compile(
-    r"(?im)(?P<prefix>(?<![A-Za-z0-9_-])(?:set-cookie|cookie)\s*:\s*)"
-    r"(?P<value>(?![\"']?\[REDACTED\][\"']?)[^\r\n]*)"
+    r"(?im)(?P<prefix>(?:^|[({\[;,\"'])(?:set-cookie|cookie)"
+    r"(?:\\?[\"'])?\s*(?::|=)\s*)(?P<value>[^\r\n]*)"
 )
 _BEARER = re.compile(
     r"(?i)(?P<prefix>\bbearer\s+)(?P<value>(?!\[REDACTED\])"
     r"[A-Za-z0-9._~+/=-]+)(?=$|[\"',;|)}\]])"
+)
+_BEARER_STATUS_CONTEXT = re.compile(
+    r"(?i)^\s*[;,|]?\s*(?:HTTP(?:/\d(?:\.\d)?)?\s+|status\s*(?:=|:)\s*)"
+    r"[45]\d\d\b"
 )
 _PROVIDER_KEY = re.compile(
     r"(?<![A-Za-z0-9])(?:sk|rk|pk)-[A-Za-z0-9_-]{16,}(?![A-Za-z0-9])|"
@@ -255,6 +263,21 @@ def _redact_match(match: re.Match[str]) -> str:
 
 def _redact_assignment(match: re.Match[str]) -> str:
     label = match.group("key")
+    label_parts = _normalize_credential_label(label)
+    non_cookie_parts = tuple(
+        part for part in label_parts if part not in {"cookie", "cookies"}
+    )
+    cookie_header_context = (
+        not non_cookie_parts
+        or all(part in _COOKIE_HEADER_CONTEXT_PARTS for part in non_cookie_parts)
+        or _is_credential_label("_".join(non_cookie_parts))
+    )
+    if (
+        match.group("prefix").rstrip().endswith(":")
+        and len(non_cookie_parts) != len(label_parts)
+        and not cookie_header_context
+    ):
+        return match.group(0)
     trailing_label = label.rsplit(maxsplit=1)[-1]
     if not (
         _is_credential_label(label)
@@ -277,15 +300,14 @@ def _redact_bearer(match: re.Match[str]) -> str:
     opaque_letters = token_body.isalpha() and len(token_body) >= 16
     prefix = match.string[: match.start()].rstrip()
     assignment_context = prefix.endswith(("=", ":"))
-    next_character = match.string[match.end() : match.end() + 1]
-    credential_boundary = bool(next_character) and next_character in ";|)}]"
+    status_context = bool(_BEARER_STATUS_CONTEXT.match(match.string[match.end() :]))
     if (
         opaque_letters
         or credential_punctuation
         or internal_period
         or digit_shaped
         or assignment_context
-        or credential_boundary
+        or status_context
     ):
         return _redact_match(match)
     return match.group(0)

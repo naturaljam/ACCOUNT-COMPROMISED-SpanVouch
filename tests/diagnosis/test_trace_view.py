@@ -594,3 +594,51 @@ def test_trace_view_fails_closed_for_delimited_keys_and_complete_auth_headers() 
     )
     for key, value in safe_metadata.items():
         assert view.spans[0].attributes["tool.result"][key] == value
+
+
+@pytest.mark.parametrize(
+    ("header", "secret"),
+    (
+        (f"Authorization:{SECRET_REDACTION}; Bearer topsecret", "topsecret"),
+        (f"Proxy-Authorization: {SECRET_REDACTION}; tail=topsecret", "topsecret"),
+        (f"Cookie:{SECRET_REDACTION}; csrf=topsecret", "topsecret"),
+        (f"Set-Cookie: {SECRET_REDACTION}; refresh=topsecret", "topsecret"),
+        ("Cookie=session=first; csrf=topsecret", "topsecret"),
+        ("Set-Cookie=sid=first; refresh=topsecret", "topsecret"),
+    ),
+)
+def test_sanitizer_rejects_partial_redaction_credential_header_tails(
+    header: str, secret: str,
+) -> None:
+    sanitized = sanitize_diagnostic_value(header)
+
+    assert secret not in canonical_json(sanitized)
+    assert sanitize_diagnostic_value(sanitized) == sanitized
+
+
+@pytest.mark.parametrize(
+    "header",
+    (
+        f"Authorization:{SECRET_REDACTION}",
+        f"Proxy-Authorization: {SECRET_REDACTION}",
+        f"Cookie:{SECRET_REDACTION}",
+        f"Set-Cookie: {SECRET_REDACTION}",
+        f"Cookie={SECRET_REDACTION}",
+        f"Set-Cookie={SECRET_REDACTION}",
+    ),
+)
+def test_sanitizer_preserves_only_complete_redacted_header_values(header: str) -> None:
+    assert sanitize_diagnostic_value(header) == header
+
+
+@pytest.mark.parametrize(
+    "safe_prose",
+    (
+        "A cookie: recipe; instructions remain safe",
+        "Bearer of; good news",
+    ),
+)
+def test_sanitizer_preserves_cookie_and_bearer_prose_with_punctuation(
+    safe_prose: str,
+) -> None:
+    assert sanitize_diagnostic_value(safe_prose) == safe_prose
