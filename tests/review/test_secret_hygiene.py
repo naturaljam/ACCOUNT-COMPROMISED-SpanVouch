@@ -149,6 +149,13 @@ def _trace_with_value_secrets() -> TraceIR:
                     f"client_secret='{SECRET_REDACTION}top;{SENTINEL_KEY}'\n"
                     f"request.headers.Cookie=session=first; csrf={SENTINEL_KEY}\n"
                     f"http_request_headers_Set-Cookie=sid=first; refresh={SENTINEL_KEY}\n"
+                    rf'api_key=\"{SECRET_REDACTION}top {SENTINEL_KEY}\"' "\n"
+                    rf"Cookie:\'{SECRET_REDACTION}top;{SENTINEL_KEY}\'" "\n"
+                    f"http.request.headers.response.http.request.headers.Cookie="
+                    f"session=first; csrf={SENTINEL_KEY}\n"
+                    f"Set Cookie: session=first; csrf={SENTINEL_KEY}\n"
+                    f"Session Cookie=a_1\n"
+                    "session_cookie_count=3; metadata remains safe\n"
                     "Bearer Qaz; HTTP 401\n"
                     "A cookie: recipe; instructions remain safe\n"
                     "cookie: recipe; instructions remain safe\n"
@@ -332,7 +339,7 @@ def test_allowed_trace_value_secrets_never_reach_sqlite_or_public_aggregate(
     _assert_sanitized(view_json[0])
     _assert_sanitized(aggregate)
     assert "diagnostic context survives" in view_json[0]
-    assert "final context survives" in view_json[0]
+    assert "final context survives" not in view_json[0]
     assert '"token_count":7' in view_json[0]
     assert '"password_policy":"rotate-quarterly"' in view_json[0]
     assert '"session_duration":30' in view_json[0]
@@ -350,6 +357,8 @@ def test_allowed_trace_value_secrets_never_reach_sqlite_or_public_aggregate(
     assert "Browser cookie: recipe; instructions remain safe" in view_json[0]
     assert "Cookie=recipe; instructions remain safe" in view_json[0]
     assert "request.headers.Cookie=recipe; instructions remain safe" in view_json[0]
+    assert "a_1" not in view_json[0]
+    assert "session_cookie_count=3; metadata remains safe" in view_json[0]
     assert "Bearer of; good news" in view_json[0]
 
 

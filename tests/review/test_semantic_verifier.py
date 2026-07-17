@@ -346,6 +346,13 @@ async def test_prompt_contains_only_independent_canonical_allowlist_data() -> No
                     f"client_secret='[REDACTED]top;{VALUE_SECRET}'\n"
                     f"request.headers.Cookie=session=first; csrf={VALUE_SECRET}\n"
                     f"http-request-headers-Set-Cookie=sid=first; refresh={VALUE_SECRET}\n"
+                    rf'api_key=\"[REDACTED]top {VALUE_SECRET}\"' "\n"
+                    rf"Cookie:\'[REDACTED]top;{VALUE_SECRET}\'" "\n"
+                    f"http.request.headers.response.http.request.headers.Cookie="
+                    f"session=first; csrf={VALUE_SECRET}\n"
+                    f"set_cookie=session=first; csrf={VALUE_SECRET}\n"
+                    f"Session Cookie=a_1\n"
+                    "session_cookie_count=3; metadata remains safe\n"
                     "A cookie: recipe; instructions remain safe\n"
                     "cookie: recipe; instructions remain safe\n"
                     "Browser cookie: recipe; instructions remain safe\n"
@@ -392,6 +399,8 @@ async def test_prompt_contains_only_independent_canonical_allowlist_data() -> No
     assert "Browser cookie: recipe; instructions remain safe" in serialized
     assert "Cookie=recipe; instructions remain safe" in serialized
     assert "request.headers.Cookie=recipe; instructions remain safe" in serialized
+    assert "a_1" not in serialized
+    assert "session_cookie_count=3; metadata remains safe" in serialized
     assert "Bearer of; good news" in serialized
     assert "trace-review-1" not in serialized
     assert "run-review-1" not in serialized

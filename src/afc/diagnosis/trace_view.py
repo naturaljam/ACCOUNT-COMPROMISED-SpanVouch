@@ -137,30 +137,16 @@ _COMPACT_SAFE_METADATA_LABELS = frozenset(
     for qualifier in _COMPACT_SAFE_METADATA_QUALIFIERS
     for terminal in _SAFE_METADATA_TERMINALS
 )
-_COOKIE_HEADER_CONTEXT_PARTS = frozenset(
-    {"browser", "header", "headers", "http", "request", "response", "set"}
+_MAX_CREDENTIAL_LABEL_CHARS = 80
+_STRUCTURAL_CREDENTIAL_PREFIX = re.compile(
+    rf"(?i)(?P<label>[\"']?[a-z][a-z0-9_. /-]"
+    rf"{{0,{_MAX_CREDENTIAL_LABEL_CHARS - 1}}}[\"']?)[ \t]*(?:=|:)[ \t]*"
 )
-_ASSIGNMENT = re.compile(
-    r"(?i)(?P<prefix>[\"']?(?P<key>[a-z][a-z0-9_. -]{0,80})[\"']?"
-    r"\s*(?:=|:)\s*)"
-    r"(?P<value>(?:\"(?:\\.|[^\"\\\r\n])*\""
-    r"|'(?:\\.|[^'\\\r\n])*'"
-    r"|[\"']?\[REDACTED\][\"']?[^\s,;}\]]*|[^\s,;}\]]+))"
-)
-_AUTHORIZATION = re.compile(
-    r"(?i)(?P<prefix>\b(?:proxy[-_ ]?)?authorization(?:\\?[\"'])?\s*"
-    r"(?:=|:)\s*)(?P<value>[^\r\n]*)"
-)
-_COOKIE_HEADER = re.compile(
-    r"(?im)(?P<prefix>(?:^|[({\[;,\"'])"
-    r"(?:(?:browser|headers?|http|request|response)[ ._-]+){0,4}"
-    r"(?:set-cookie|cookie)(?:\\?[\"'])?\s*(?::|=)\s*)"
-    r"(?P<value>[^\r\n]*)"
-)
+_NONEMPTY_LINE = re.compile(r"[^\r\n]+")
 _COOKIE_PAIR_VALUE = re.compile(
     r"(?i)(?:^|;\s*)[!#$%&'*+\-.^_`|~0-9A-Za-z]+\s*="
 )
-_OPAQUE_COOKIE_VALUE = re.compile(r"(?i)^(?:bearer\s+)?[A-Za-z0-9._~+/=-]{16,}$")
+_COOKIE_TOKEN_VALUE = re.compile(r"(?i)^[A-Za-z0-9._~+/=-]+$")
 _REDACTED_VALUE_PREFIX = re.compile(r"^[\"']?\[REDACTED\]")
 _BEARER = re.compile(
     r"(?i)(?P<prefix>\bbearer\s+)(?P<value>(?!\[REDACTED\])"
@@ -267,59 +253,70 @@ def _redact_match(match: re.Match[str]) -> str:
     return f"{match.group('prefix')}{SECRET_REDACTION}"
 
 
-def _is_credential_shaped_cookie_value(value: str) -> bool:
+def _unwrap_structural_value(value: str) -> tuple[str, str | None]:
     candidate = value.strip()
-    if (
-        len(candidate) >= 2
-        and candidate[0] == candidate[-1]
-        and candidate[0] in "\"'"
-    ):
-        candidate = candidate[1:-1].strip()
+    for wrapper in ('\\"', "\\'", '"', "'"):
+        if len(candidate) >= 2 * len(wrapper) and candidate.startswith(
+            wrapper
+        ) and candidate.endswith(wrapper):
+            return candidate[len(wrapper) : -len(wrapper)].strip(), wrapper
+    return candidate, None
+
+
+def _is_credential_shaped_cookie_value(value: str) -> bool:
+    candidate, _ = _unwrap_structural_value(value)
+    primary_value = candidate.split(";", 1)[0].strip()
+    shaped_token = bool(_COOKIE_TOKEN_VALUE.fullmatch(primary_value)) and (
+        len(primary_value) >= 16
+        or any(
+            character.isdigit() or character in "._~+/=-"
+            for character in primary_value
+        )
+    )
     return bool(
         _REDACTED_VALUE_PREFIX.match(candidate)
         or _COOKIE_PAIR_VALUE.search(candidate)
-        or _OPAQUE_COOKIE_VALUE.fullmatch(candidate)
+        or shaped_token
     )
 
 
-def _redact_cookie_header(match: re.Match[str]) -> str:
-    if not _is_credential_shaped_cookie_value(match.group("value")):
-        return match.group(0)
-    return _redact_match(match)
-
-
-def _redact_assignment(match: re.Match[str]) -> str:
-    label = match.group("key")
-    label_parts = _normalize_credential_label(label)
-    non_cookie_parts = tuple(
-        part for part in label_parts if part not in {"cookie", "cookies"}
-    )
-    cookie_header_context = (
-        not non_cookie_parts
-        or all(part in _COOKIE_HEADER_CONTEXT_PARTS for part in non_cookie_parts)
-        or _is_credential_label("_".join(non_cookie_parts))
-    )
-    contains_cookie_label = len(non_cookie_parts) != len(label_parts)
-    if contains_cookie_label and not _is_credential_shaped_cookie_value(
-        match.group("value")
-    ) and (
-        cookie_header_context
-        or (
-            match.group("prefix").rstrip().endswith(":")
-            and any(character.isspace() for character in label)
-        )
-    ):
-        return match.group(0)
+def _is_structural_credential_label(label: str) -> bool:
+    if _is_credential_label(label):
+        return True
     trailing_label = label.rsplit(maxsplit=1)[-1]
-    if not (
-        _is_credential_label(label)
-        or (
-            trailing_label != label
-            and _is_credential_label(trailing_label)
+    return trailing_label != label and _is_credential_label(trailing_label)
+
+
+def _redact_structural_value(prefix: str, value: str) -> str:
+    candidate, wrapper = _unwrap_structural_value(value)
+    if candidate.strip() == SECRET_REDACTION:
+        return f"{prefix}{value}"
+    if wrapper is not None:
+        return f"{prefix}{wrapper}{SECRET_REDACTION}{wrapper}"
+    return f"{prefix}{SECRET_REDACTION}"
+
+
+def _sanitize_structural_credential_line(line: str) -> str:
+    for match in _STRUCTURAL_CREDENTIAL_PREFIX.finditer(line):
+        label = match.group("label")
+        if not _is_structural_credential_label(label):
+            continue
+        value = line[match.end() :]
+        label_parts = _normalize_credential_label(label)
+        is_cookie_label = any(
+            part in {"cookie", "cookies"} for part in label_parts
         )
-    ):
-        return match.group(0)
-    return _redact_match(match)
+        if is_cookie_label and not _is_credential_shaped_cookie_value(value):
+            continue
+        return _redact_structural_value(line[: match.end()], value)
+    return line
+
+
+def _sanitize_structural_credential_lines(value: str) -> str:
+    return _NONEMPTY_LINE.sub(
+        lambda match: _sanitize_structural_credential_line(match.group(0)),
+        value,
+    )
 
 
 def _redact_bearer(match: re.Match[str]) -> str:
@@ -364,14 +361,12 @@ def _looks_structurally_encoded(value: str) -> bool:
 def _sanitize_plain_string(value: str) -> str:
     """Sanitize credential text without attempting structured decoding."""
 
+    sanitized = _sanitize_structural_credential_lines(value)
     sanitized = _URL_USERINFO.sub(
         lambda match: f"{match.group('scheme')}{SECRET_REDACTION}@",
-        value,
+        sanitized,
     )
-    sanitized = _AUTHORIZATION.sub(_redact_match, sanitized)
-    sanitized = _COOKIE_HEADER.sub(_redact_cookie_header, sanitized)
     sanitized = _BEARER.sub(_redact_bearer, sanitized)
-    sanitized = _ASSIGNMENT.sub(_redact_assignment, sanitized)
     return _PROVIDER_KEY.sub(SECRET_REDACTION, sanitized)
 
 

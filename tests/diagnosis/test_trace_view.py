@@ -825,3 +825,99 @@ def test_cookie_safe_prose_matrix_is_byte_idempotent() -> None:
         )
 
         _assert_sanitizer_fixed_point(source, source)
+
+
+def test_structural_credential_lines_handle_escaped_quote_wrappers() -> None:
+    for label, separator, wrapper, partial in product(
+        ("api_key", "Cookie"),
+        (":", "="),
+        ('\\"', "\\'"),
+        (False, True),
+    ):
+        suffix = "top secret;tail" if partial else ""
+        source = f"{label}{separator}{wrapper}{SECRET_REDACTION}{suffix}{wrapper}"
+        expected = (
+            f"{label}{separator}{wrapper}{SECRET_REDACTION}{wrapper}"
+            if partial
+            else source
+        )
+
+        _assert_sanitizer_fixed_point(source, expected)
+
+
+def test_structural_cookie_labels_have_no_component_depth_cap() -> None:
+    context_parts = (
+        "http",
+        "request",
+        "headers",
+        "response",
+        "http",
+        "request",
+        "headers",
+        "response",
+    )
+
+    for depth, joiner, header, separator in product(
+        range(9),
+        (".", "_", "-", " "),
+        ("Cookie", "Set-Cookie"),
+        (":", "="),
+    ):
+        context = joiner.join(context_parts[:depth])
+        label = f"{context}{joiner if context else ''}{header}"
+        source = f"{label}{separator}session=first; csrf=topsecret"
+
+        _assert_sanitizer_fixed_point(
+            source,
+            f"{label}{separator}{SECRET_REDACTION}",
+        )
+
+
+def test_shared_cookie_label_spellings_redact_complete_values() -> None:
+    for label, separator in product(
+        (
+            "Set Cookie",
+            "set_cookie",
+            "set.cookie",
+            "Session Cookie",
+            "request.session.cookie",
+        ),
+        (":", "="),
+    ):
+        source = f"{label}{separator}session=first; csrf=topsecret"
+
+        _assert_sanitizer_fixed_point(
+            source,
+            f"{label}{separator}{SECRET_REDACTION}",
+        )
+
+
+def test_cookie_short_token_shapes_redact_without_hiding_recipe_prose() -> None:
+    for value, suffix in product(
+        ("a1", "a_b", "a~b", "a+b", "a/b", "a=b", "a-b", "a.b"),
+        ("", "; instructions remain safe"),
+    ):
+        _assert_sanitizer_fixed_point(
+            f"Session Cookie:{value}{suffix}",
+            f"Session Cookie:{SECRET_REDACTION}",
+        )
+
+    for value in (
+        "recipe",
+        "recipe instructions",
+        "recipe; instructions remain safe",
+    ):
+        source = f"Session Cookie:{value}"
+        _assert_sanitizer_fixed_point(source, source)
+
+
+def test_safe_credential_metadata_labels_remain_visible() -> None:
+    for label, value in (
+        ("cookie_count", "7"),
+        ("cookie_policy", "rotate-quarterly"),
+        ("session_cookie_count", "3"),
+        ("token_count", "11"),
+        ("password_policy", "rotate-quarterly"),
+    ):
+        source = f"{label}={value}; metadata remains safe"
+        _assert_sanitizer_fixed_point(source, source)
