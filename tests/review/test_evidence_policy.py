@@ -139,7 +139,11 @@ def _diagnosed_report(
         critical_span_ids=critical_span_ids,
         causal_chain=tuple(
             DiagnosisClaim(
-                stage=ClaimStage.CAUSE,
+                stage=(
+                    ClaimStage.CAUSE,
+                    ClaimStage.PROPAGATION,
+                    ClaimStage.OUTCOME,
+                )[claim_index],
                 statement=f"Diagnosis claim {claim_index}.",
                 evidence_ids=tuple(evidence[index].evidence_id for index in indexes),
             )
@@ -246,7 +250,7 @@ async def test_nine_unique_references_exceed_report_budget() -> None:
         failure_type=FailureType.POLICY_VIOLATION,
         critical_span_ids=("span-tool",),
         selectors=selectors,
-        claim_groups=((0, 1, 2), (3, 4, 5), (6, 7, 8)),
+        claim_groups=((0, 1, 4), (2, 3, 5), (6, 7, 8)),
     )
 
     report = await _verifier().verify(_input(view, diagnosis))

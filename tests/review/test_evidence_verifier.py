@@ -4,6 +4,7 @@ import pytest
 
 from afc.diagnosis.evidence import EvidenceCatalog
 from afc.diagnosis.models import (
+    ClaimStage,
     DiagnosisClaim,
     DiagnosisProvenance,
     DiagnosisReport,
@@ -150,7 +151,12 @@ def _claim_without_evidence(report: DiagnosisReport) -> VerificationInput:
 
 
 def _critical_span_without_same_span_evidence(report: DiagnosisReport) -> VerificationInput:
-    return _verification_input(_construct_report(report, critical_span_ids=("span-root",)))
+    return _verification_input(
+        _construct_report(
+            report,
+            critical_span_ids=(*report.critical_span_ids, "span-root"),
+        )
+    )
 
 
 @pytest.fixture
@@ -208,6 +214,44 @@ async def test_valid_report_is_verified_without_findings_or_gaps(
     assert report.verdict is VerifierVerdict.VERIFIED
     assert report.findings == ()
     assert report.evidence_gaps == ()
+
+
+async def test_claim_referencing_only_noncritical_evidence_is_not_grounded(
+    verifier: EvidenceVerifier,
+) -> None:
+    source = make_diagnosis_report()
+    decoy = EvidenceCatalog.from_view(make_trace_view()).resolve(
+        EvidenceSelector(span_id="span-root", field_path="status"),
+        description="The root span ended in an error state.",
+    )
+    claim = DiagnosisClaim(
+        stage=ClaimStage.CAUSE,
+        statement=source.causal_chain[0].statement,
+        evidence_ids=(decoy.evidence_id,),
+    )
+    changed = DiagnosisReport(
+        **{
+            **source.model_dump(exclude={"causal_chain", "evidence"}),
+            "causal_chain": (claim,),
+            "evidence": (*source.evidence, decoy),
+        }
+    )
+
+    report = await verifier.verify(
+        VerificationInput(
+            snapshot=make_review_snapshot(),
+            report=changed,
+            report_sha256=canonical_sha256(changed),
+        )
+    )
+
+    assert tuple(finding.code for finding in report.findings) == (
+        FindingCode.CLAIM_NOT_GROUNDED,
+    )
+    assert report.verdict is VerifierVerdict.NEEDS_EVIDENCE
+    assert len(report.evidence_gaps) == 1
+    assert report.evidence_gaps[0].allowed_selectors
+    assert report.evidence_gaps[0].related_span_ids == source.critical_span_ids
 
 
 async def test_tampered_snapshot_hash_is_non_revisable_integrity_failure(

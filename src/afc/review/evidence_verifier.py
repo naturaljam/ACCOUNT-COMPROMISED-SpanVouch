@@ -8,6 +8,7 @@ from afc.diagnosis.evidence import EvidenceCatalog
 from afc.diagnosis.evidence import canonical_json as evidence_json
 from afc.diagnosis.models import (
     AbstainReason,
+    ClaimStage,
     DiagnoserKind,
     DiagnosisReport,
     DiagnosisStatus,
@@ -365,6 +366,11 @@ class EvidenceVerifier:
 
             known_evidence = {evidence.evidence_id: evidence for evidence in report.evidence}
             if report.status is DiagnosisStatus.DIAGNOSED:
+                critical_evidence_ids = {
+                    evidence.evidence_id
+                    for evidence in report.evidence
+                    if evidence.span_id in report.critical_span_ids
+                }
                 for claim_index, claim in enumerate(report.causal_chain):
                     referenced = tuple(
                         known_evidence[evidence_id]
@@ -413,8 +419,22 @@ class EvidenceVerifier:
                                 ),
                             )
                         )
-                    if not claim.evidence_ids or unknown_ids:
-                        claim_spans = tuple(evidence.span_id for evidence in referenced)
+                    cause_is_off_critical_path = (
+                        claim.stage is ClaimStage.CAUSE
+                        and not set(claim.evidence_ids).intersection(
+                            critical_evidence_ids
+                        )
+                    )
+                    if (
+                        not claim.evidence_ids
+                        or unknown_ids
+                        or cause_is_off_critical_path
+                    ):
+                        claim_spans = (
+                            report.critical_span_ids
+                            if cause_is_off_critical_path
+                            else tuple(evidence.span_id for evidence in referenced)
+                        )
                         if not claim_spans:
                             claim_spans = report.critical_span_ids
                         allowed = _selectors_for_spans(catalog, claim_spans)
