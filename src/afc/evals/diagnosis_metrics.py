@@ -4,7 +4,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from afc.diagnosis.errors import DiagnosisError
 from afc.diagnosis.evidence import EvidenceCatalog
-from afc.diagnosis.models import DiagnoserKind, DiagnosisReport, DiagnosisStatus
+from afc.diagnosis.models import (
+    AbstainReason,
+    DiagnoserKind,
+    DiagnosisReport,
+    DiagnosisStatus,
+)
 from afc.diagnosis.service import DiagnosisService
 from afc.diagnosis.trace_view import DiagnosticTraceView
 from afc.evals.baselines import final_state_baseline, rule_only_baseline
@@ -262,6 +267,11 @@ def _compute_metrics(
                 valid_evidence += 1
 
     reports = tuple(sample.report for sample in samples if sample.report is not None)
+    structured_reports = tuple(
+        report
+        for report in reports
+        if report.abstain_reason is not AbstainReason.INVALID_MODEL_OUTPUT
+    )
     return DiagnosisMetrics(
         supported_accuracy=_ratio(sum(correct(label) for label in supported), len(supported)),
         critical_span_top1_accuracy=_ratio(critical_correct, len(diagnosed)),
@@ -278,7 +288,7 @@ def _compute_metrics(
         ),
         coverage=sum(report.status is not DiagnosisStatus.ABSTAINED for report in reports)
         / len(labels),
-        structured_output_success_rate=len(reports) / len(labels),
+        structured_output_success_rate=len(structured_reports) / len(labels),
         semantic_abstain_rate=sum(
             report.status is DiagnosisStatus.ABSTAINED for report in reports
         )

@@ -81,6 +81,31 @@ async def test_prompt_excludes_identity_labels_and_invariant_results() -> None:
 
 
 @pytest.mark.asyncio
+async def test_prompt_defines_exact_json_enum_and_scalar_contract() -> None:
+    provider = RecordingProvider(
+        json.dumps(
+            {
+                "status": "no_failure",
+                "failure_type": "no_failure",
+                "critical_span_ids": [],
+                "causal_chain": [],
+                "confidence": 0.5,
+                "abstain_reason": None,
+            }
+        )
+    )
+    view, evidence = inputs()
+
+    await LlmDiagnoser(provider).diagnose(view, evidence)
+
+    system = provider.messages[0].content
+    assert "status must be exactly one of: diagnosed, no_failure, abstained" in system
+    assert "stage must be exactly one of: cause, propagation, outcome" in system
+    assert "confidence must be a JSON number from 0.0 to 1.0" in system
+    assert "Do not use words such as failure, high, medium, or low" in system
+
+
+@pytest.mark.asyncio
 async def test_valid_draft_resolves_selector_from_local_catalog() -> None:
     selector = "span-005::attributes.tool.error.message"
     provider = RecordingProvider(

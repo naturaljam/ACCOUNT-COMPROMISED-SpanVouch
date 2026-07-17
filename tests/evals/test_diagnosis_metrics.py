@@ -2,6 +2,7 @@ from pathlib import Path
 
 from afc.diagnosis.evidence import EvidenceCatalog
 from afc.diagnosis.models import (
+    AbstainReason,
     DiagnoserKind,
     DiagnosisDecision,
     DiagnosisExecution,
@@ -120,3 +121,45 @@ async def test_evaluation_aggregates_provider_usage_and_latency_percentiles() ->
     assert report.usage.latency_p50_ms == 20.0
     assert report.usage.latency_p95_ms == 29.0
     assert report.usage.estimated_cost_usd is None
+
+
+class _InvalidOutputDiagnoser:
+    version_fingerprint = "invalid-output-v1"
+
+    async def diagnose(
+        self, view: DiagnosticTraceView, evidence: EvidenceCatalog
+    ) -> DiagnosisExecution:
+        return DiagnosisExecution(
+            decision=DiagnosisDecision(
+                status=DiagnosisStatus.ABSTAINED,
+                confidence=0.0,
+                abstain_reason=AbstainReason.INVALID_MODEL_OUTPUT,
+            ),
+            provenance=DiagnosisProvenance(
+                taxonomy_version="1.0",
+                diagnoser_version="invalid-output-v1",
+                model="test-model",
+                provider="test-provider",
+            ),
+        )
+
+
+async def test_invalid_model_output_is_not_counted_as_structured_success() -> None:
+    selected_trace = tuple(trace for trace in traces() if trace.run_id == "clean-01")
+    selected_label = tuple(
+        label
+        for label in load_diagnosis_labels(DATASET / "diagnosis-labels-v1.jsonl")
+        if label.run_id == "clean-01"
+    )
+
+    report = await evaluate_diagnoser(
+        traces=selected_trace,
+        labels=selected_label,
+        service=DiagnosisService(
+            {DiagnoserKind.DEEPSEEK: _InvalidOutputDiagnoser()}
+        ),
+        kind=DiagnoserKind.DEEPSEEK,
+    )
+
+    assert report.metrics.structured_output_success_rate == 0.0
+    assert report.metrics.semantic_abstain_rate == 1.0
