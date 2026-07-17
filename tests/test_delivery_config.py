@@ -44,6 +44,37 @@ def test_api_image_is_immutable_unprivileged_and_minimal() -> None:
     assert "COPY --from=ghcr.io" not in runtime
 
 
+def test_api_build_backend_is_fully_hash_locked() -> None:
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'requires = ["hatchling==1.27.0"]' in pyproject
+
+    constraints_path = ROOT / "build-constraints.txt"
+    assert constraints_path.is_file()
+
+    constraints = constraints_path.read_text(encoding="utf-8")
+    requirement_starts = list(re.finditer(r"(?m)^[a-zA-Z0-9_.-]+==[^\s\\]+", constraints))
+    assert requirement_starts
+    assert any(match.group().startswith("hatchling==") for match in requirement_starts)
+
+    for index, match in enumerate(requirement_starts):
+        end = requirement_starts[index + 1].start() if index + 1 < len(requirement_starts) else None
+        requirement_block = constraints[match.start() : end]
+        assert "--hash=sha256:" in requirement_block
+
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    compact_dockerfile = " ".join(dockerfile.split())
+    assert "COPY pyproject.toml uv.lock README.md build-constraints.txt ./" in compact_dockerfile
+    assert (
+        "uv build --wheel --build-constraints build-constraints.txt --require-hashes --no-cache"
+        in compact_dockerfile
+    )
+    assert "uv sync --frozen --no-dev --no-install-project --no-cache" in compact_dockerfile
+    assert (
+        "uv pip install --python /opt/venv/bin/python --no-deps --no-cache dist/*.whl"
+        in compact_dockerfile
+    )
+
+
 def test_compose_defines_executable_phoenix_healthcheck() -> None:
     compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
 
@@ -56,6 +87,7 @@ def test_ci_pins_platform_inputs_and_smoke_tests_api_image() -> None:
     action_lines = [line.strip() for line in workflow.splitlines() if "uses:" in line]
 
     assert "runs-on: ubuntu-24.04" in workflow
+    assert 'python-version: "3.12.13"' in workflow
     assert action_lines
     assert all(re.search(r"@[0-9a-f]{40}\s+#\s+v\d", line) for line in action_lines)
     assert "docker compose build api" in workflow

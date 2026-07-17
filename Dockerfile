@@ -8,9 +8,11 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 COPY --from=uv /uv /usr/local/bin/uv
 WORKDIR /app
-COPY pyproject.toml uv.lock README.md ./
+COPY pyproject.toml uv.lock README.md build-constraints.txt ./
 COPY src ./src
-RUN uv sync --frozen --no-dev --no-editable --no-cache
+RUN uv build --wheel --build-constraints build-constraints.txt --require-hashes --no-cache \
+    && uv sync --frozen --no-dev --no-install-project --no-cache \
+    && uv pip install --python /opt/venv/bin/python --no-deps --no-cache dist/*.whl
 
 FROM python:3.12.13-slim@sha256:c3d81d25b3154142b0b42eb1e61300024426268edeb5b5a26dd7ddf64d9daf28 AS runtime
 
