@@ -515,50 +515,106 @@ Phase 3 仍按已批准的独立设计与实施计划完成，范围是“诊断
 
 Phase 3 的 SemanticVerifier 是工程原型，不等于论文已经证明“独立验证”，也没有 Conformal 风险保证。
 
-### 16.2 第 1 个月：研究内核
+### 16.2 Phase 4：IVAD Research Foundation（1–2 周）
 
-- 冻结 TraceIR、Claim–Evidence Contract 和 experiment manifest；
-- 提取 Phase 2/3 能力到明确模块边界；
-- 完成 LangGraph、AutoGen adapter；
-- 建立 SupportLab、OpsLab、CodeLab 最小闭环；
-- 跑通无验证、自审和确定性验证等基线；
-- 达到约 150 条基础轨迹、800 个故障实例。
+目标是建立后续方法与实验共同依赖的稳定研究底座：
 
-### 16.3 第 2 个月：核心方法
+- 冻结 Claim–Evidence Contract、TraceIR 扩展和 schema version；
+- 定义 experiment manifest、artifact bundle 和 provenance 规则；
+- 将 Phase 2/3 能力映射到研究内核与产品层边界；
+- 建立版本迁移、canonical serialization 和 label-leakage 防线；
+- 保持现有 20 条 SupportLab 数据及 Phase 3 工作流回归通过。
 
-- 完成异构语义验证与失效隔离测量；
-- 完成 Conformal 风险控制和风险报告；
-- 完成 Level 0/1/2 补证及补证后校准；
-- 完成 RQ1–RQ3 初步实验；
-- 累计约 300–450 条轨迹、1,500–2,500 个故障实例。
+退出条件：所有契约能够 byte-stable round trip；任一实验结果都可追踪到代码、数据、模型和 prompt 版本；研究内核不依赖 FastAPI、SQLite 或具体 Agent SDK。
 
-### 16.4 第 3 个月：规模化实验与论文初稿
+### 16.3 Phase 5：Multi-Framework Labs（2–3 周）
 
-- 扩展至 600–900 条轨迹、3,000–5,000 个故障实例；
-- 完成跨领域、框架和模型 OOD；
-- 完成 RQ4–RQ5、消融、成本和延迟分析；
-- 从第 1 个月同步写作，第 3 个月形成完整论文初稿。
+目标是建立 `3 个领域 × 2 个框架` 的可重放实验矩阵：
 
-### 16.5 第 4 个月：投稿级收口
+- 完成 LangGraph 和 AutoGen adapter；
+- 建立 SupportLab、OpsLab、CodeLab 的最小真实工具环境；
+- 为每个组合定义任务、故障注入、执行断言和重放协议；
+- 跑通 direct diagnosis、自审和确定性规则等早期 baseline；
+- 累积约 150 条基础轨迹、800 个故障实例。
 
-- 冻结代码、数据、环境和实验结果；
-- 完成全量复现、统计分析、图表和威胁审查；
-- 整理匿名 artifact、开源发布和 arXiv 版本；
-- 用缓冲时间处理失败实验与必要补充消融。
+退出条件：六个领域/框架组合均可从固定 seed 生成、注入、重放和评价；跨组合使用同一 TraceIR 与 artifact 契约，不通过复制六套 evaluator 实现兼容。
+
+### 16.4 Phase 6：Independent Verification（2–3 周）
+
+目标是完成论文的证据契约与受控失效隔离方法：
+
+- 把 Phase 3 确定性 verifier 升级为研究通道；
+- 完成异构 SemanticVerifier 及严格上下文隔离；
+- 建立 evidence mutation suite；
+- 实现同模型、异模型、跨 provider、规则和双通道实验条件；
+- 测量条件错误率、错误相关和增量错误发现率；
+- 完成 RQ1、RQ2 的 pilot 结果。
+
+退出条件：能够分别证明 evidence authenticity、relevance、sufficiency 和 causal attribution 的验证行为；“independent”是否成立由实验数据决定，而不是由模块命名决定。
+
+### 16.5 Phase 7：Conformal Risk Control（2–3 周）
+
+目标是把 verifier 信号转换为受风险约束的 `accept / abstain` 决策：
+
+- 实现 SCRC-I 主路径及 SCRC-T、SCoRE 等强基线；
+- 冻结 report-level loss、分组切分和 calibration protocol；
+- 输出 selective risk、coverage、AURC 和有限样本风险报告；
+- 覆盖小样本、无合法阈值、全部弃答、schema/OOD 漂移；
+- 完成 RQ3 的 ID pilot 与风险措辞审计。
+
+退出条件：统计假设、实现和论文表述逐项一致；若条件不成立，系统和论文自动降级为 empirical risk control，不保留误导性的 guarantee claim。
+
+### 16.6 Phase 8：Layered Evidence Acquisition（约 2 周）
+
+目标是在固定预算内用补证恢复 coverage，同时不破坏风险控制：
+
+- 实现 Level 0、Level 1 和最多一个 Level 2 动作；
+- 只允许白名单内、只读、幂等的补证工具；
+- 实现一次 diagnosis revision、重验证和补证路径校准器；
+- 比较 no/random/targeted/oracle acquisition；
+- 完成 RQ4 pilot 和成本—coverage 曲线。
+
+退出条件：acquisition policy 在 calibration 前冻结；旧阈值不能直接用于补证后样本；所有超预算、失败或仍不充分的案例安全弃答。
+
+### 16.7 Phase 9：Benchmark & Full Experiments（3–4 周）
+
+目标是冻结方法后完成完整会议论文级实证：
+
+- 扩展至 600–900 条基础轨迹、3,000–5,000 个故障实例；
+- 适配公开 benchmark，并明确官方实现与概念复现的区别；
+- 完成 RQ1–RQ5、全部主要 baseline、消融和统计分析；
+- 完成 domain/framework/model OOD、成本、延迟和失败边界实验；
+- 冻结数据切分、配置、原始响应和结果表。
+
+退出条件：所有论文定量结论能够从干净环境重建；方法在 Phase 9 不再因单次结果不佳而随意改动，必要修改必须开启新实验版本并重新运行受影响矩阵。
+
+### 16.8 Phase 10：Paper & Open-Source Release（2–3 周）
+
+目标是把已冻结结果收口为论文和完整开放 artifact：
+
+- 完成 Abstract、Introduction、Related Work、Method、Experiments 和 Threats；
+- 完成主图表、附录、数据卡、模型卡和复现说明；
+- 完成 reviewer-style novelty、统计、可复现性和 claim 审查；
+- 整理匿名投稿仓库、公开仓库、版本标签和 arXiv 包；
+- 发布完整开源工程与可公开实验资产。
+
+退出条件：论文所有 claim 均可定位到冻结 artifact；匿名包与公开包不存在密钥、身份或许可证问题；第三方能够运行小型离线复现。
+
+论文写作、数据生成和成本记录从 Phase 4 开始持续进行，不等到 Phase 10 才启动。各 Phase 的纯工作量合计约 14–20 周；通过数据生成、论文写作和非依赖实验并行，目标日历周期控制在 14–17 周，即约 3–4 个月。
 
 ## 17. 规格分解与执行顺序
 
-本文件是研究工程总体规格，不直接生成覆盖四个月的巨型实现计划。后续依次形成独立规格和实施计划：
+本文件是研究工程总体规格，不直接生成覆盖四个月的巨型实现计划。正式阶段编号固定为：
 
-1. 完成现有 Phase 3 实施计划；
-2. IVAD Contract、TraceIR 与 artifact foundation；
-3. LangGraph/AutoGen adapters 与三类 Labs；
-4. dual-channel verification 与 independence evaluation；
-5. Conformal risk controller；
-6. layered evidence acquisition 与 post-acquisition calibration；
-7. benchmark scale-up、实验冻结和论文 artifact。
+1. **Phase 4 — IVAD Research Foundation**；
+2. **Phase 5 — Multi-Framework Labs**；
+3. **Phase 6 — Independent Verification**；
+4. **Phase 7 — Conformal Risk Control**；
+5. **Phase 8 — Layered Evidence Acquisition**；
+6. **Phase 9 — Benchmark & Full Experiments**；
+7. **Phase 10 — Paper & Open-Source Release**。
 
-每个子项目遵循“设计—书面复核—实施计划—测试驱动实现—验收”的独立闭环。除当前已批准且已有计划的 Phase 3 外，不跨越规格门禁提前实现后续模块。
+每个 Phase 单独建立设计规格、实施计划、分支和验收报告，遵循“设计—书面复核—实施计划—测试驱动实现—验收”的闭环。Phase 4 只能在 Phase 3 验收完成后进入实现；后续阶段原则上按编号推进，但数据生成、论文写作和不修改共享契约的实验任务允许并行。
 
 ## 18. 主要投稿风险与应对
 
