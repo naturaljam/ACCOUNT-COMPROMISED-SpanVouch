@@ -65,7 +65,11 @@ def test_normalization_orders_a_multilevel_tree_parent_first_with_stable_sibling
 
 
 def test_normalization_rejects_a_parent_cycle() -> None:
-    trace = make_trace(make_span("first", "second"), make_span("second", "first"))
+    trace = TraceIR.model_construct(
+        trace_id="source-trace",
+        run_id="run-1",
+        spans=[make_span("first", "second"), make_span("second", "first")],
+    )
 
     with pytest.raises(ValueError, match="cycle detected"):
         _normalize_trace(trace, sequence=1)
@@ -83,7 +87,11 @@ def test_normalization_rejects_a_missing_parent() -> None:
 
 
 def test_normalization_rejects_multiple_roots() -> None:
-    trace = make_trace(make_span("first-root"), make_span("second-root"))
+    trace = TraceIR.model_construct(
+        trace_id="source-trace",
+        run_id="run-1",
+        spans=[make_span("first-root"), make_span("second-root")],
+    )
 
     with pytest.raises(ValueError, match="exactly one root"):
         _normalize_trace(trace, sequence=1)

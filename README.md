@@ -19,7 +19,7 @@ uv run afc-generate-dataset --output .cache/readme-check --seed 20260715
 docker compose config --quiet
 ```
 
-## Run the API and trace viewer
+## Run the API and provisioned Phoenix service
 
 ```bash
 docker compose up --build api phoenix
@@ -28,6 +28,9 @@ docker compose up --build api phoenix
 - AFC API: http://localhost:8000
 - OpenAPI: http://localhost:8000/docs
 - Phoenix: http://localhost:6006
+
+Phase 1 provisions and health-checks Phoenix, but AFC does not yet export its traces to
+Phoenix. OTLP exporter wiring and a visible AFC-to-Phoenix trace path belong to a later phase.
 
 ## Phase 1 dataset
 

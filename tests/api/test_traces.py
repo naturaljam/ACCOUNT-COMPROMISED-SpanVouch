@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 
+import pytest
 from fastapi.testclient import TestClient
 
 from afc.api.app import create_app
@@ -15,25 +16,42 @@ class ValueErrorTraceRepository:
         raise KeyError(trace_id)
 
 
-def valid_trace_payload() -> dict[str, object]:
+class RecordingTraceRepository:
+    def __init__(self) -> None:
+        self.saved: list[TraceIR] = []
+
+    async def save(self, trace: TraceIR) -> TraceIR:
+        self.saved.append(trace)
+        return trace
+
+    async def get(self, trace_id: str) -> TraceIR:
+        for trace in self.saved:
+            if trace.trace_id == trace_id:
+                return trace
+        raise KeyError(trace_id)
+
+
+def trace_span_payload(span_id: str, parent_span_id: str | None = None) -> dict[str, object]:
     now = datetime(2026, 7, 15, tzinfo=UTC).isoformat()
+    return {
+        "trace_id": "trace-api-1",
+        "span_id": span_id,
+        "parent_span_id": parent_span_id,
+        "name": "supportlab.run",
+        "kind": "agent",
+        "status": "ok",
+        "started_at": now,
+        "ended_at": now,
+        "attributes": {},
+    }
+
+
+def valid_trace_payload() -> dict[str, object]:
     return {
         "schema_version": "1.0",
         "trace_id": "trace-api-1",
         "run_id": "run-api-1",
-        "spans": [
-            {
-                "trace_id": "trace-api-1",
-                "span_id": "root",
-                "parent_span_id": None,
-                "name": "supportlab.run",
-                "kind": "agent",
-                "status": "ok",
-                "started_at": now,
-                "ended_at": now,
-                "attributes": {},
-            }
-        ],
+        "spans": [trace_span_payload("root")],
     }
 
 
@@ -99,3 +117,30 @@ def test_trace_ingestion_rejects_orphan_span() -> None:
     response = client.post("/v1/traces", json=payload)
 
     assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "spans",
+    [
+        [trace_span_payload("first", "second"), trace_span_payload("second", "first")],
+        [
+            trace_span_payload("first", "third"),
+            trace_span_payload("second", "first"),
+            trace_span_payload("third", "second"),
+        ],
+        [trace_span_payload("first-root"), trace_span_payload("second-root")],
+    ],
+    ids=["two-span-cycle", "multi-span-cycle", "multiple-roots"],
+)
+def test_trace_ingestion_rejects_malformed_span_graph_without_saving(
+    spans: list[dict[str, object]],
+) -> None:
+    payload = valid_trace_payload()
+    payload["spans"] = spans
+    repository = RecordingTraceRepository()
+    client = TestClient(create_app(trace_repository=repository))
+
+    response = client.post("/v1/traces", json=payload)
+
+    assert response.status_code == 422
+    assert repository.saved == []

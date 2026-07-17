@@ -1,7 +1,8 @@
 # Agent Failure Clinic 交接文档
 
 更新日期：2026-07-17
-交接目标：完成 Phase 1 全分支终审、最终门禁和 main 合并，然后启动 Phase 2 的证据化诊断 MVP。
+交接目标：保留 Phase 1 全分支终审与 final-fix 证据，等待分支 owner 决定 main 集成，
+然后再启动 Phase 2 的证据化诊断 MVP。
 
 ## 1. 项目目标
 
@@ -17,7 +18,12 @@ Agent Failure Clinic（AFC）不是普通的多智能体演示，而是一个面
 
 当前 Phase 1 已搭建可复现的 SupportLab 被测 Agent、TraceIR、OpenTelemetry 映射、20 条标注轨迹、弱基线、轨迹接入 API，以及 Docker/CI 交付链路。
 
-## 2. 仓库与精确停止点
+## 2. 仓库与收口状态
+
+### 2.1 历史 pre-handoff snapshot
+
+以下 HEAD、工作树和 Docker 状态是本交接文档首次提交前的历史快照，仅用于追溯，
+不是恢复工作时应期待的当前状态：
 
 - 主仓库：`D:\self agent`
 - 当前开发 worktree：`D:\self agent\.worktrees\afc-phase1-foundation`
@@ -30,6 +36,16 @@ Agent Failure Clinic（AFC）不是普通的多智能体演示，而是一个面
 - 当前没有运行中的 Docker 容器
 - Docker daemon 已启动：Docker Server `29.1.3`，Linux `x86_64`
 
+### 2.2 当前 final-fix 收口点
+
+- 全分支终审已在 review HEAD `3a39481c2a09f0b8be12b026b7155c7ec74aff98` 上完成。
+- 终审发现的 Important TraceIR span-tree invariant 已在本交接文档所在的 final-fix
+  提交中修复，并增加模型/API 回归测试。
+- 当前准确 HEAD、工作树和门禁证据以 `git rev-parse HEAD`、`git status` 以及
+  `D:\self agent\.git\worktrees\afc-phase1-foundation\sdd\phase1-final-fix-report.md`
+  为准。
+- Phase 1 仍未合并到 `main`；不要把“final-fix 已收口”误读为“已合并”。
+
 恢复后先执行：
 
 ```powershell
@@ -39,7 +55,9 @@ git rev-parse HEAD
 docker version
 ```
 
-在提交本交接文档前，预期 HEAD 为 `44421483f8636cef6d7cc7daf472b52abb76aa8a`；`git status` 只应显示本交接文档，不能出现其他未提交改动。
+历史 snapshot 中，在提交本交接文档前预期 HEAD 为
+`44421483f8636cef6d7cc7daf472b52abb76aa8a`，且 `git status` 只显示尚未提交的
+交接文档。该预期已随交接文档和后续终审修复提交而失效，不得再作为恢复断言。
 
 ## 3. 当前已经实现的功能
 
@@ -76,7 +94,8 @@ docker version
 - OTel tuple/sequence 属性递归归一化为 JSON list。
 - 混合 trace 输入显式拒绝，避免静默合并。
 - Agent 根 span 的 outcome 与 OTel/TraceIR 状态一致。
-- 支持 Phoenix 查看轨迹。
+- Phase 1 仅 provision 并 health-check Phoenix；AFC 尚未通过 OTLP 向 Phoenix 导出轨迹。
+- AFC → Phoenix 的 OTLP wiring 和可见 trace 路径属于后续阶段。
 
 ### 3.4 数据集与弱基线
 
@@ -103,7 +122,8 @@ docker version
 - 基础镜像固定不可变 digest。
 - Runtime 使用非 root UID/GID `10001`。
 - Runtime 不携带 uv、构建缓存和源码目录。
-- Docker Compose 启动 AFC API 与 Phoenix。
+- Docker Compose 启动 AFC API 与 Phoenix；Phoenix 在 Phase 1 仅被 provision 和
+  health-check，不代表 AFC trace export 已接通。
 - API `/health` 与 Phoenix `/healthz` 健康检查。
 - GitHub Actions 固定 action commit SHA。
 - CI 包含 lint、mypy、pytest、dataset drift、Docker build 和 health smoke。
@@ -136,7 +156,9 @@ Task 11 最终独立复审结论：Spec COMPLIANT、Quality APPROVED；仅剩 1 
 - Task 11：已完成实现、多轮修复和独立双轴复审。
 - Task 11 最终结论：Spec COMPLIANT、Quality APPROVED、Critical 0、Important 0、Minor 1。
 - Task 11 收口 commits：`51760be6`、`137fba6`、`4442148`。
-- 全分支终审：未执行。
+- 全分支终审：已执行；review HEAD 为 `3a39481c2a09f0b8be12b026b7155c7ec74aff98`。
+- 终审 Important：TraceIR 必须是单根、无环、全可达 span tree；已在当前 final-fix
+  收口中修复并补充模型/API 回归测试。
 - Phase 1 合并与 tag：未执行。
 
 Git 元数据中的执行账本：
@@ -145,16 +167,17 @@ Git 元数据中的执行账本：
 D:\self agent\.git\worktrees\afc-phase1-foundation\sdd\progress.md
 ```
 
-Task 11 复审通过后应将账本更新为 completed；随后只剩全分支终审、最终门禁和 main 合并。
+Task 11 和全分支终审均已完成；当前只剩根据 final-fix 报告核对收口证据并由分支
+owner 决定是否合并到 `main`。
 
-## 6. 新对话的首要任务：Phase 1 正式收口
+## 6. 恢复后的首要任务：核对 final-fix 后完成集成决策
 
-按以下顺序执行，不要跳过：
+全分支终审及其 Important 修复已经完成，不要重新从 Task 1-11 或旧 review HEAD
+开始。恢复后按以下顺序执行：
 
-1. 提交本交接文档。
-2. 对 merge base `833a9bc` 到当前 HEAD 执行全分支终审。
-3. 只修复全分支终审发现的 Critical/Important，并重新复审。
-4. 运行新鲜的最终门禁：
+1. 读取 `phase1-final-fix-report.md` 并核对其中的 fix commit SHA。
+2. 确认 `git status` 与 `git rev-parse HEAD`，不要套用第 2.1 节的历史 snapshot。
+3. 如需在另一环境重新验收，运行下列新鲜最终门禁：
 
 ```powershell
 uv sync --frozen --group dev
@@ -171,11 +194,11 @@ Invoke-WebRequest http://localhost:6006/healthz -UseBasicParsing
 docker compose down --remove-orphans
 ```
 
-5. 重点确认 `uv.lock` 使用清华软件源是否符合预期的供应链策略。
-6. 全部门禁通过后完成分支收口。
-7. 将 feature 分支合并到 `main`，建议后续创建 `v0.1.0` tag。
+4. 将 `uv.lock` 清华镜像策略作为已记录 Minor 后续处理，不在本次 final-fix 扩围。
+5. 获得分支 owner 的集成决定后，将 feature 分支合并到 `main`；建议后续创建
+   `v0.1.0` tag。
 
-不要在审查通过前声称 Phase 1 已正式完成或已合并。
+在实际合并前，不要声称 Phase 1 已合并到 `main`。
 
 ## 7. Phase 2 建议范围：证据化诊断 MVP
 
@@ -250,7 +273,7 @@ DeepSeek 约束：
 ## 11. 对新对话的推荐首条指令
 
 ```text
-读取 docs/handoffs/2026-07-17-phase1-closeout-phase2-handoff.md，
-从 Phase 1 全分支终审开始，完成最终门禁和 main 合并；
-不要重复已经完成并独立审查通过的 Task 1-11。
+读取 docs/handoffs/2026-07-17-phase1-closeout-phase2-handoff.md 和
+phase1-final-fix-report.md，核对 final-fix commit 与门禁证据后完成集成决策；
+不要重复已经完成的 Task 1-11、全分支终审或 Important 修复。
 ```

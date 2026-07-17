@@ -50,6 +50,37 @@ def test_trace_rejects_duplicate_span_ids() -> None:
         )
 
 
+def test_trace_rejects_two_span_parent_cycle() -> None:
+    with pytest.raises(ValidationError, match="span parent cycle detected"):
+        TraceIR(
+            trace_id="trace-1",
+            run_id="run-1",
+            spans=[make_span("first", "second"), make_span("second", "first")],
+        )
+
+
+def test_trace_rejects_multi_span_parent_cycle() -> None:
+    with pytest.raises(ValidationError, match="span parent cycle detected"):
+        TraceIR(
+            trace_id="trace-1",
+            run_id="run-1",
+            spans=[
+                make_span("first", "third"),
+                make_span("second", "first"),
+                make_span("third", "second"),
+            ],
+        )
+
+
+def test_trace_rejects_multiple_root_spans() -> None:
+    with pytest.raises(ValidationError, match="exactly one root span"):
+        TraceIR(
+            trace_id="trace-1",
+            run_id="run-1",
+            spans=[make_span("first-root"), make_span("second-root")],
+        )
+
+
 def test_span_rejects_naive_or_reverse_timestamps() -> None:
     with pytest.raises(ValidationError, match="timezone-aware"):
         TraceSpan(
