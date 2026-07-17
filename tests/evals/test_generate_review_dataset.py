@@ -81,6 +81,12 @@ async def test_unsupported_mutations_cover_both_examples_of_each_family(
         "missing_precondition-01",
         "missing_precondition-02",
     }
+    for candidate in candidates:
+        if candidate.mutation_kind == "unsupported_scope":
+            statements = tuple(claim.statement for claim in candidate.report.causal_chain)
+            assert statements == ("The selected tool caused the request to fail.",)
+            assert all("mutation" not in statement.lower() for statement in statements)
+            assert all("unsupported trace" not in statement.lower() for statement in statements)
 
 
 @pytest.mark.asyncio

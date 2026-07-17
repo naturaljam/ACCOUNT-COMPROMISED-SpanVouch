@@ -91,6 +91,10 @@ def _trace_with_value_secrets() -> TraceIR:
                 "tool.result": {
                     "api_key": SENTINEL_KEY,
                     "api_key:": SENTINEL_KEY,
+                    "headers:authorization": SENTINEL_KEY,
+                    "proxy=auth": SENTINEL_KEY,
+                    "access_key": SENTINEL_KEY,
+                    "serviceAuth": SENTINEL_KEY,
                     "authorization=": SENTINEL_KEY,
                     "headers.authorization": SENTINEL_KEY,
                     "userpassword": SENTINEL_KEY,
@@ -112,6 +116,8 @@ def _trace_with_value_secrets() -> TraceIR:
                     "tokenizer_name": "sentencepiece",
                     "password_hash_algorithm": "argon2id",
                     "token_value_length": 128,
+                    "auth_timeout": 15,
+                    "access_key_id": "public-key-id",
                     "safe": "diagnostic context survives",
                 },
                 "tool.error.message": {
@@ -120,7 +126,11 @@ def _trace_with_value_secrets() -> TraceIR:
                     "message": "provider rejected request",
                 },
                 "run.final_message": (
-                    f"passwordhash: {SENTINEL_KEY}; final context survives"
+                    f"passwordhash: {SENTINEL_KEY}; final context survives\n"
+                    f"Cookie: session=first; csrf={SENTINEL_KEY}\n"
+                    f"Set-Cookie: sid=first; refresh={SENTINEL_KEY}\n"
+                    "Bearer Qaz; HTTP 401\n"
+                    "Bearer of good news remains harmless prose."
                 ),
             },
         }
@@ -303,6 +313,12 @@ def test_allowed_trace_value_secrets_never_reach_sqlite_or_public_aggregate(
     assert '"tokenizer_name":"sentencepiece"' in view_json[0]
     assert '"password_hash_algorithm":"argon2id"' in view_json[0]
     assert '"token_value_length":128' in view_json[0]
+    assert '"auth_timeout":15' in view_json[0]
+    assert '"access_key_id":"public-key-id"' in view_json[0]
+    assert "csrf=" not in view_json[0]
+    assert "refresh=" not in view_json[0]
+    assert "Qaz" not in view_json[0]
+    assert "Bearer of good news remains harmless prose." in view_json[0]
 
 
 @pytest.mark.asyncio

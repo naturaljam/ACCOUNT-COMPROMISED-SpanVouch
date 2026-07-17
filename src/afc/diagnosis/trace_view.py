@@ -66,7 +66,9 @@ _SAFE_METADATA_CHAIN_PARTS = _SAFE_METADATA_TERMINALS | {
 }
 _COMPACT_CREDENTIAL_CORES = frozenset(
     {
+        "accesskey",
         "apikey",
+        "auth",
         "authorization",
         "cookie",
         "cookies",
@@ -146,6 +148,10 @@ _AUTHORIZATION = re.compile(
     r"(?:=|:)\s*)(?P<value>(?!\s*[\"']?\[REDACTED\][\"']?)"
     r"(?:[\"'][^\"'\r\n]*[\"']|(?:(?!;\s)[^\r\n])+))"
 )
+_COOKIE_HEADER = re.compile(
+    r"(?im)(?P<prefix>(?<![A-Za-z0-9_-])(?:set-cookie|cookie)\s*:\s*)"
+    r"(?P<value>(?![\"']?\[REDACTED\][\"']?)[^\r\n]*)"
+)
 _BEARER = re.compile(
     r"(?i)(?P<prefix>\bbearer\s+)(?P<value>(?!\[REDACTED\])"
     r"[A-Za-z0-9._~+/=-]+)(?=$|[\"',;|)}\]])"
@@ -206,6 +212,7 @@ def _is_credential_label(label: str) -> bool:
     compact = "".join(parts)
 
     credential_cores = {
+        "auth",
         "authorization",
         "password",
         "passwd",
@@ -218,7 +225,7 @@ def _is_credential_label(label: str) -> bool:
         if part in credential_cores:
             return not _has_only_metadata_suffix(parts, index)
 
-    for first, second in (("api", "key"), ("private", "key")):
+    for first, second in (("access", "key"), ("api", "key"), ("private", "key")):
         for index in range(len(parts) - 1):
             if parts[index : index + 2] == (first, second):
                 return not _has_only_metadata_suffix(parts, index + 1)
@@ -232,17 +239,15 @@ def _is_credential_label(label: str) -> bool:
 
 
 def _is_credential_mapping_key(key: str) -> bool:
-    """Classify a structural key, excluding prose assignments stored as keys."""
+    """Classify every structural key after fail-closed syntax normalization."""
 
-    stripped = key.strip().strip("\"'").strip()
-    without_trailing_delimiter = stripped.rstrip(":=").rstrip()
-    if ":" in without_trailing_delimiter or "=" in without_trailing_delimiter:
-        return False
-    return _is_credential_label(stripped)
+    return _is_credential_label(key)
 
 
 def _redact_match(match: re.Match[str]) -> str:
     value = match.group("value")
+    if value.strip("\"' ") == SECRET_REDACTION:
+        return match.group(0)
     if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
         return f"{match.group('prefix')}{value[0]}{SECRET_REDACTION}{value[0]}"
     return f"{match.group('prefix')}{SECRET_REDACTION}"
@@ -272,12 +277,15 @@ def _redact_bearer(match: re.Match[str]) -> str:
     opaque_letters = token_body.isalpha() and len(token_body) >= 16
     prefix = match.string[: match.start()].rstrip()
     assignment_context = prefix.endswith(("=", ":"))
+    next_character = match.string[match.end() : match.end() + 1]
+    credential_boundary = bool(next_character) and next_character in ";|)}]"
     if (
         opaque_letters
         or credential_punctuation
         or internal_period
         or digit_shaped
         or assignment_context
+        or credential_boundary
     ):
         return _redact_match(match)
     return match.group(0)
@@ -307,6 +315,7 @@ def _sanitize_plain_string(value: str) -> str:
         value,
     )
     sanitized = _AUTHORIZATION.sub(_redact_match, sanitized)
+    sanitized = _COOKIE_HEADER.sub(_redact_match, sanitized)
     sanitized = _BEARER.sub(_redact_bearer, sanitized)
     sanitized = _ASSIGNMENT.sub(_redact_assignment, sanitized)
     return _PROVIDER_KEY.sub(SECRET_REDACTION, sanitized)

@@ -356,7 +356,9 @@ def test_trace_view_sanitizes_span_names_mapping_keys_and_final_messages() -> No
 
     assert VALUE_SECRET not in canonical_json(view)
     assert view.spans[0].name == f"request api_key={SECRET_REDACTION}"
-    assert "safe value" in canonical_json(view)
+    assert view.spans[0].attributes["tool.result"] == {
+        f"token={SECRET_REDACTION}": SECRET_REDACTION
+    }
 
 
 def test_trace_view_sanitizes_deep_encoding_and_fails_closed_at_budget() -> None:
@@ -547,3 +549,48 @@ def test_trace_view_redacts_long_and_short_credential_shaped_bearer_values() -> 
     assert short_shaped not in serialized
     assert "ab_cd" not in serialized
     assert "safe tail" in serialized
+
+
+def test_trace_view_fails_closed_for_delimited_keys_and_complete_auth_headers() -> None:
+    trace = load_trace("clean-01")
+    short_bearer = "Qaz"
+    safe_metadata = {
+        "auth_timeout": 30,
+        "access_key_id": "public-key-id",
+        "access_key_rotation_status": "scheduled",
+    }
+    root = trace.spans[0].model_copy(
+        update={
+            "attributes": {
+                **trace.spans[0].attributes,
+                "tool.result": {
+                    "headers:authorization": VALUE_SECRET,
+                    "proxy=auth": VALUE_SECRET,
+                    "access_key": VALUE_SECRET,
+                    "serviceAuth": VALUE_SECRET,
+                    **safe_metadata,
+                },
+                "tool.error.message": (
+                    f"Cookie: session=first; csrf={VALUE_SECRET}\n"
+                    f"Set-Cookie: sid=first; refresh={VALUE_SECRET}\n"
+                    f"Bearer {short_bearer}; HTTP 401"
+                ),
+                "run.final_message": "Bearer of good news remains harmless prose.",
+            }
+        }
+    )
+
+    view = DiagnosticTraceView.from_trace(
+        trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
+    )
+    serialized = canonical_json(view)
+
+    assert VALUE_SECRET not in serialized
+    assert short_bearer not in serialized
+    assert "csrf=" not in serialized
+    assert "refresh=" not in serialized
+    assert view.spans[0].attributes["run.final_message"] == (
+        "Bearer of good news remains harmless prose."
+    )
+    for key, value in safe_metadata.items():
+        assert view.spans[0].attributes["tool.result"][key] == value

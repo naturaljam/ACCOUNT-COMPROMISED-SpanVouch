@@ -96,7 +96,7 @@ def _build_review_service(
         reviser=reviser,
         id_factory=_new_id,
         clock=_utc_now,
-        lease_owner=f"api-{uuid4()}",
+        lease_owner="api",
         lease_duration=timedelta(seconds=30),
     )
     return ReviewService(

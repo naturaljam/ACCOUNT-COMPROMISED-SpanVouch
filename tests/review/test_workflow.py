@@ -236,6 +236,7 @@ def _workflow(
     clock: Callable[[], datetime] | None = None,
     id_factory: SequenceIds | None = None,
     lease_owner: str = "workflow-worker",
+    lease_token_factory: Callable[[], str] | None = None,
     lease_duration: timedelta = timedelta(seconds=30),
 ) -> ReviewWorkflow:
     return ReviewWorkflow(
@@ -246,6 +247,7 @@ def _workflow(
         id_factory=id_factory or SequenceIds(),
         clock=clock or MutableClock(),
         lease_owner=lease_owner,
+        lease_token_factory=lease_token_factory,
         lease_duration=lease_duration,
     )
 

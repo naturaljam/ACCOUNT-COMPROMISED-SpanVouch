@@ -776,15 +776,20 @@ async def test_semantic_postcommit_race_converges_without_recalling_provider(
         mode=VerificationMode.HYBRID,
         diagnoser=DiagnoserKind.DEEPSEEK,
     )
-    deterministic = FakeVerifier(
-        VerifierKind.DETERMINISTIC,
+    deterministic = BlockingFinalVerifier(
         [
             _report(
                 VerifierKind.DETERMINISTIC,
                 VerifierVerdict.VERIFIED,
                 revision_number=0,
                 suffix="semantic-postcommit-deterministic",
-            )
+            ),
+            _report(
+                VerifierKind.DETERMINISTIC,
+                VerifierVerdict.VERIFIED,
+                revision_number=1,
+                suffix="semantic-postcommit-final-deterministic",
+            ),
         ],
     )
     semantic = FakeVerifier(
@@ -792,38 +797,50 @@ async def test_semantic_postcommit_race_converges_without_recalling_provider(
         [
             _report(
                 VerifierKind.SEMANTIC,
-                VerifierVerdict.VERIFIED,
+                VerifierVerdict.NEEDS_EVIDENCE,
                 revision_number=0,
                 suffix="semantic-postcommit-provider",
-            )
+            ),
+            _report(
+                VerifierKind.SEMANTIC,
+                VerifierVerdict.VERIFIED,
+                revision_number=1,
+                suffix="semantic-postcommit-final-provider",
+            ),
         ],
     )
-    ids = SequenceIds()
-    original = _workflow(
-        repository,
-        deterministic,
-        semantic=semantic,
-        id_factory=ids,
-        lease_owner="semantic-original",
+    reviser = FakeReviser(
+        supported=(DiagnoserKind.DEEPSEEK,),
+        outcomes=[_deepseek_report()],
     )
-    competitor = _workflow(
+    ids = SequenceIds()
+    lease_tokens = iter(("semantic-origin", "semantic-resumer"))
+    workflow = _workflow(
         repository,
         deterministic,
         semantic=semantic,
+        reviser=reviser,
         id_factory=ids,
-        lease_owner="semantic-competitor",
+        lease_owner="semantic-singleton",
+        lease_token_factory=lambda: next(lease_tokens),
     )
 
-    original_task = asyncio.create_task(original.run("case-review-1"))
+    original_task = asyncio.create_task(workflow.run("case-review-1"))
     await asyncio.wait_for(repository.provider_effect_committed.wait(), timeout=1.0)
-    competitor_detail = await competitor.resume("case-review-1")
+    competitor_task = asyncio.create_task(workflow.resume("case-review-1"))
+    await asyncio.wait_for(deterministic.final_entered.wait(), timeout=1.0)
+    competing_runtime = await repository.load_runtime("case-review-1")
+    assert competing_runtime.lease_owner == "semantic-singleton:semantic-resumer"
     repository.release_original.set()
     original_detail = await asyncio.wait_for(original_task, timeout=1.0)
+    deterministic.release_final.set()
+    competitor_detail = await asyncio.wait_for(competitor_task, timeout=1.0)
 
     assert competitor_detail.case.status is ReviewStatus.AWAITING_HUMAN_REVIEW
-    assert original_detail.case.status is ReviewStatus.AWAITING_HUMAN_REVIEW
-    assert len(semantic.inputs) == 1
-    assert len(deterministic.inputs) == 1
+    assert original_detail.case.status is ReviewStatus.VERIFYING
+    assert len(semantic.inputs) == 2
+    assert len(deterministic.inputs) == 2
+    assert len(reviser.calls) == 1
 
 
 async def test_revision_postcommit_race_converges_without_recalling_reviser(
@@ -837,8 +854,7 @@ async def test_revision_postcommit_race_converges_without_recalling_reviser(
         mode=VerificationMode.DETERMINISTIC,
         diagnoser=DiagnoserKind.DEEPSEEK,
     )
-    deterministic = FakeVerifier(
-        VerifierKind.DETERMINISTIC,
+    deterministic = BlockingFinalVerifier(
         [
             _report(
                 VerifierKind.DETERMINISTIC,
@@ -859,29 +875,29 @@ async def test_revision_postcommit_race_converges_without_recalling_reviser(
         outcomes=[_deepseek_report()],
     )
     ids = SequenceIds()
-    original = _workflow(
+    lease_tokens = iter(("revision-origin", "revision-resumer"))
+    workflow = _workflow(
         repository,
         deterministic,
         reviser=reviser,
         id_factory=ids,
-        lease_owner="revision-original",
-    )
-    competitor = _workflow(
-        repository,
-        deterministic,
-        reviser=reviser,
-        id_factory=ids,
-        lease_owner="revision-competitor",
+        lease_owner="revision-singleton",
+        lease_token_factory=lambda: next(lease_tokens),
     )
 
-    original_task = asyncio.create_task(original.run("case-review-1"))
+    original_task = asyncio.create_task(workflow.run("case-review-1"))
     await asyncio.wait_for(repository.provider_effect_committed.wait(), timeout=1.0)
-    competitor_detail = await competitor.resume("case-review-1")
+    competitor_task = asyncio.create_task(workflow.resume("case-review-1"))
+    await asyncio.wait_for(deterministic.final_entered.wait(), timeout=1.0)
+    competing_runtime = await repository.load_runtime("case-review-1")
+    assert competing_runtime.lease_owner == "revision-singleton:revision-resumer"
     repository.release_original.set()
     original_detail = await asyncio.wait_for(original_task, timeout=1.0)
+    deterministic.release_final.set()
+    competitor_detail = await asyncio.wait_for(competitor_task, timeout=1.0)
 
     assert competitor_detail.case.status is ReviewStatus.AWAITING_HUMAN_REVIEW
-    assert original_detail.case.status is ReviewStatus.AWAITING_HUMAN_REVIEW
+    assert original_detail.case.status is ReviewStatus.VERIFYING
     assert original_detail.case.current_revision_number == 1
     assert len(reviser.calls) == 1
     assert len(deterministic.inputs) == 2

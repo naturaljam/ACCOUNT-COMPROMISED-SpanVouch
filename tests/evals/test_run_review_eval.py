@@ -7,6 +7,7 @@ import afc.evals.run_review_eval as review_eval_module
 from afc.diagnosis.errors import ProviderRequestError
 from afc.diagnosis.models import ProviderUsage
 from afc.diagnosis.protocols import ChatMessage, GenerationConfig, ProviderResponse
+from afc.evals.review_labels import load_review_candidates
 from afc.evals.review_metrics import ReviewEvaluationReport
 from afc.evals.run_review_eval import _run, main, write_report
 from afc.review.models import (
@@ -291,3 +292,78 @@ async def test_semantic_programming_error_is_not_misreported_as_operational() ->
             semantic_verifier=BrokenSemanticVerifier(),
             semantic_candidate_ids=("clean-01--unmodified",),
         )
+
+
+async def test_full_cohort_semantic_prompts_exclude_hidden_mutation_metadata() -> None:
+    class CaptureProvider:
+        def __init__(self) -> None:
+            self.calls: list[tuple[ChatMessage, ...]] = []
+
+        async def complete(
+            self,
+            messages: tuple[ChatMessage, ...],
+            config: GenerationConfig,
+        ) -> ProviderResponse:
+            self.calls.append(messages)
+            request_id = f"prompt-capture-{len(self.calls)}"
+            return ProviderResponse(
+                content=json.dumps(
+                    {
+                        "verdict": "verified",
+                        "findings": [],
+                        "evidence_gaps": [],
+                        "alternative_failure_type": None,
+                        "confidence": 0.8,
+                    }
+                ),
+                model=config.model,
+                response_id=request_id,
+                finish_reason="stop",
+                usage=ProviderUsage(
+                    input_tokens=1,
+                    output_tokens=1,
+                    total_tokens=2,
+                    latency_ms=1.0,
+                    request_id=request_id,
+                ),
+            )
+
+    dataset = Path("evals/datasets/supportlab-review-v1")
+    source = Path("evals/datasets/supportlab-v1")
+    candidates = load_review_candidates(dataset / "review-candidates-v1.jsonl")
+    provider = CaptureProvider()
+
+    await _run(
+        dataset,
+        source,
+        semantic_verifier=SemanticVerifier(provider),
+        semantic_candidate_ids=tuple(candidate.candidate_id for candidate in candidates),
+    )
+
+    assert len(provider.calls) == 34
+    forbidden = (
+        "mutation_kind",
+        "candidate_id",
+        "source_run_id",
+        "expected_verdict",
+        "expected_finding_codes",
+        "unsupported_scope",
+        "forcibly classifies",
+        "unsupported trace",
+    )
+    for messages in provider.calls:
+        assert len(messages) == 2
+        payload = json.loads(
+            messages[1].content.removeprefix("Verify this canonical JSON data:\n")
+        )
+        assert set(payload) == {"diagnosis", "evidence_selectors", "spans"}
+        assert set(payload["diagnosis"]) == {
+            "status",
+            "failure_type",
+            "critical_span_ids",
+            "causal_chain",
+            "confidence",
+            "abstain_reason",
+        }
+        visible = "\n".join(message.content for message in messages).lower()
+        assert all(term not in visible for term in forbidden)

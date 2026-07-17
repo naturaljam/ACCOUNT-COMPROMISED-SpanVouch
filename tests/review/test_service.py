@@ -487,6 +487,56 @@ async def create_case(
     return detail
 
 
+async def test_blocked_live_diagnosis_does_not_delay_unrelated_rules_review_create() -> None:
+    repository = RecordingRepository()
+    selector = EvidenceSelector(
+        span_id="span-005",
+        field_path="attributes.tool.error.type",
+    )
+    blocked_diagnoser = BlockingDiagnoser(selector)
+    rules_diagnoser = SelectorDiagnoser(selector)
+    diagnosis_service = DiagnosisService(
+        {
+            DiagnoserKind.DEEPSEEK: blocked_diagnoser,
+            DiagnoserKind.RULES: rules_diagnoser,
+        }
+    )
+    workflow = RecordingWorkflow(repository)
+    service = ReviewService(
+        diagnosis_service=diagnosis_service,
+        repository=repository,
+        workflow=workflow,
+        deterministic_verifier=RecordingVerifier(),
+        id_factory=id_factory(),
+        clock=lambda: NOW,
+    )
+    blocked = asyncio.create_task(
+        diagnosis_service.diagnose(
+            load_trace("policy_violation-01"),
+            DiagnoserKind.DEEPSEEK,
+        )
+    )
+    await asyncio.wait_for(blocked_diagnoser.started.wait(), timeout=0.5)
+
+    try:
+        created = await asyncio.wait_for(
+            service.create(
+                load_trace("policy_violation-01"),
+                diagnoser=DiagnoserKind.RULES,
+                verification_mode=VerificationMode.DETERMINISTIC,
+                idempotency_key="unrelated-rules-review",
+            ),
+            timeout=0.2,
+        )
+    finally:
+        blocked_diagnoser.release.set()
+        await blocked
+
+    assert created.case.run_id == "policy_violation-01"
+    assert rules_diagnoser.calls == 1
+    assert blocked_diagnoser.calls == 1
+
+
 def route_fake_to_human(
     repository: RecordingRepository,
     *,
@@ -924,7 +974,7 @@ async def test_post_diagnosis_renewal_failure_cancels_finalization_and_joins_tas
     assert repository.detail is None
 
 
-async def test_create_heartbeat_failure_cancels_in_flight_diagnosis() -> None:
+async def test_create_heartbeat_failure_stops_waiting_without_cancelling_shared_diagnosis() -> None:
     repository = RecordingRepository()
     repository.fail_renewal = True
     diagnoser = BlockingDiagnoser(
@@ -933,8 +983,9 @@ async def test_create_heartbeat_failure_cancels_in_flight_diagnosis() -> None:
             field_path="attributes.tool.error.type",
         )
     )
+    diagnosis_service = DiagnosisService({DiagnoserKind.RULES: diagnoser})
     service = ReviewService(
-        diagnosis_service=DiagnosisService({DiagnoserKind.RULES: diagnoser}),
+        diagnosis_service=diagnosis_service,
         repository=repository,
         workflow=NoopWorkflow(),
         deterministic_verifier=RecordingVerifier(),
@@ -958,11 +1009,16 @@ async def test_create_heartbeat_failure_cancels_in_flight_diagnosis() -> None:
             await asyncio.wait_for(create_task, timeout=0.5)
     finally:
         diagnoser.release.set()
+    recovered = await diagnosis_service.diagnose(
+        load_trace("policy_violation-01"),
+        DiagnoserKind.RULES,
+    )
 
     assert repository.renewal_calls == 1
     assert repository.create_commands == []
     assert diagnoser.calls == 1
-    assert diagnoser.cancelled is True
+    assert recovered.run_id == "policy_violation-01"
+    assert diagnoser.cancelled is False
 
 
 async def test_stale_create_owner_cannot_renew_after_takeover(tmp_path: Path) -> None:

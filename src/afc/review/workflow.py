@@ -6,6 +6,7 @@ from contextlib import suppress
 from datetime import datetime, timedelta
 from hashlib import sha256
 from typing import Any, NotRequired, TypedDict, TypeVar
+from uuid import uuid4
 
 from langgraph.graph import END, START, StateGraph
 
@@ -57,6 +58,7 @@ ProviderFinalizationResult = TypeVar("ProviderFinalizationResult")
 
 class ReviewWorkflowState(TypedDict):
     case_id: str
+    lease_owner: str
     verification_round: int
     composite_verdict: str | None
     route: NotRequired[str]
@@ -121,6 +123,7 @@ class ReviewWorkflow:
         id_factory: Callable[[], str],
         clock: Callable[[], datetime],
         lease_owner: str,
+        lease_token_factory: Callable[[], str] | None = None,
         lease_duration: timedelta,
     ) -> None:
         if deterministic_verifier.kind is not VerifierKind.DETERMINISTIC:
@@ -138,7 +141,8 @@ class ReviewWorkflow:
         self._reviser = reviser
         self._id_factory = id_factory
         self._clock = clock
-        self._lease_owner = lease_owner
+        self._lease_owner_prefix = lease_owner
+        self._lease_token_factory = lease_token_factory or (lambda: str(uuid4()))
         self._lease_duration = lease_duration
         self.graph = self._compile_graph()
 
@@ -174,10 +178,17 @@ class ReviewWorkflow:
     def _now(self) -> datetime:
         return _require_aware_utc(self._clock())
 
+    def _new_execution_lease_owner(self) -> str:
+        token = self._lease_token_factory()
+        if not token:
+            raise ValueError("lease token factory must not return an empty token")
+        return f"{self._lease_owner_prefix}:{token}"
+
     async def _renew_lease_until_stopped(
         self,
         runtime: ReviewRuntimeBundle,
         *,
+        lease_owner: str,
         work: ReviewLeaseWork,
         stopped: asyncio.Event,
         committed: asyncio.Event,
@@ -195,7 +206,7 @@ class ReviewWorkflow:
                         case_id=runtime.case.case_id,
                         expected_version=runtime.case.version,
                         expected_status=runtime.case.status,
-                        lease_owner=self._lease_owner,
+                        lease_owner=lease_owner,
                         work=work,
                         now=now,
                         lease_expires_at=now + self._lease_duration,
@@ -210,6 +221,7 @@ class ReviewWorkflow:
         self,
         runtime: ReviewRuntimeBundle,
         *,
+        lease_owner: str,
         work: ReviewLeaseWork,
         provider: Callable[[], Awaitable[ProviderWorkResult]],
         finalize: Callable[[ProviderWorkResult], Awaitable[ProviderFinalizationResult]],
@@ -224,6 +236,7 @@ class ReviewWorkflow:
         heartbeat_task = asyncio.create_task(
             self._renew_lease_until_stopped(
                 runtime,
+                lease_owner=lease_owner,
                 work=work,
                 stopped=stopped,
                 committed=committed,
@@ -303,12 +316,12 @@ class ReviewWorkflow:
             await asyncio.gather(*tasks, return_exceptions=True)
 
     async def run(self, case_id: str) -> DiagnosisReviewDetail:
-        return await self._execute(case_id)
+        return await self._execute(case_id, self._new_execution_lease_owner())
 
     async def resume(self, case_id: str) -> DiagnosisReviewDetail:
-        return await self._execute(case_id)
+        return await self._execute(case_id, self._new_execution_lease_owner())
 
-    async def _execute(self, case_id: str) -> DiagnosisReviewDetail:
+    async def _execute(self, case_id: str, lease_owner: str) -> DiagnosisReviewDetail:
         runtime = await self._repository.load_runtime(case_id)
         if runtime.case.status in {
             ReviewStatus.AWAITING_HUMAN_REVIEW,
@@ -319,6 +332,7 @@ class ReviewWorkflow:
             raise ReviewConflictError("review case cannot be resumed from its current status")
         state: ReviewWorkflowState = {
             "case_id": case_id,
+            "lease_owner": lease_owner,
             "verification_round": runtime.case.current_revision_number,
             "composite_verdict": (
                 runtime.case.composite_verdict.value
@@ -366,6 +380,7 @@ class ReviewWorkflow:
         self,
         runtime: ReviewRuntimeBundle,
         *,
+        lease_owner: str,
         target: ReviewStatus,
         event_type: WorkflowEventType,
     ) -> ReviewRuntimeBundle:
@@ -376,12 +391,12 @@ class ReviewWorkflow:
                 expected_version=runtime.case.version,
                 prior_status=runtime.case.status,
                 target_status=target,
-                lease_owner=self._lease_owner,
+                lease_owner=lease_owner,
                 lease_expires_at=now + self._lease_duration,
                 now=now,
                 event_id=self._id_factory(),
                 event_type=event_type,
-                event_metadata_json=canonical_json({"lease_owner": self._lease_owner}),
+                event_metadata_json=canonical_json({"lease_owner": lease_owner}),
                 occurred_at=now,
             )
         )
@@ -442,6 +457,7 @@ class ReviewWorkflow:
                 raise ReviewConflictError("deterministic verification is not claimable")
             runtime = await self._claim(
                 runtime,
+                lease_owner=state["lease_owner"],
                 target=ReviewStatus.VERIFYING,
                 event_type=WorkflowEventType.VERIFICATION_STARTED,
             )
@@ -457,11 +473,13 @@ class ReviewWorkflow:
                 deterministic,
                 merged,
                 request_revision=request_revision,
+                lease_owner=state["lease_owner"],
             )
             if request_revision:
                 return self._state_after(
                     runtime,
                     "request_revision",
+                    lease_owner=state["lease_owner"],
                     postcommit_state=state,
                 )
 
@@ -470,6 +488,7 @@ class ReviewWorkflow:
             return self._state_after(
                 runtime,
                 "route_to_human",
+                lease_owner=state["lease_owner"],
                 postcommit_state=state,
             )
 
@@ -481,6 +500,7 @@ class ReviewWorkflow:
             if semantic is None:
                 runtime = await self._claim(
                     runtime,
+                    lease_owner=state["lease_owner"],
                     target=ReviewStatus.VERIFYING,
                     event_type=WorkflowEventType.VERIFICATION_STARTED,
                 )
@@ -509,6 +529,7 @@ class ReviewWorkflow:
                             claimed_runtime,
                             deterministic,
                             outcome,
+                            lease_owner=state["lease_owner"],
                             started_at=semantic_started_at,
                         )
                         code, retryable = _provider_failure(outcome)
@@ -529,12 +550,13 @@ class ReviewWorkflow:
                         normalized,
                         merged,
                         request_revision=request_revision,
-                        lease_owner=self._lease_owner,
+                        lease_owner=state["lease_owner"],
                     )
                     return normalized, request_revision, None
 
                 semantic, request_revision, provider_error = await self._run_provider_lifecycle(
                     claimed_runtime,
+                    lease_owner=state["lease_owner"],
                     work=ReviewLeaseWork.SEMANTIC_VERIFICATION,
                     provider=verify_semantically,
                     finalize=finalize_semantic,
@@ -550,6 +572,7 @@ class ReviewWorkflow:
                     return self._state_after(
                         runtime,
                         "request_revision",
+                        lease_owner=state["lease_owner"],
                         provider_effect_kind="semantic",
                         provider_effect_id=semantic.verifier_run_id,
                         provider_commit_version=semantic_commit_version,
@@ -560,6 +583,7 @@ class ReviewWorkflow:
             return self._state_after(
                 runtime,
                 "route_to_human",
+                lease_owner=state["lease_owner"],
                 provider_effect_kind="semantic",
                 provider_effect_id=semantic.verifier_run_id,
                 provider_commit_version=semantic_commit_version,
@@ -567,6 +591,7 @@ class ReviewWorkflow:
         return self._state_after(
             runtime,
             "route_to_human",
+            lease_owner=state["lease_owner"],
             postcommit_state=state,
         )
 
@@ -662,6 +687,7 @@ class ReviewWorkflow:
                 raise ReviewConflictError("evidence revision limit reached")
             runtime = await self._claim(
                 runtime,
+                lease_owner=state["lease_owner"],
                 target=ReviewStatus.REVISING,
                 event_type=WorkflowEventType.REVISION_STARTED,
             )
@@ -671,7 +697,11 @@ class ReviewWorkflow:
                 return converged
             raise
         return {
-            **self._state_after(runtime, "revise_once"),
+            **self._state_after(
+                runtime,
+                "revise_once",
+                lease_owner=state["lease_owner"],
+            ),
             "lease_claimed": True,
         }
 
@@ -684,6 +714,7 @@ class ReviewWorkflow:
         if not state.get("lease_claimed", False):
             runtime = await self._claim(
                 runtime,
+                lease_owner=state["lease_owner"],
                 target=ReviewStatus.REVISING,
                 event_type=WorkflowEventType.REVISION_STARTED,
             )
@@ -712,7 +743,10 @@ class ReviewWorkflow:
             if isinstance(outcome, ProviderError):
                 code, retryable = _provider_failure(outcome)
                 await self._persist_revision_failure(
-                    claimed_runtime, code=code, retryable=retryable
+                    claimed_runtime,
+                    lease_owner=state["lease_owner"],
+                    code=code,
+                    retryable=retryable,
                 )
                 return ReviewWorkflowProviderError(
                     claimed_runtime.case.case_id,
@@ -720,12 +754,16 @@ class ReviewWorkflow:
                     retryable=retryable,
                 )
             committed_revision = await self._commit_revision(
-                claimed_runtime, gaps, outcome
+                claimed_runtime,
+                gaps,
+                outcome,
+                lease_owner=state["lease_owner"],
             )
             return None
 
         provider_error = await self._run_provider_lifecycle(
             claimed_runtime,
+            lease_owner=state["lease_owner"],
             work=ReviewLeaseWork.EVIDENCE_REVISION,
             provider=revise,
             finalize=finalize_revision,
@@ -738,6 +776,7 @@ class ReviewWorkflow:
         return self._state_after(
             runtime,
             "verify_final",
+            lease_owner=state["lease_owner"],
             provider_effect_kind="revision",
             provider_effect_id=committed_revision.revision_id,
             provider_commit_version=claimed_runtime.case.version + 1,
@@ -748,6 +787,8 @@ class ReviewWorkflow:
         runtime: ReviewRuntimeBundle,
         gaps: tuple[EvidenceGap, ...],
         revised_report: DiagnosisReport,
+        *,
+        lease_owner: str,
     ) -> DiagnosisRevision:
         previous = runtime.revisions[-1]
         if (
@@ -776,7 +817,7 @@ class ReviewWorkflow:
                 prior_status=ReviewStatus.REVISING,
                 target_status=ReviewStatus.VERIFYING,
                 revision=revision,
-                lease_owner=self._lease_owner,
+                lease_owner=lease_owner,
                 event_id=self._id_factory(),
                 event_type=WorkflowEventType.REVISION_COMPLETED,
                 event_metadata_json=canonical_json(
@@ -797,6 +838,7 @@ class ReviewWorkflow:
                 return self._state_after(
                     runtime,
                     "end",
+                    lease_owner=state["lease_owner"],
                     postcommit_state=state,
                 )
             raise ReviewConflictError("review case is not ready for human review")
@@ -827,6 +869,7 @@ class ReviewWorkflow:
         return self._state_after(
             runtime,
             "end",
+            lease_owner=state["lease_owner"],
             postcommit_state=state,
         )
 
@@ -841,6 +884,7 @@ class ReviewWorkflow:
         return self._state_after(
             runtime,
             "end",
+            lease_owner=state["lease_owner"],
             postcommit_state=state,
         )
 
@@ -879,7 +923,7 @@ class ReviewWorkflow:
             return True
         return (
             runtime.lease_owner is not None
-            and runtime.lease_owner != self._lease_owner
+            and runtime.lease_owner != state["lease_owner"]
         )
 
     async def _persist_semantic_failure(
@@ -888,6 +932,7 @@ class ReviewWorkflow:
         deterministic: VerifierReport,
         error: ProviderError,
         *,
+        lease_owner: str,
         started_at: datetime,
     ) -> None:
         code, retryable = _provider_failure(error)
@@ -933,7 +978,7 @@ class ReviewWorkflow:
             target_status=ReviewStatus.VERIFYING,
             report=report,
             composite_verdict=merged.verdict,
-            lease_owner=self._lease_owner,
+            lease_owner=lease_owner,
             event_id=self._id_factory(),
             event_type=WorkflowEventType.PROVIDER_FAILED,
             event_metadata_json=canonical_json(
@@ -960,7 +1005,12 @@ class ReviewWorkflow:
         )
 
     async def _persist_revision_failure(
-        self, runtime: ReviewRuntimeBundle, *, code: str, retryable: bool
+        self,
+        runtime: ReviewRuntimeBundle,
+        *,
+        lease_owner: str,
+        code: str,
+        retryable: bool,
     ) -> None:
         now = self._now()
         await self._repository.route_revision_failure(
@@ -970,7 +1020,7 @@ class ReviewWorkflow:
                 prior_status=ReviewStatus.REVISING,
                 target_status=ReviewStatus.AWAITING_HUMAN_REVIEW,
                 composite_verdict=VerifierVerdict.REVIEW_REQUIRED,
-                lease_owner=self._lease_owner,
+                lease_owner=lease_owner,
                 event_id=self._id_factory(),
                 event_type=WorkflowEventType.REVISION_PROVIDER_FAILED,
                 event_metadata_json=canonical_json({"code": code, "retryable": retryable}),
@@ -983,6 +1033,7 @@ class ReviewWorkflow:
         runtime: ReviewRuntimeBundle,
         route: str,
         *,
+        lease_owner: str,
         provider_effect_kind: str | None = None,
         provider_effect_id: str | None = None,
         provider_commit_version: int | None = None,
@@ -990,6 +1041,7 @@ class ReviewWorkflow:
     ) -> ReviewWorkflowState:
         state: ReviewWorkflowState = {
             "case_id": runtime.case.case_id,
+            "lease_owner": lease_owner,
             "verification_round": runtime.case.current_revision_number,
             "composite_verdict": (
                 runtime.case.composite_verdict.value

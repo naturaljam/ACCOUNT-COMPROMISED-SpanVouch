@@ -35,7 +35,7 @@ MANIFEST_FILENAME = "manifest.json"
 DEFAULT_SOURCE_DATASET = Path("evals/datasets/supportlab-v1")
 DEFAULT_OUTPUT_DATASET = Path("evals/datasets/supportlab-review-v1")
 DEFAULT_SEED = 20260717
-GENERATOR_VERSION = "supportlab-review-generator-v1"
+GENERATOR_VERSION = "supportlab-review-generator-v2"
 
 
 class MutationKind(StrEnum):
@@ -259,7 +259,7 @@ def mutate_unsupported_scope(report: DiagnosisReport, trace: TraceIR) -> Diagnos
     evidence_ids = tuple(item.evidence_id for item in report.evidence)
     claim = DiagnosisClaim(
         stage=ClaimStage.CAUSE,
-        statement="The candidate forcibly classifies an unsupported trace.",
+        statement="The selected tool caused the request to fail.",
         evidence_ids=evidence_ids,
     )
     return DiagnosisReport.model_validate(

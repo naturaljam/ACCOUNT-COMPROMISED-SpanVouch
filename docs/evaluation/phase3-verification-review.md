@@ -12,12 +12,12 @@ The frozen review cohort contains 36 candidates: 20 unmodified rule reports and 
 
 | Artifact | SHA-256 |
 |---|---|
-| `supportlab-review-v1/manifest.json` | `0a1261d716f930764fa5abd01e6da1b7772278b9da95a4bd7ff465757a38a231` |
-| `review-candidates-v1.jsonl` | `6fb084b3981d044159a18b33034cebf4f946af7ab27d02b4fc51bbb566faf08b` |
+| `supportlab-review-v1/manifest.json` | `677e0075f5b4149db73538411376bf994caa5ba0fdb8ff29b33b487a5fe02076` |
+| `review-candidates-v1.jsonl` | `ee04d8d0f1e608fd81c202fca39eeb799f764b3099cfb03d7d94a4ab7eb73bd2` |
 | `review-labels-v1.jsonl` | `d41a87247456264863d70f807256a5d1b6f24ab84422dc406a92ef867e36b305` |
 | source `supportlab-v1/manifest.json` | `b14eac192e7b683fb908f2f7f54efccb31ab100bf19563476b824d192060cb38` |
 
-The review manifest records seed `20260717`, generator `supportlab-review-generator-v1`, `valid_count=20`, and `mutation_count=16`.
+The review manifest records seed `20260717`, generator `supportlab-review-generator-v2`, `valid_count=20`, and `mutation_count=16`. Provider-visible diagnosis claims contain only plausible causal assertions; mutation metadata and expected labels remain evaluator-only data.
 
 ## Deterministic evaluation
 
@@ -89,7 +89,9 @@ Review persistence uses schema v2. Because Phase 3 is still unpublished, develop
 
 `reviewer_label` is an audit label supplied by the caller; it is not authentication. Phase 3 does not claim auth or RBAC.
 
-## Controlled live semantic comparison
+## Historical controlled live semantic comparison (superseded)
+
+The paid semantic results below used the earlier `supportlab-review-generator-v1` candidate bytes. They are retained only as historical operational evidence and are superseded after the provider-visible unsupported-scope diagnosis statement changed. They are **not current Phase 3 acceptance evidence**, and no paid aggregate was rerun for this correction.
 
 Live semantic verification is not a CI gate and requires explicit authorization plus `--allow-live-api`. The procedure is:
 
@@ -98,7 +100,7 @@ Live semantic verification is not a CI gate and requires explicit authorization 
 3. only if the smoke is structurally valid, run all 36 candidates;
 4. record aggregate verdict distribution, deterministic/semantic disagreement, structured-output success, operational errors, token totals, p50/p95 latency, and cost only when pricing is configured.
 
-The controlled experiment was explicitly authorized and run on 2026-07-17 with `deepseek-v4-flash`. The two-case smoke used `invalid_argument-01--unmodified` and `context_corruption-01--unsupported_scope`:
+The historical controlled experiment was explicitly authorized and run on 2026-07-17 with `deepseek-v4-flash`. The two-case smoke used `invalid_argument-01--unmodified` and `context_corruption-01--unsupported_scope`:
 
 | Smoke evidence | Result |
 |---|---:|
@@ -109,7 +111,7 @@ The controlled experiment was explicitly authorized and run on 2026-07-17 with `
 | Input / output / total tokens | `3,291 / 258 / 3,549` |
 | Latency p50 / p95 | `1,682.16 ms / 1,909.56 ms` |
 
-The valid supported report was `verified`. The unsupported forced-classification mutation received `needs_evidence`; this is measured disagreement, not a claimed semantic accuracy failure. Both reports carried model, prompt fingerprint, token, and latency provenance. The generated report contained no key, authorization header, prompt body, hidden reasoning, or raw provider body.
+In that superseded run, the valid supported report was `verified` and the unsupported forced-classification mutation received `needs_evidence`. This is a historical measurement only, not a current semantic accuracy or acceptance claim. Both reports carried model, prompt fingerprint, token, and latency provenance. The generated report contained no key, authorization header, prompt body, hidden reasoning, or raw provider body.
 
 After the smoke passed its structural gate, the 36-candidate comparison produced:
 
@@ -128,4 +130,4 @@ After the smoke passed its structural gate, the 36-candidate comparison produced
 
 Two invalid-selector mutations failed local semantic preflight without contacting the provider. Five additional provider responses did not satisfy the strict verifier schema and were converted to safe `review_required/invalid_verifier_output` reports. Thus `status=complete` means there were no operational provider failures; it does **not** mean every provider output passed the strict schema.
 
-The deterministic gates remained unchanged at valid pass rate `1.0`, hard-defect recall `1.0`, and unsupported-scope detection `1.0`. No semantic accuracy threshold is claimed from this cohort. The local generated reports are `evals/reports/generated/phase3-semantic-smoke-2.json` and `evals/reports/generated/phase3-semantic-full-36.json`; both remain ignored and uncommitted.
+At the time of that historical run, the deterministic gates remained unchanged at valid pass rate `1.0`, hard-defect recall `1.0`, and unsupported-scope detection `1.0`. No semantic accuracy threshold is claimed from the superseded cohort. The local generated reports were `evals/reports/generated/phase3-semantic-smoke-2.json` and `evals/reports/generated/phase3-semantic-full-36.json`; both remain ignored and uncommitted.
