@@ -1403,3 +1403,53 @@ def test_schema_foreign_keys_preserve_audit_history(tmp_path: Path) -> None:
         pytest.raises(sqlite3.IntegrityError),
     ):
         connection.execute("DELETE FROM review_cases WHERE case_id = 'case-review-1'")
+
+
+async def test_idempotency_preflight_replays_conflicts_and_sanitizes_corrupt_type(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "preflight.sqlite3"
+    repository = SQLiteReviewRepository(database)
+    await repository.initialize()
+    command = _create_command()
+    created = await repository.create_case(command)
+
+    replay = await repository.replay_detail(
+        command.idempotency_scope,
+        command.idempotency_key,
+        command.request_sha256,
+        result_type="review_case",
+    )
+    assert replay == created
+    assert (
+        await repository.replay_detail(
+            command.idempotency_scope,
+            "missing-key",
+            command.request_sha256,
+            result_type="review_case",
+        )
+        is None
+    )
+    with pytest.raises(ReviewConflictError, match="idempotency"):
+        await repository.replay_detail(
+            command.idempotency_scope,
+            command.idempotency_key,
+            "f" * 64,
+            result_type="review_case",
+        )
+
+    with connect_database(database) as connection:
+        connection.execute(
+            "UPDATE idempotency_keys SET result_type = ? WHERE scope = ? AND idempotency_key = ?",
+            ("private-corrupt-type", command.idempotency_scope, command.idempotency_key),
+        )
+        connection.commit()
+    with pytest.raises(ReviewPersistenceError) as captured:
+        await repository.replay_detail(
+            command.idempotency_scope,
+            command.idempotency_key,
+            command.request_sha256,
+            result_type="review_case",
+        )
+    assert str(captured.value) == "stored review data is invalid"
+    assert "private" not in str(captured.value)

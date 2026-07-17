@@ -26,11 +26,29 @@ class Verifier(Protocol):
         raise NotImplementedError
 
 
+class ReviewWorkflowRunner(Protocol):
+    async def run(self, case_id: str) -> None:
+        raise NotImplementedError
+
+    async def resume(self, case_id: str) -> None:
+        raise NotImplementedError
+
+
 class ReviewRepository(Protocol):
     async def initialize(self) -> None:
         raise NotImplementedError
 
     async def create_case(self, command: CreateReviewCase) -> DiagnosisReviewDetail:
+        raise NotImplementedError
+
+    async def replay_detail(
+        self,
+        scope: str,
+        idempotency_key: str,
+        request_sha256: str,
+        *,
+        result_type: str,
+    ) -> DiagnosisReviewDetail | None:
         raise NotImplementedError
 
     async def get_detail(self, case_id: str) -> DiagnosisReviewDetail:

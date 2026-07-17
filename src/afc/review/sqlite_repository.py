@@ -88,6 +88,22 @@ class SQLiteReviewRepository:
         )
         return await asyncio.to_thread(self._create_case, command)
 
+    async def replay_detail(
+        self,
+        scope: str,
+        idempotency_key: str,
+        request_sha256: str,
+        *,
+        result_type: str,
+    ) -> DiagnosisReviewDetail | None:
+        return await asyncio.to_thread(
+            self._replay_detail,
+            scope,
+            idempotency_key,
+            request_sha256,
+            result_type,
+        )
+
     async def get_detail(self, case_id: str) -> DiagnosisReviewDetail:
         return await asyncio.to_thread(self._get_detail, case_id)
 
@@ -234,6 +250,27 @@ class SQLiteReviewRepository:
     def _get_detail(self, case_id: str) -> DiagnosisReviewDetail:
         with self._transaction(write=False) as connection:
             return self._read_detail(connection, case_id)
+
+    def _replay_detail(
+        self,
+        scope: str,
+        idempotency_key: str,
+        request_sha256: str,
+        result_type: str,
+    ) -> DiagnosisReviewDetail | None:
+        with self._transaction(write=False) as connection:
+            replay = self._idempotency_replay(connection, scope, idempotency_key)
+            if replay is None:
+                return None
+            fingerprint, stored_result_type, result_id = replay
+            if fingerprint != request_sha256:
+                raise ReviewConflictError("idempotency key conflict")
+            if stored_result_type != result_type:
+                raise ReviewPersistenceError("stored review data is invalid")
+            try:
+                return self._read_detail(connection, result_id)
+            except ReviewNotFoundError:
+                raise ReviewPersistenceError("stored review data is invalid") from None
 
     def _load_runtime(self, case_id: str) -> ReviewRuntimeBundle:
         with self._transaction(write=False) as connection:

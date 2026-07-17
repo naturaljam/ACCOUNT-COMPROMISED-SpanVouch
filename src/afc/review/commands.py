@@ -35,6 +35,25 @@ class WorkflowEventType(StrEnum):
     PROVIDER_FAILED = "provider_failed"
 
 
+def human_decision_transition(
+    action: DecisionAction,
+) -> tuple[ReviewStatus, WorkflowEventType]:
+    return {
+        DecisionAction.CONFIRM: (
+            ReviewStatus.CONFIRMED,
+            WorkflowEventType.HUMAN_CONFIRMED,
+        ),
+        DecisionAction.CORRECT: (
+            ReviewStatus.CORRECTED,
+            WorkflowEventType.HUMAN_CORRECTED,
+        ),
+        DecisionAction.REJECT: (
+            ReviewStatus.REJECTED,
+            WorkflowEventType.HUMAN_REJECTED,
+        ),
+    }[action]
+
+
 def _require_utc(value: datetime, field_name: str) -> None:
     offset = value.utcoffset()
     if value.tzinfo is None or offset is None or offset.total_seconds() != 0:
@@ -231,20 +250,7 @@ class ApplyHumanDecision(TransitionCommand):
     request_sha256: str = Field(pattern=SHA256_PATTERN)
 
     def require_valid_transition(self) -> None:
-        target, event = {
-            DecisionAction.CONFIRM: (
-                ReviewStatus.CONFIRMED,
-                WorkflowEventType.HUMAN_CONFIRMED,
-            ),
-            DecisionAction.CORRECT: (
-                ReviewStatus.CORRECTED,
-                WorkflowEventType.HUMAN_CORRECTED,
-            ),
-            DecisionAction.REJECT: (
-                ReviewStatus.REJECTED,
-                WorkflowEventType.HUMAN_REJECTED,
-            ),
-        }[self.decision.action]
+        target, event = human_decision_transition(self.decision.action)
         expected = (ReviewStatus.AWAITING_HUMAN_REVIEW, target, event)
         if (self.prior_status, self.target_status, self.event_type) != expected:
             raise ValueError(
