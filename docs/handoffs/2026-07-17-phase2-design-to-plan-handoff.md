@@ -23,7 +23,8 @@
 4. `missing_precondition`、`ignored_tool_error`、`context_corruption` 只触发 unsupported abstain。
 5. 20 条冻结轨迹全部评测；14 条属于支持集，6 条属于范围外集合。
 6. 不修改 Phase 1 三份冻结 fixture；新增 Phase 2 gold sidecar。
-7. 必须阻断 `scenario.expected_failure`、`scenario.id` 等标签泄漏。
+7. 必须阻断 `scenario.expected_failure`、`scenario.id`、语义化 `run_id`，以及
+   `idempotency_key`、`ignore_error`、deprecated `calculated_amount` 等标签或 fault-injection 泄漏。
 8. Diagnosis API 最后实现，默认 rules；DeepSeek 必须显式选择。
 9. 自动测试不调用付费 API。live smoke 前再通知用户设置 `DEEPSEEK_API_KEY`，不要索要或记录密钥。
 10. 不做 Repair、Verifier、RegressionCase、Release Gate、前端、数据库、队列或公共部署。

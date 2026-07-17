@@ -85,10 +85,25 @@ Phase 1 已提供 TraceIR、SupportLab Agent、OTel 映射、20 条确定性轨�
 2. 将 span 按 `(started_at, ended_at, span_id)` 稳定排序；
 3. 只保留诊断允许的 attribute namespace；
 4. 删除 `scenario.*`、任何 expected/gold/label 字段和评测元数据；
-5. 生成规范化 Evidence Catalog；
-6. 不改变原始 TraceIR 对象。
+5. 删除会编码 fault injection 或样例身份的
+   `tool.arguments.idempotency_key`、`tool.arguments.ignore_error` 和
+   `tool.arguments.calculated_amount`；
+6. 不向规则上下文或 LLM prompt 暴露 `run_id`、`trace_id`；
+7. 生成规范化 Evidence Catalog；
+8. 不改变原始 TraceIR 对象。
 
-Phase 1 冻结轨迹的根 span 含有 `scenario.expected_failure` 和 `scenario.id`。这些字段只能用于数据生成审计，禁止进入规则上下文、LLM prompt、诊断日志和评测预测输入。任何诊断代码直接读取这些字段都视为测试泄漏和验收失败。
+允许进入投影的 attributes 固定为：`run.outcome`、`run.final_message`、
+`tool.name`、业务相关的 `tool.arguments.customer_id/order_id/item_skus/amount/approval/reason`、
+`tool.result`、`tool.error.type` 和 `tool.error.message`。新增 attribute 默认拒绝，必须通过设计和测试后才能加入 allowlist。
+
+Phase 1 冻结轨迹的根 span 含有 `scenario.expected_failure` 和 `scenario.id`，
+`run_id` 与部分 `idempotency_key` 也直接编码故障名称。这些字段只能用于数据生成审计和结果关联，
+禁止进入规则上下文、LLM prompt、诊断日志和评测预测输入。任何诊断代码根据这些字段形成决策，
+都视为测试泄漏和验收失败。
+
+应用层在诊断调用外保存 `trace_id/run_id`，诊断器返回不含关联身份的 `DiagnosisDecision`，
+再由 `DiagnosisService` 把原始 identity 与已验证决策组装为 `DiagnosisReport`。因此报告可追溯，
+而规则和模型无法从样例命名猜测标签。
 
 ### 4.2 评测真值
 
@@ -123,6 +138,7 @@ src/afc/
     rule_diagnoser.py           # 确定性聚合与弃答
     llm_diagnoser.py            # prompt、草案解析、本地证据校验
     deepseek.py                 # DeepSeek HTTP adapter
+    service.py                  # 关联原始 identity、诊断决策与最终报告
     errors.py                   # 稳定领域错误
   invariants/
     __init__.py
@@ -221,6 +237,9 @@ LLM 只返回 `span_id + field_path` selector。最终 `EvidenceRef` 的 value �
 - 所有 span 和 field path 必须由 Evidence Catalog 成功解析；
 - 替代假设不进入本期 schema，留到 Diagnosis/Verifier workflow 阶段。
 
+诊断器内部先返回字段相同但不含 `trace_id/run_id` 和 provider usage 的 `DiagnosisDecision`。
+`DiagnosisService` 是唯一允许把 identity、decision、provenance 和 usage 组装成最终报告的入口。
+
 ### 6.5 弃答原因
 
 固定枚举：
@@ -280,9 +299,11 @@ ruleset version 由有序的 `rule_id@version` 列表计算哈希。规则结果
    - 证据引用 tool span 的 name、status 和 error type。
 
 2. `submit_refund.arguments.v1`
-   - 校验显式 `item_skus`、customer/order identity、approval 和服务端结果；
-   - deprecated `calculated_amount` 不参与授权判断；
-   - 参数与已读取事实不一致时映射 `invalid_argument`。
+   - 校验显式 `item_skus`、order、amount 与服务端计算结果；
+   - approval 不在本规则中判断，避免与 policy rule 重叠；
+   - customer identity 不在本规则中判断，留给 context corruption scope guard；
+   - deprecated `calculated_amount` 不进入诊断投影，也不参与授权或诊断判断；
+   - amount 或商品参数不满足调用契约时映射 `invalid_argument`。
 
 3. `submit_refund.policy.v1`
    - 高风险动作被工具明确拒绝且拒绝原因属于审批或政策边界；
@@ -349,6 +370,7 @@ ruleset version 由有序的 `rule_id@version` 列表计算哈希。规则结果
 模型不接收：
 
 - gold label、scenario metadata 或 run ID 中的标签语义；
+- trace ID、`idempotency_key`、`ignore_error` 或 deprecated `calculated_amount`；
 - invariant 结果；
 - API key、完整应用环境或未 allowlist 的 trace 字段；
 - 其他样例的测试标签。
