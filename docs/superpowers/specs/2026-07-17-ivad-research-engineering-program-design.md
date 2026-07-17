@@ -1,18 +1,19 @@
-# IVAD：独立验证的 Agent 故障诊断研究与工程总体设计
+# SpanVouch / IVAD：独立验证的 Agent 故障诊断研究与工程总体设计
 
 > 状态：对话设计已批准，待书面复核
 > 日期：2026-07-17
-> 项目：Agent Failure Clinic（AFC）
+> 项目：SpanVouch（原内部代号：Agent Failure Clinic / AFC）
 > 方法名称：IVAD（Independently Verified Agent Diagnosis）
 > 目标：3–4 个月形成完整 arXiv 会议论文初稿，并持续演进为成熟开源工程
 > 目标社区：Software Engineering / AI Reliability
 > 主要资源：DeepSeek 付费 API、可租用云 GPU、每月 500–1000 元预算
 > 上位工程设计：`docs/superpowers/specs/2026-07-15-agent-failure-clinic-design.md`
 > 前置研究：`docs/research/2026-07-17-afc-independent-verification-novelty.md`
+> 品牌命名：`docs/superpowers/specs/2026-07-17-spanvouch-naming-design.md`
 
 ## 1. 设计结论
 
-AFC 从“能够输出证据引用的 Agent 故障诊断工程”升级为一项方法优先的研究计划：
+SpanVouch 从原 AFC“能够输出证据引用的 Agent 故障诊断工程”升级为一项方法优先的研究计划：
 
 > **IVAD 将 Agent 故障诊断建模为受机器可验证证据契约约束的选择性决策问题。诊断器生成结构化 claim，确定性验证器与受控隔离的语义验证器重新解析不可变轨迹证据，风险控制器只接受满足目标风险的诊断；证据不足时，系统最多执行一次分层、只读、可审计的补证，否则弃答。**
 
