@@ -72,6 +72,27 @@ def _clean_trace() -> TraceIR:
     )
 
 
+def _trace_with_value_secrets() -> TraceIR:
+    trace = _clean_trace()
+    root = trace.spans[0]
+    root = root.model_copy(
+        update={
+            "attributes": {
+                **root.attributes,
+                "tool.result": {
+                    "api_key": SENTINEL_KEY,
+                    "safe": "diagnostic context survives",
+                },
+                "tool.error.message": f"token={SENTINEL_KEY}; provider rejected request",
+                "run.final_message": (
+                    f"Authorization: Bearer {SENTINEL_KEY}; final context survives"
+                ),
+            }
+        }
+    )
+    return trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
+
+
 def _review_runtime(database: Path) -> tuple[ReviewService, SQLiteReviewRepository]:
     engine = InvariantEngine(supportlab_rules())
     diagnoser = RuleDiagnoser(engine)
@@ -175,6 +196,52 @@ def test_provider_failure_is_sanitized_across_error_sqlite_api_cli_and_report(
     assert exit_code == 0
     assert stderr.getvalue() == ""
     _assert_sanitized(stdout.getvalue())
+
+
+def test_allowed_trace_value_secrets_never_reach_sqlite_or_public_aggregate(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "trace-value-secrets.db"
+    service, repository = _review_runtime(database)
+    asyncio.run(repository.initialize())
+
+    try:
+        created = asyncio.run(
+            service.create(
+                _trace_with_value_secrets(),
+                diagnoser=DiagnoserKind.RULES,
+                verification_mode=VerificationMode.HYBRID,
+                idempotency_key="trace-value-secret-create",
+            )
+        )
+    except ReviewWorkflowProviderError as error:
+        case_id = error.case_id
+    else:
+        case_id = created.case.case_id
+
+    detail = asyncio.run(repository.get_detail(case_id))
+    _assert_sanitized(detail.model_dump(mode="json"))
+    with sqlite3.connect(database) as connection:
+        view_json = connection.execute(
+            "SELECT view_json FROM review_inputs WHERE case_id = ?",
+            (case_id,),
+        ).fetchone()
+        aggregate = "\n".join(
+            str(value)
+            for table in (
+                "review_inputs",
+                "diagnosis_revisions",
+                "verifier_runs",
+                "workflow_events",
+            )
+            for row in connection.execute(f"SELECT * FROM {table}").fetchall()
+            for value in row
+        )
+    assert view_json is not None
+    _assert_sanitized(view_json[0])
+    _assert_sanitized(aggregate)
+    assert "diagnostic context survives" in view_json[0]
+    assert "final context survives" in view_json[0]
 
 
 @pytest.mark.asyncio

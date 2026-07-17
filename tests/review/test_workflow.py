@@ -233,8 +233,10 @@ def _workflow(
     *,
     semantic: FakeVerifier | None = None,
     reviser: FakeReviser | None = None,
-    clock: MutableClock | None = None,
+    clock: Callable[[], datetime] | None = None,
     id_factory: SequenceIds | None = None,
+    lease_owner: str = "workflow-worker",
+    lease_duration: timedelta = timedelta(seconds=30),
 ) -> ReviewWorkflow:
     return ReviewWorkflow(
         repository=repository,
@@ -243,8 +245,8 @@ def _workflow(
         reviser=reviser or FakeReviser(),
         id_factory=id_factory or SequenceIds(),
         clock=clock or MutableClock(),
-        lease_owner="workflow-worker",
-        lease_duration=timedelta(seconds=30),
+        lease_owner=lease_owner,
+        lease_duration=lease_duration,
     )
 
 

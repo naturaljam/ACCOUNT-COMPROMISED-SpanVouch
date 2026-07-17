@@ -22,6 +22,8 @@ from afc.review.commands import (
     ApplyHumanDecision,
     ClaimReviewWork,
     CreateReviewCase,
+    RenewReviewLease,
+    ReviewLeaseWork,
     RouteRevisionFailureToHuman,
     RouteToHumanReview,
     TransitionCommand,
@@ -165,6 +167,12 @@ class SQLiteReviewRepository:
             ClaimReviewWork, command, "invalid claim review command"
         )
         return await asyncio.to_thread(self._claim_work, command)
+
+    async def renew_review_lease(self, command: RenewReviewLease) -> None:
+        command = self._revalidate_command(
+            RenewReviewLease, command, "invalid review lease renewal"
+        )
+        await asyncio.to_thread(self._renew_review_lease, command)
 
     async def append_verifier_run(self, command: AppendVerifierRun) -> DiagnosisReviewCase:
         command = self._revalidate_command(
@@ -522,6 +530,61 @@ class SQLiteReviewRepository:
             self._insert_transition_event(connection, command)
             return self._read_case(connection, command.case_id)
 
+    def _renew_review_lease(self, command: RenewReviewLease) -> None:
+        with self._transaction(write=True) as connection:
+            state = self._require_state(connection, command.case_id)
+            self._require_cas(
+                state, command.expected_version, command.expected_status
+            )
+            lease_owner, current_expiry = self._decode_lease(state)
+            if lease_owner != command.lease_owner or current_expiry is None:
+                raise ReviewConflictError("review lease is not owned")
+            if command.now >= current_expiry:
+                raise ReviewConflictError("review lease has expired")
+            if command.lease_expires_at <= current_expiry:
+                raise ReviewConflictError("review lease renewal must extend expiry")
+            if command.work is ReviewLeaseWork.SEMANTIC_VERIFICATION:
+                pending = (
+                    str(state["verification_mode"])
+                    == VerificationMode.HYBRID.value
+                    and state["deterministic_run_id"] is not None
+                    and state["semantic_run_id"] is None
+                    and connection.execute(
+                        "SELECT 1 FROM verifier_runs WHERE case_id = ? "
+                        "AND revision_number = ? AND verifier_kind = 'semantic' LIMIT 1",
+                        (command.case_id, int(state["current_revision_number"])),
+                    ).fetchone()
+                    is None
+                )
+            else:
+                pending = (
+                    int(state["current_revision_number"]) == 0
+                    and int(state["evidence_revision_count"]) == 0
+                    and connection.execute(
+                        "SELECT 1 FROM diagnosis_revisions WHERE case_id = ? "
+                        "AND revision_number = 1 LIMIT 1",
+                        (command.case_id,),
+                    ).fetchone()
+                    is None
+                )
+            if not pending:
+                raise ReviewConflictError("review lease work is no longer pending")
+            cursor = connection.execute(
+                "UPDATE review_cases SET lease_expires_at = ?, updated_at = ? "
+                "WHERE case_id = ? AND version = ? AND status = ? "
+                "AND lease_owner = ? AND lease_expires_at > ?",
+                (
+                    _timestamp(command.lease_expires_at),
+                    _timestamp(command.now),
+                    command.case_id,
+                    command.expected_version,
+                    command.expected_status.value,
+                    command.lease_owner,
+                    _timestamp(command.now),
+                ),
+            )
+            self._require_updated(cursor)
+
     def _append_verifier_run(self, command: AppendVerifierRun) -> DiagnosisReviewCase:
         with self._transaction(write=True) as connection:
             self._require_valid_transition(command)
@@ -562,6 +625,10 @@ class SQLiteReviewRepository:
 
             state = self._require_state(connection, command.case_id)
             self._require_cas(state, command.expected_version, command.prior_status)
+            if command.lease_owner is not None:
+                self._require_owned_lease(
+                    state, command.lease_owner, command.occurred_at
+                )
             if command.report.revision_number != int(state["current_revision_number"]):
                 raise ReviewConflictError("verifier revision conflict")
             current_revision = self._revision_row(
@@ -649,6 +716,10 @@ class SQLiteReviewRepository:
 
             state = self._require_state(connection, command.case_id)
             self._require_cas(state, command.expected_version, command.prior_status)
+            if command.lease_owner is not None:
+                self._require_owned_lease(
+                    state, command.lease_owner, command.occurred_at
+                )
             self._require_revision_snapshot_binding(
                 connection, command.case_id, command.revision
             )
@@ -744,6 +815,10 @@ class SQLiteReviewRepository:
                 raise ReviewConflictError("duplicate workflow event")
             state = self._require_state(connection, command.case_id)
             self._require_cas(state, command.expected_version, command.prior_status)
+            if command.lease_owner is not None:
+                self._require_owned_lease(
+                    state, command.lease_owner, command.occurred_at
+                )
             cursor = connection.execute(
                 "UPDATE review_cases SET status = ?, version = version + 1, "
                 "composite_verdict = ?, lease_owner = NULL, lease_expires_at = NULL, "
@@ -968,6 +1043,16 @@ class SQLiteReviewRepository:
             raise ReviewPersistenceError("stored review data is invalid")
         owner = str(owner_value) if owner_value is not None else None
         return owner, parsed_expiry
+
+    @classmethod
+    def _require_owned_lease(
+        cls, state: sqlite3.Row, lease_owner: str, now: datetime
+    ) -> None:
+        stored_owner, stored_expiry = cls._decode_lease(state)
+        if stored_owner != lease_owner or stored_expiry is None:
+            raise ReviewConflictError("review lease is not owned")
+        if now >= stored_expiry:
+            raise ReviewConflictError("review lease has expired")
 
     @staticmethod
     def _require_cas(state: sqlite3.Row, version: int, status: ReviewStatus) -> None:

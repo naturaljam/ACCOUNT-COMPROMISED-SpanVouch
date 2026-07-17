@@ -1,6 +1,11 @@
 from pathlib import Path
 
-from afc.diagnosis.trace_view import ALLOWED_ATTRIBUTES, DiagnosticTraceView
+from afc.diagnosis.trace_view import (
+    ALLOWED_ATTRIBUTES,
+    SECRET_REDACTION,
+    DiagnosticTraceView,
+)
+from afc.review.models import canonical_json
 from afc.trace_ir.models import TraceIR
 
 DATASET = Path("evals/datasets/supportlab-v1/traces.jsonl")
@@ -10,6 +15,7 @@ FORBIDDEN_PARTS = (
     "ignore_error",
     "calculated_amount",
 )
+VALUE_SECRET = "value-level-sentinel-credential"
 
 
 def load_trace(run_id: str) -> TraceIR:
@@ -48,3 +54,40 @@ def test_trace_view_keeps_only_diagnostic_business_attributes() -> None:
     assert submit.attributes["tool.arguments.approval"] == "none"
     assert submit.attributes["tool.error.type"] == "RefundRejected"
     assert submit.attributes["tool.error.message"] == "missing_approval"
+
+
+def test_trace_view_recursively_redacts_credentials_inside_allowed_values() -> None:
+    trace = load_trace("clean-01")
+    root = trace.spans[0]
+    root = root.model_copy(
+        update={
+            "attributes": {
+                **root.attributes,
+                "tool.result": {
+                    "api_key": VALUE_SECRET,
+                    "nested": [
+                        f"DEEPSEEK_API_KEY={VALUE_SECRET}",
+                        {"password": VALUE_SECRET, "safe": "useful context"},
+                    ],
+                },
+                "tool.error.message": (
+                    f"request rejected; Authorization: Bearer {VALUE_SECRET}; retry later"
+                ),
+                "run.final_message": (
+                    f"upstream https://agent:{VALUE_SECRET}@example.test/path failed"
+                ),
+            }
+        }
+    )
+    trace = trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
+
+    view = DiagnosticTraceView.from_trace(trace)
+    serialized = canonical_json(view)
+
+    assert VALUE_SECRET not in serialized
+    assert "useful context" in serialized
+    assert "request rejected" in serialized
+    assert "retry later" in serialized
+    assert "example.test/path failed" in serialized
+    assert f"{SECRET_REDACTION}]" not in serialized
+    assert DiagnosticTraceView.model_validate(view.model_dump()) == view

@@ -8,6 +8,7 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from afc.diagnosis.models import DiagnoserKind
+from afc.review import commands as review_commands
 from afc.review.commands import (
     AppendDiagnosisRevision,
     AppendVerifierRun,
@@ -278,6 +279,65 @@ async def _create_and_claim_revision(repository: SQLiteReviewRepository) -> None
             now=NOW + timedelta(seconds=2),
         )
     )
+
+
+async def test_review_lease_renewal_is_owner_checked_and_stops_after_transition(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "renew-review-lease.sqlite3"
+    repository = SQLiteReviewRepository(database)
+    await repository.initialize()
+    await _create_and_claim_revision(repository)
+    command_type = getattr(review_commands, "RenewReviewLease", None)
+    assert command_type is not None, "review lease renewal command is missing"
+    work_type = getattr(review_commands, "ReviewLeaseWork", None)
+    assert work_type is not None, "review lease work classification is missing"
+    command = command_type(
+        case_id="case-review-1",
+        expected_version=3,
+        expected_status=ReviewStatus.REVISING,
+        lease_owner="worker-1",
+        work=work_type.EVIDENCE_REVISION,
+        now=NOW + timedelta(seconds=10),
+        lease_expires_at=NOW + timedelta(seconds=40),
+    )
+
+    await repository.renew_review_lease(command)
+    with sqlite3.connect(database) as connection:
+        renewed = connection.execute(
+            "SELECT lease_owner, lease_expires_at FROM review_cases WHERE case_id = ?",
+            ("case-review-1",),
+        ).fetchone()
+    assert renewed == ("worker-1", (NOW + timedelta(seconds=40)).isoformat())
+
+    with pytest.raises(ReviewConflictError, match="lease"):
+        await repository.renew_review_lease(
+            command.model_copy(update={"lease_owner": "stale-worker"})
+        )
+    await repository.route_revision_failure(_revision_failure_command())
+    with pytest.raises(ReviewConflictError):
+        await repository.renew_review_lease(command)
+
+
+async def test_provider_finalization_is_fenced_by_current_lease_owner(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "provider-finalization-owner.sqlite3"
+    repository = SQLiteReviewRepository(database)
+    await repository.initialize()
+    await _create_and_claim_revision(repository)
+    command = _revision_command()
+
+    with pytest.raises(ReviewConflictError, match="lease"):
+        await repository.append_revision(
+            command.model_copy(update={"lease_owner": "stale-worker"})
+        )
+    assert len((await repository.get_detail("case-review-1")).revisions) == 1
+
+    completed = await repository.append_revision(
+        command.model_copy(update={"lease_owner": "worker-1"})
+    )
+    assert completed.current_revision_number == 1
 
 
 def _counts(database: Path) -> dict[str, int]:

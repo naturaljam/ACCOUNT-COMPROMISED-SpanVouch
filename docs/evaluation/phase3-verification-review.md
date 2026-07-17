@@ -64,8 +64,8 @@ The 2026-07-17 offline gate produced the following fresh evidence:
 
 - `uv sync --frozen --group dev`: 60 packages audited;
 - Ruff: clean;
-- strict mypy: 62 source files, no issues;
-- pytest with coverage: 485 passed at 93% total coverage; after the final hardening regressions and rereview fixes, the fresh repository suite passed 537 tests, with only the pre-existing Starlette/httpx deprecation warning;
+- strict mypy: 63 source files, no issues;
+- pytest with coverage: 485 passed at 93% total coverage; after the final whole-branch review fixes, the fresh repository suite passed 546 tests, with only the pre-existing Starlette/httpx deprecation warning;
 - deterministic review report: `status=complete`, 36 candidates, all six recorded quality rates at their accepted value, 0 operational errors, and 0 provider tokens;
 - Docker image build and health check: passed;
 - real persisted case: one revision, one deterministic verifier report, five ordered events, terminal `confirm` decision;
@@ -81,7 +81,7 @@ No live result is inferred from these offline checks.
 
 The default API, CLI, evaluator, and CI paths are `rules + deterministic` and make zero external model calls. Secret-hygiene tests inject a sentinel credential and raw provider body, then check the sanitized workflow exception, verifier report, SQLite rows, workflow events, API JSON, and CLI JSON. Docker build-context tests exclude `.env`, `.env.*`, `.data/`, caches, and generated live reports while explicitly allowing the empty `.env.example` template.
 
-SQLite stores only the allowlisted diagnostic snapshot and structured audit records. It does not store raw TraceIR, prompts, keys, authorization headers, hidden reasoning, or raw provider responses. A stale lease can be resumed after a crash. Provider calls are at-least-once and can be billed twice, while persisted domain effects remain deduplicated.
+SQLite stores only the recursively sanitized, allowlisted diagnostic snapshot and structured audit records. It does not store raw TraceIR, prompts, keys, authorization headers, hidden reasoning, or raw provider responses. Active semantic-verification and evidence-revision leases are owner-fenced and renewed below their expiry interval, so normal provider latency cannot start a concurrent second call. After a genuinely dead worker stops heartbeating, the stale lease can still be reclaimed; crash recovery remains at-least-once while persisted domain effects remain deduplicated.
 
 `reviewer_label` is an audit label supplied by the caller; it is not authentication. Phase 3 does not claim auth or RBAC.
 

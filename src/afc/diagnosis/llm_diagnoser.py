@@ -23,7 +23,10 @@ from afc.diagnosis.protocols import (
     GenerationConfig,
     ModelProvider,
 )
-from afc.diagnosis.trace_view import DiagnosticTraceView
+from afc.diagnosis.trace_view import (
+    DiagnosticTraceView,
+    sanitize_diagnostic_trace_view,
+)
 from afc.failure_types import SUPPORTED_DIAGNOSIS_FAILURE_TYPES, FailureType
 
 if TYPE_CHECKING:
@@ -71,6 +74,8 @@ class LlmDiagnoser:
     async def diagnose(
         self, view: DiagnosticTraceView, evidence: EvidenceCatalog
     ) -> DiagnosisExecution:
+        view = sanitize_diagnostic_trace_view(view)
+        evidence = EvidenceCatalog.from_view(view)
         messages = self._messages(view, evidence)
         return await self._execute(
             messages,
@@ -87,6 +92,8 @@ class LlmDiagnoser:
         previous_report: DiagnosisReport,
         evidence_gaps: tuple["EvidenceGap", ...],
     ) -> DiagnosisExecution:
+        view = sanitize_diagnostic_trace_view(view)
+        evidence = EvidenceCatalog.from_view(view)
         self._validate_evidence_gaps(view, evidence, evidence_gaps)
         messages = self._revision_messages(
             view,

@@ -8,6 +8,7 @@ from afc.review.commands import (
     ApplyHumanDecision,
     ClaimReviewWork,
     CreateReviewCase,
+    RenewReviewLease,
     RouteRevisionFailureToHuman,
     RouteToHumanReview,
 )
@@ -98,6 +99,9 @@ class ReviewRepository(Protocol):
         raise NotImplementedError
 
     async def claim_work(self, command: ClaimReviewWork) -> DiagnosisReviewCase:
+        raise NotImplementedError
+
+    async def renew_review_lease(self, command: RenewReviewLease) -> None:
         raise NotImplementedError
 
     async def append_verifier_run(self, command: AppendVerifierRun) -> DiagnosisReviewCase:

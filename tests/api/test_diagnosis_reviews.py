@@ -1,4 +1,5 @@
 import asyncio
+import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,7 @@ from afc.review.models import (
     VerificationMode,
     VerifierKind,
     VerifierReport,
+    VerifierVerdict,
     WorkflowEventType,
     canonical_json,
 )
@@ -31,6 +33,13 @@ from afc.review.workflow import ReviewWorkflow
 from afc.trace_ir.repository import InMemoryTraceRepository
 from tests.diagnosis.test_trace_view import load_trace
 from tests.review.factories import NOW, make_review_snapshot, make_revision
+from tests.review.test_workflow import (
+    FakeReviser,
+    FakeVerifier,
+    _create_case,
+    _report,
+    _workflow,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -337,6 +346,93 @@ def test_missing_semantic_provider_routes_durably_before_503(tmp_path: Path) -> 
     )
     assert payload["events"][-2]["event_type"] == "provider_failed"
     assert payload["events"][-1]["event_type"] == "awaiting_human_review"
+
+
+def test_restart_without_revision_provider_routes_durably_before_sanitized_503(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "restart-missing-reviser.db"
+
+    class StopAfterRevisionRequest(SQLiteReviewRepository):
+        async def append_verifier_run(self, command):  # type: ignore[no-untyped-def]
+            result = await super().append_verifier_run(command)
+            if result.status is ReviewStatus.REVISION_REQUESTED:
+                raise RuntimeError("simulated restart after revision request")
+            return result
+
+    repository = StopAfterRevisionRequest(database)
+    asyncio.run(repository.initialize())
+    asyncio.run(
+        _create_case(
+            repository,
+            mode=VerificationMode.DETERMINISTIC,
+            diagnoser=DiagnoserKind.DEEPSEEK,
+        )
+    )
+    verifier = FakeVerifier(
+        VerifierKind.DETERMINISTIC,
+        [
+            _report(
+                VerifierKind.DETERMINISTIC,
+                verdict=VerifierVerdict.NEEDS_EVIDENCE,
+                revision_number=0,
+                suffix="restart-missing-reviser",
+            )
+        ],
+    )
+    with pytest.raises(RuntimeError, match="simulated restart"):
+        asyncio.run(
+            _workflow(
+                repository,
+                verifier,
+                reviser=FakeReviser(supported=(DiagnoserKind.DEEPSEEK,)),
+            ).run("case-review-1")
+        )
+    persisted = asyncio.run(repository.get_detail("case-review-1"))
+    assert persisted.case.status is ReviewStatus.REVISION_REQUESTED
+
+    with TestClient(create_app(review_database=database)) as client:
+        failed = client.post(
+            "/v1/diagnosis-reviews/case-review-1/resume",
+            json={"allow_live_api": True},
+        )
+        durable = client.get("/v1/diagnosis-reviews/case-review-1")
+        case = durable.json()["case"]
+        decided = client.post(
+            "/v1/diagnosis-reviews/case-review-1/decisions",
+            json={
+                "action": "confirm",
+                "expected_version": case["version"],
+                "reviewer_label": "restart-reviewer",
+                "idempotency_key": "restart-human-decision",
+                "reason": "Confirm after the revision provider became unavailable.",
+            },
+        )
+
+    assert failed.status_code == 503
+    assert failed.json() == {
+        "detail": {
+            "code": "provider_not_configured",
+            "case_id": "case-review-1",
+            "retryable": False,
+        }
+    }
+    assert durable.status_code == 200
+    payload = durable.json()
+    assert payload["case"]["status"] == "awaiting_human_review"
+    assert payload["events"][-1]["event_type"] == "revision_provider_failed"
+    with sqlite3.connect(database) as connection:
+        failure_event = connection.execute(
+            "SELECT metadata_json FROM workflow_events "
+            "WHERE event_type = 'revision_provider_failed' "
+            "ORDER BY event_sequence DESC LIMIT 1"
+        ).fetchone()
+    assert failure_event is not None
+    assert failure_event[0] == canonical_json(
+        {"code": "provider_not_configured", "retryable": False}
+    )
+    assert decided.status_code == 200
+    assert decided.json()["case"]["status"] == "confirmed"
 
 
 def test_invalid_correction_is_review_422_without_mutation(tmp_path: Path) -> None:

@@ -1,4 +1,5 @@
 from datetime import datetime
+from enum import StrEnum
 from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -158,9 +159,37 @@ class ClaimReviewWork(TransitionCommand):
         return self
 
 
+class ReviewLeaseWork(StrEnum):
+    SEMANTIC_VERIFICATION = "semantic_verification"
+    EVIDENCE_REVISION = "evidence_revision"
+
+
+class RenewReviewLease(ReviewCommand):
+    case_id: str = Field(min_length=1)
+    expected_version: int = Field(ge=0)
+    expected_status: ReviewStatus
+    lease_owner: str = Field(min_length=1)
+    work: ReviewLeaseWork
+    now: datetime
+    lease_expires_at: datetime
+
+    @model_validator(mode="after")
+    def validate_renewal(self) -> Self:
+        expected_status = {
+            ReviewLeaseWork.SEMANTIC_VERIFICATION: ReviewStatus.VERIFYING,
+            ReviewLeaseWork.EVIDENCE_REVISION: ReviewStatus.REVISING,
+        }[self.work]
+        if self.expected_status is not expected_status:
+            raise ValueError("review lease work does not match active status")
+        if self.lease_expires_at <= self.now:
+            raise ValueError("lease_expires_at must be later than now")
+        return self
+
+
 class AppendVerifierRun(TransitionCommand):
     report: VerifierReport
     composite_verdict: VerifierVerdict
+    lease_owner: str | None = Field(default=None, min_length=1)
 
     def require_valid_transition(self) -> None:
         allowed = {
@@ -193,6 +222,7 @@ class AppendVerifierRun(TransitionCommand):
 
 class AppendDiagnosisRevision(TransitionCommand):
     revision: DiagnosisRevision
+    lease_owner: str | None = Field(default=None, min_length=1)
 
     def require_valid_transition(self) -> None:
         expected = (
@@ -232,6 +262,7 @@ class RouteToHumanReview(TransitionCommand):
 
 class RouteRevisionFailureToHuman(TransitionCommand):
     composite_verdict: VerifierVerdict
+    lease_owner: str | None = Field(default=None, min_length=1)
 
     def require_valid_transition(self) -> None:
         expected = (
