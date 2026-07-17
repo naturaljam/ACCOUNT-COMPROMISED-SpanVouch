@@ -123,6 +123,9 @@ _COMPACT_CREDENTIAL_LABELS = frozenset(
     for core in _COMPACT_CREDENTIAL_CORES
     for suffix in _COMPACT_SENSITIVE_SUFFIXES
 )
+_MAX_COMPACT_CREDENTIAL_LABEL_LENGTH = max(
+    len(label) for label in _COMPACT_CREDENTIAL_LABELS
+)
 _COMPACT_SAFE_METADATA_BASES = _COMPACT_CREDENTIAL_CORES | {
     "session",
     "tokenization",
@@ -137,6 +140,9 @@ _COMPACT_SAFE_METADATA_LABELS = frozenset(
     for base in _COMPACT_SAFE_METADATA_BASES
     for qualifier in _COMPACT_SAFE_METADATA_QUALIFIERS
     for terminal in _SAFE_METADATA_TERMINALS
+)
+_MAX_COMPACT_SAFE_METADATA_LABEL_LENGTH = max(
+    len(label) for label in _COMPACT_SAFE_METADATA_LABELS
 )
 _NONEMPTY_LINE = re.compile(r"[^\r\n]+")
 _COOKIE_PAIR_VALUE = re.compile(
@@ -158,9 +164,10 @@ _PROVIDER_KEY = re.compile(
     r"(?<![A-Za-z0-9])(?:ghp|github_pat|xox[baprs])_[A-Za-z0-9_-]{16,}"
     r"(?![A-Za-z0-9])"
 )
-_URL_SCHEME = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*:(?://|\\/\\/)")
+_URL_SCHEME_PATTERN = r"\b[a-z][a-z0-9+.-]*:(?:(?:\\)?/){2}"
+_URL_SCHEME = re.compile(rf"(?i){_URL_SCHEME_PATTERN}")
 _URL_USERINFO = re.compile(
-    r"(?i)(?P<scheme>\b[a-z][a-z0-9+.-]*:(?://|\\/\\/))"
+    rf"(?i)(?P<scheme>{_URL_SCHEME_PATTERN})"
     r"(?P<userinfo>[^/@\s]+)@"
 )
 _STRUCTURAL_FIELD_BOUNDARIES = frozenset(";,|")
@@ -206,10 +213,7 @@ def _is_compact_credential_label(compact: str) -> bool:
     return compact in _COMPACT_CREDENTIAL_LABELS
 
 
-def _is_credential_label(label: str) -> bool:
-    """Classify a mapping/assignment label after syntax normalization."""
-
-    parts = _normalize_credential_label(label)
+def _is_credential_label_parts(parts: tuple[str, ...]) -> bool:
     if not parts:
         return False
     compact = "".join(parts)
@@ -239,6 +243,12 @@ def _is_credential_label(label: str) -> bool:
     if any(not _has_only_metadata_suffix(parts, index) for index in cookie_indexes):
         return True
     return _is_compact_credential_label(compact)
+
+
+def _is_credential_label(label: str) -> bool:
+    """Classify a mapping/assignment label after syntax normalization."""
+
+    return _is_credential_label_parts(_normalize_credential_label(label))
 
 
 def _is_credential_mapping_key(key: str) -> bool:
@@ -295,11 +305,45 @@ def _is_credential_shaped_cookie_value(value: str) -> bool:
     )
 
 
-def _is_structural_credential_label(label: str) -> bool:
-    if _is_credential_label(label):
-        return True
-    trailing_label = label.rsplit(maxsplit=1)[-1]
-    return trailing_label != label and _is_credential_label(trailing_label)
+def _has_safe_metadata_suffix(
+    chunks: tuple[tuple[str, ...], ...],
+    end: int,
+) -> bool:
+    compact_suffix = ""
+    for index in range(end - 1, -1, -1):
+        compact_suffix = f"{''.join(chunks[index])}{compact_suffix}"
+        if len(compact_suffix) > _MAX_COMPACT_SAFE_METADATA_LABEL_LENGTH:
+            break
+        if compact_suffix in _COMPACT_SAFE_METADATA_LABELS:
+            return True
+    return False
+
+
+def _structural_credential_label_parts(label: str) -> tuple[str, ...] | None:
+    chunks = tuple(
+        parts
+        for chunk in label.split()
+        if (parts := _normalize_credential_label(chunk))
+    )
+    if not chunks:
+        return None
+    trailing_parts = chunks[-1]
+    if _is_credential_label_parts(trailing_parts):
+        return trailing_parts
+
+    compact_suffix = "".join(trailing_parts)
+    suffix_parts = trailing_parts
+    for index in range(len(chunks) - 2, -1, -1):
+        if _has_safe_metadata_suffix(chunks, index + 1):
+            break
+        chunk_parts = chunks[index]
+        compact_suffix = f"{''.join(chunk_parts)}{compact_suffix}"
+        if len(compact_suffix) > _MAX_COMPACT_CREDENTIAL_LABEL_LENGTH:
+            break
+        suffix_parts = (*chunk_parts, *suffix_parts)
+        if _is_credential_label_parts(suffix_parts):
+            return suffix_parts
+    return None
 
 
 def _redact_structural_value(prefix: str, value: str) -> str:
@@ -326,6 +370,15 @@ def _is_structural_field_boundary(character: str) -> bool:
     return unicodedata.category(character) == "Po" and (
         "COMMA" in name or "SEMICOLON" in name
     )
+
+
+def _is_structural_label_whitespace(character: str) -> bool:
+    return character.isspace() or unicodedata.category(character).startswith("Z")
+
+
+def _normalize_structural_delimiter(character: str) -> str | None:
+    normalized = unicodedata.normalize("NFKC", character)
+    return normalized if normalized in {":", "="} else None
 
 
 def _structural_url_contexts(line: str) -> tuple[tuple[int, int, int], ...]:
@@ -366,12 +419,15 @@ def _extract_structural_label(
     )
     while label_start > candidate_start:
         previous = line[label_start - 1]
-        if _is_structural_field_boundary(previous) or (
+        if (
+            _is_structural_field_boundary(previous)
+            and not _is_structural_label_whitespace(previous)
+        ) or (
             is_url_path_or_query and previous in _URL_LABEL_BOUNDARIES
         ):
             break
         label_start -= 1
-    return line[label_start:delimiter_index].strip(" \t")
+    return line[label_start:delimiter_index].strip()
 
 
 def _sanitize_structural_credential_line(line: str) -> str:
@@ -395,11 +451,12 @@ def _sanitize_structural_credential_line(line: str) -> str:
             url_context_index += 1
 
         character = line[index]
-        if character not in ":=":
+        delimiter = _normalize_structural_delimiter(character)
+        if delimiter is None:
             index += 1
             continue
         if url_context is not None and (
-            index < url_context[1] or character == ":"
+            index < url_context[1] or delimiter == ":"
         ):
             index += 1
             continue
@@ -411,11 +468,11 @@ def _sanitize_structural_credential_line(line: str) -> str:
             url_context,
         )
         value_start = index + 1
-        while value_start < len(line) and line[value_start] in " \t":
+        while value_start < len(line) and line[value_start].isspace():
             value_start += 1
-        if label and _is_structural_credential_label(label):
+        label_parts = _structural_credential_label_parts(label)
+        if label_parts is not None:
             value = line[value_start:]
-            label_parts = _normalize_credential_label(label)
             is_cookie_label = any(
                 part in {"cookie", "cookies"} for part in label_parts
             )

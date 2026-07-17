@@ -377,6 +377,23 @@ async def test_prompt_contains_only_independent_canonical_allowlist_data() -> No
                     f"https://auth.example.com:443\N{IDEOGRAPHIC COMMA}"
                     f"api_key={VALUE_SECRET}\n"
                     f"headers→api_key={VALUE_SECRET}\n"
+                    f"api_key\N{FULLWIDTH EQUALS SIGN}{VALUE_SECRET}\n"
+                    f"Authorization\N{PRESENTATION FORM FOR VERTICAL COLON}"
+                    f"{VALUE_SECRET}\n"
+                    "Cookie\N{FULLWIDTH EQUALS SIGN}a_1\n"
+                    f"https://auth.example/path?api_key"
+                    f"\N{SUPERSCRIPT EQUALS SIGN}{VALUE_SECRET}\n"
+                    "ratio\N{FULLWIDTH EQUALS SIGN}1 compatible-ratio-safe\n"
+                    f"api\N{NO-BREAK SPACE}key={VALUE_SECRET}\n"
+                    f"access\N{EM SPACE}key={VALUE_SECRET}\n"
+                    "safe=token_count\N{NO-BREAK SPACE}field=ok "
+                    "unicode-space-safe\n"
+                    rf"https:/\/agent:{VALUE_SECRET}@mixed.example.com:443/path"
+                    "\n"
+                    rf"https:\//agent:{VALUE_SECRET}@mixed-two.example.com:443/path"
+                    "\n"
+                    r"https:/\/auth.example.com:443/path mixed-url-safe"
+                    "\n"
                     "A cookie: recipe; instructions remain safe\n"
                     "cookie: recipe; instructions remain safe\n"
                     "Browser cookie: recipe; instructions remain safe\n"
@@ -432,6 +449,9 @@ async def test_prompt_contains_only_independent_canonical_allowlist_data() -> No
     assert "escaped-url-safe" in serialized
     assert "colon-tag-safe" in serialized
     assert "unicode-boundary-safe" in serialized
+    assert "compatible-ratio-safe" in serialized
+    assert "unicode-space-safe" in serialized
+    assert "mixed-url-safe" in serialized
     assert "Bearer of; good news" in serialized
     assert "trace-review-1" not in serialized
     assert "run-review-1" not in serialized

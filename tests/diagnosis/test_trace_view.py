@@ -1090,6 +1090,133 @@ def test_escaped_url_schemes_preserve_spelling_and_redact_userinfo() -> None:
     )
 
 
+def test_mixed_escaped_url_slashes_preserve_spelling_and_redact_userinfo() -> None:
+    schemes = (r"https:/\/", r"https:\//")
+    for scheme in schemes:
+        safe_url = f"{scheme}auth.example.com:443/path"
+        _assert_sanitizer_fixed_point(safe_url, safe_url)
+
+        _assert_sanitizer_fixed_point(
+            f"{scheme}agent:topsecret@auth.example.com:443/path",
+            f"{scheme}{SECRET_REDACTION}@auth.example.com:443/path",
+        )
+
+    _assert_sanitizer_fixed_point(
+        (
+            r"https:/\/outer.example/path?redirect="
+            r"https:\//agent:topsecret@auth.example.com:443/path "
+            r"https:/\/user:second-secret@token.example.com:8443/health"
+        ),
+        (
+            r"https:/\/outer.example/path?redirect="
+            rf"https:\//{SECRET_REDACTION}@auth.example.com:443/path "
+            rf"https:/\/{SECRET_REDACTION}@token.example.com:8443/health"
+        ),
+    )
+
+
+def test_nfkc_structural_delimiters_preserve_their_original_glyphs() -> None:
+    colon_delimiters = (
+        "\N{PRESENTATION FORM FOR VERTICAL COLON}",
+        "\N{SMALL COLON}",
+        "\N{FULLWIDTH COLON}",
+    )
+    equals_delimiters = (
+        "\N{SUPERSCRIPT EQUALS SIGN}",
+        "\N{SUBSCRIPT EQUALS SIGN}",
+        "\N{SMALL EQUALS SIGN}",
+        "\N{FULLWIDTH EQUALS SIGN}",
+    )
+
+    for delimiter in (*colon_delimiters, *equals_delimiters):
+        for label, value in (
+            ("api_key", "topsecret"),
+            ("Authorization", "topsecret"),
+            ("Cookie", "a_1"),
+        ):
+            _assert_sanitizer_fixed_point(
+                f"{label}{delimiter}{value}",
+                f"{label}{delimiter}{SECRET_REDACTION}",
+            )
+        safe_ratio = f"ratio{delimiter}1"
+        _assert_sanitizer_fixed_point(safe_ratio, safe_ratio)
+
+    for delimiter in equals_delimiters:
+        _assert_sanitizer_fixed_point(
+            f"https://auth.example/path?api_key{delimiter}topsecret",
+            (
+                f"https://auth.example/path?api_key{delimiter}"
+                f"{SECRET_REDACTION}"
+            ),
+        )
+
+    for delimiter in colon_delimiters:
+        safe_tag = f"https://auth.example/path#auth{delimiter}section"
+        _assert_sanitizer_fixed_point(safe_tag, safe_tag)
+
+
+def test_unicode_spaces_support_labels_without_cross_field_contamination() -> None:
+    spaces = tuple(
+        chr(codepoint)
+        for codepoint in (
+            0x0020,
+            0x00A0,
+            0x1680,
+            0x2000,
+            0x2001,
+            0x2002,
+            0x2003,
+            0x2004,
+            0x2005,
+            0x2006,
+            0x2007,
+            0x2008,
+            0x2009,
+            0x200A,
+            0x202F,
+            0x205F,
+            0x3000,
+        )
+    )
+
+    for space in spaces:
+        for first, second in (
+            ("api", "key"),
+            ("access", "key"),
+            ("private", "key"),
+            ("client", "secret"),
+        ):
+            label = f"{first}{space}{second}"
+            _assert_sanitizer_fixed_point(
+                f"{label}=topsecret",
+                f"{label}={SECRET_REDACTION}",
+            )
+
+        for parts in (
+            ("Authorization", "Header"),
+            ("token", "payload"),
+            ("api", "key", "material"),
+        ):
+            label = space.join(parts)
+            _assert_sanitizer_fixed_point(
+                f"{label}=topsecret",
+                f"{label}={SECRET_REDACTION}",
+            )
+
+        cookie_label = f"session{space}cookie"
+        _assert_sanitizer_fixed_point(
+            f"{cookie_label}=a_1",
+            f"{cookie_label}={SECRET_REDACTION}",
+        )
+
+        for safe_source in (
+            f"safe=token_count{space}field=ok",
+            f"ratio{space}field=ok",
+            f"password{space}policy=rotate-quarterly",
+        ):
+            _assert_sanitizer_fixed_point(safe_source, safe_source)
+
+
 def test_url_path_query_and_fragment_colons_are_safe_tags() -> None:
     safe_urls = (
         "https://auth.example.com:443/path/token:latest",
@@ -1165,6 +1292,15 @@ def test_structural_scanner_stays_stable_for_many_segments_and_urls() -> None:
     )
     _assert_sanitizer_fixed_point(unicode_assignments, unicode_assignments)
 
+    mixed_url = r"https:/\/auth.example.com:443/path/token:latest"
+    repeated_mixed_urls = " ".join(mixed_url for _ in range(3_000))
+    _assert_sanitizer_fixed_point(repeated_mixed_urls, repeated_mixed_urls)
+
+    compatible_assignments = ";".join(
+        f"field_{index}\N{FULLWIDTH EQUALS SIGN}ok" for index in range(10_000)
+    )
+    _assert_sanitizer_fixed_point(compatible_assignments, compatible_assignments)
+
 
 def test_trace_view_preserves_safe_urls_and_redacts_punctuation_labels() -> None:
     trace = load_trace("clean-01")
@@ -1187,7 +1323,23 @@ def test_trace_view_preserves_safe_urls_and_redacts_punctuation_labels() -> None
                     "safe=token_count\N{FULLWIDTH SEMICOLON}field=ok "
                     "unicode-boundary-safe\n"
                     f"https://auth.example.com:443\N{IDEOGRAPHIC COMMA}"
-                    f"api_key={VALUE_SECRET}"
+                    f"api_key={VALUE_SECRET}\n"
+                    f"api_key\N{FULLWIDTH EQUALS SIGN}{VALUE_SECRET}\n"
+                    f"Authorization\N{PRESENTATION FORM FOR VERTICAL COLON}"
+                    f"{VALUE_SECRET}\n"
+                    "Cookie\N{FULLWIDTH EQUALS SIGN}a_1\n"
+                    f"https://auth.example/path?api_key"
+                    f"\N{SUPERSCRIPT EQUALS SIGN}{VALUE_SECRET}\n"
+                    "ratio\N{FULLWIDTH EQUALS SIGN}1 compatible-ratio-safe\n"
+                    f"api\N{NO-BREAK SPACE}key={VALUE_SECRET}\n"
+                    f"access\N{EM SPACE}key={VALUE_SECRET}\n"
+                    "safe=token_count\N{NO-BREAK SPACE}field=ok "
+                    "unicode-space-safe\n"
+                    rf"https:/\/agent:{VALUE_SECRET}@mixed.example.com:443/path"
+                    "\n"
+                    rf"https:\//agent:{VALUE_SECRET}@mixed-two.example.com:443/path"
+                    "\n"
+                    r"https:/\/auth.example.com:443/path mixed-url-safe"
                 ),
             }
         }
@@ -1209,4 +1361,7 @@ def test_trace_view_preserves_safe_urls_and_redacts_punctuation_labels() -> None
     assert "escaped-url-safe" in message
     assert "colon-tag-safe" in message
     assert "unicode-boundary-safe" in message
+    assert "compatible-ratio-safe" in message
+    assert "unicode-space-safe" in message
+    assert "mixed-url-safe" in message
     assert sanitize_diagnostic_trace_view(view) == view

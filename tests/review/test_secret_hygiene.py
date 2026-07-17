@@ -177,6 +177,23 @@ def _trace_with_value_secrets() -> TraceIR:
                     f"https://auth.example.com:443\N{IDEOGRAPHIC COMMA}"
                     f"api_key={SENTINEL_KEY}\n"
                     f"headers→api_key={SENTINEL_KEY}\n"
+                    f"api_key\N{FULLWIDTH EQUALS SIGN}{SENTINEL_KEY}\n"
+                    f"Authorization\N{PRESENTATION FORM FOR VERTICAL COLON}"
+                    f"{SENTINEL_KEY}\n"
+                    "Cookie\N{FULLWIDTH EQUALS SIGN}a_1\n"
+                    f"https://auth.example/path?api_key"
+                    f"\N{SUPERSCRIPT EQUALS SIGN}{SENTINEL_KEY}\n"
+                    "ratio\N{FULLWIDTH EQUALS SIGN}1 compatible-ratio-safe\n"
+                    f"api\N{NO-BREAK SPACE}key={SENTINEL_KEY}\n"
+                    f"access\N{EM SPACE}key={SENTINEL_KEY}\n"
+                    "safe=token_count\N{NO-BREAK SPACE}field=ok "
+                    "unicode-space-safe\n"
+                    rf"https:/\/agent:{SENTINEL_KEY}@mixed.example.com:443/path"
+                    "\n"
+                    rf"https:\//agent:{SENTINEL_KEY}@mixed-two.example.com:443/path"
+                    "\n"
+                    r"https:/\/auth.example.com:443/path mixed-url-safe"
+                    "\n"
                     "Bearer Qaz; HTTP 401\n"
                     "A cookie: recipe; instructions remain safe\n"
                     "cookie: recipe; instructions remain safe\n"
@@ -387,6 +404,9 @@ def test_allowed_trace_value_secrets_never_reach_sqlite_or_public_aggregate(
     assert "escaped-url-safe" in view_json[0]
     assert "colon-tag-safe" in view_json[0]
     assert "unicode-boundary-safe" in view_json[0]
+    assert "compatible-ratio-safe" in view_json[0]
+    assert "unicode-space-safe" in view_json[0]
+    assert "mixed-url-safe" in view_json[0]
     assert "Bearer of; good news" in view_json[0]
 
 
