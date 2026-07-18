@@ -2,16 +2,16 @@ from hashlib import sha256
 
 import pytest
 
-from spanvouch.diagnosis.evidence import EvidenceCatalog, canonical_json
 from spanvouch.diagnosis.models import EvidenceSelector
-from spanvouch.diagnosis.trace_view import DiagnosticTraceView
-from tests.diagnosis.test_trace_view import load_trace
+from spanvouch.trace.diagnostic_view import TraceProjector
+from spanvouch.trace.evidence_catalog import EvidenceCatalog, canonical_json
+from tests.trace.test_diagnostic_view import load_trace
 
 
 def test_catalog_resolves_real_span_fields_deterministically() -> None:
-    view = DiagnosticTraceView.from_trace(load_trace("invalid_argument-01"))
-    first = EvidenceCatalog.from_view(view)
-    second = EvidenceCatalog.from_view(view)
+    context = TraceProjector().project(load_trace("invalid_argument-01"))
+    first = EvidenceCatalog.from_context(context)
+    second = EvidenceCatalog.from_context(context)
     selector = EvidenceSelector(
         span_id="span-005",
         field_path="attributes.tool.error.type",
@@ -28,8 +28,8 @@ def test_catalog_resolves_real_span_fields_deterministically() -> None:
 
 
 def test_catalog_contains_basic_span_fields_but_no_forbidden_attributes() -> None:
-    catalog = EvidenceCatalog.from_view(
-        DiagnosticTraceView.from_trace(load_trace("ignored_tool_error-01"))
+    catalog = EvidenceCatalog.from_context(
+        TraceProjector().project(load_trace("ignored_tool_error-01"))
     )
 
     assert "span-005::name" in catalog.selectors
@@ -40,8 +40,8 @@ def test_catalog_contains_basic_span_fields_but_no_forbidden_attributes() -> Non
 
 
 def test_catalog_rejects_unknown_selector() -> None:
-    catalog = EvidenceCatalog.from_view(
-        DiagnosticTraceView.from_trace(load_trace("clean-01"))
+    catalog = EvidenceCatalog.from_context(
+        TraceProjector().project(load_trace("clean-01"))
     )
 
     with pytest.raises(KeyError, match="span-999"):

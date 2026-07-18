@@ -1,0 +1,1 @@
+{"run_id":"run-1","schema_name":"spanvouch.trace","schema_version":"1.0","spans":[{"attributes":{"error.type":"tool_error","secret":"must-not-pass"},"ended_at":"2026-07-18T00:00:00Z","kind":"agent","name":"agent","parent_span_id":null,"span_id":"root","started_at":"2026-07-18T00:00:00Z","status":"error","trace_id":"trace-1"}],"trace_id":"trace-1"}

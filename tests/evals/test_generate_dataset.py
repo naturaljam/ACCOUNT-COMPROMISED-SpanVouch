@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from spanvouch.contracts.trace import SpanKind, SpanStatus, TraceIR, TraceSpan
 from spanvouch.evals.generate_dataset import _normalize_trace, generate_dataset
-from spanvouch.trace_ir.models import SpanKind, SpanStatus, TraceIR, TraceSpan
 
 NOW = datetime(2026, 7, 15, tzinfo=UTC)
 

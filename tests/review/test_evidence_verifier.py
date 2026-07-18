@@ -2,7 +2,7 @@ from collections.abc import Callable
 
 import pytest
 
-from spanvouch.diagnosis.evidence import EvidenceCatalog
+from spanvouch.contracts.trace import DiagnosticTraceView, SpanStatus
 from spanvouch.diagnosis.models import (
     AbstainReason,
     ClaimStage,
@@ -14,7 +14,6 @@ from spanvouch.diagnosis.models import (
     EvidenceRef,
     EvidenceSelector,
 )
-from spanvouch.diagnosis.trace_view import DiagnosticTraceView
 from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.invariants.supportlab import supportlab_rules
 from spanvouch.review.evidence_verifier import EvidenceVerifier
@@ -27,7 +26,7 @@ from spanvouch.review.models import (
     canonical_json,
     canonical_sha256,
 )
-from spanvouch.trace_ir.models import SpanStatus
+from spanvouch.trace.evidence_catalog import EvidenceCatalog
 from tests.review.factories import (
     make_diagnosis_report,
     make_review_snapshot,

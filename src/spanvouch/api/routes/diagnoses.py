@@ -10,7 +10,7 @@ from spanvouch.diagnosis.errors import (
 )
 from spanvouch.diagnosis.models import DiagnoserKind, DiagnosisReport
 from spanvouch.diagnosis.service import DiagnosisService
-from spanvouch.trace_ir.repository import TraceRepository
+from spanvouch.trace.repository import TraceRepository
 
 
 class DiagnosisRequest(BaseModel):

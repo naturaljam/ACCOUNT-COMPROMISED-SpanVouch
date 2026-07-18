@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from spanvouch.diagnosis.evidence import EvidenceCatalog
+from spanvouch.contracts.trace import DiagnosticSpan, DiagnosticTraceView, SpanKind, SpanStatus
 from spanvouch.diagnosis.models import (
     AbstainReason,
     ClaimStage,
@@ -15,7 +15,6 @@ from spanvouch.diagnosis.models import (
     EvidenceSelector,
 )
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
-from spanvouch.diagnosis.trace_view import DiagnosticSpan, DiagnosticTraceView
 from spanvouch.failure_types import FailureType
 from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.invariants.supportlab import supportlab_rules
@@ -28,8 +27,8 @@ from spanvouch.review.models import (
     canonical_json,
     canonical_sha256,
 )
-from spanvouch.trace_ir.models import SpanKind, SpanStatus
-from tests.diagnosis.test_trace_view import load_trace
+from spanvouch.trace.evidence_catalog import EvidenceCatalog
+from tests.trace.test_diagnostic_view import load_trace, project_trace
 
 NOW = datetime(2026, 7, 17, 8, 0, tzinfo=UTC)
 
@@ -192,7 +191,7 @@ def _verifier() -> EvidenceVerifier:
 
 async def _rules_report(run_id: str) -> tuple[DiagnosticTraceView, DiagnosisReport]:
     trace = load_trace(run_id)
-    view = DiagnosticTraceView.from_trace(trace)
+    view = project_trace(trace)
     catalog = EvidenceCatalog.from_view(view)
     execution = await RuleDiagnoser(InvariantEngine(supportlab_rules())).diagnose(
         view,
@@ -350,7 +349,7 @@ async def test_supported_invariant_type_conflicts_with_diagnosis_type() -> None:
 
 async def test_no_failure_conflicts_with_supported_hard_failure() -> None:
     trace = load_trace("wrong_tool-01")
-    view = DiagnosticTraceView.from_trace(trace)
+    view = project_trace(trace)
     diagnosis = DiagnosisReport(
         trace_id=trace.trace_id,
         run_id=trace.run_id,
@@ -377,7 +376,7 @@ async def test_no_failure_conflicts_with_supported_hard_failure() -> None:
 
 async def test_abstention_conflicts_with_supported_hard_failure() -> None:
     trace = load_trace("wrong_tool-01")
-    view = DiagnosticTraceView.from_trace(trace)
+    view = project_trace(trace)
     diagnosis = DiagnosisReport(
         trace_id=trace.trace_id,
         run_id=trace.run_id,

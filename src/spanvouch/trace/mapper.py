@@ -6,7 +6,7 @@ from opentelemetry.trace import StatusCode
 from opentelemetry.util.types import AttributeValue
 from pydantic import JsonValue
 
-from spanvouch.trace_ir.models import SpanKind, SpanStatus, TraceIR, TraceSpan
+from spanvouch.contracts.trace import SpanKind, SpanStatus, TraceIR, TraceSpan
 
 _KIND_MAP = {
     "AGENT": SpanKind.AGENT,

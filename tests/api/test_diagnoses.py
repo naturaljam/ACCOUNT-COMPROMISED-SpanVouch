@@ -5,8 +5,8 @@ from spanvouch.api.app import create_app
 from spanvouch.diagnosis.errors import ProviderRequestError
 from spanvouch.diagnosis.models import DiagnoserKind
 from spanvouch.diagnosis.service import DiagnosisService
-from spanvouch.trace_ir.repository import InMemoryTraceRepository
-from tests.diagnosis.test_trace_view import load_trace
+from spanvouch.trace.repository import InMemoryTraceRepository
+from tests.trace.test_diagnostic_view import load_trace
 
 
 def client_with_repository() -> TestClient:

@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from spanvouch.contracts.trace import TraceIR
 from spanvouch.diagnosis.models import DiagnosisReport
-from spanvouch.diagnosis.trace_view import DiagnosticTraceView
 from spanvouch.evals.generate_review_dataset import generate_review_dataset
 from spanvouch.evals.review_labels import (
     load_review_candidates,
@@ -25,7 +25,7 @@ from spanvouch.review.models import (
     canonical_json,
     canonical_sha256,
 )
-from spanvouch.trace_ir.models import TraceIR
+from tests.trace.test_diagnostic_view import project_trace
 
 DATASET = Path("evals/datasets/supportlab-review-v1")
 SOURCE_DATASET = Path("evals/datasets/supportlab-v1")
@@ -271,7 +271,7 @@ async def test_generation_and_verification_do_not_load_gold_labels(
         if item.mutation_kind == "unmodified"
     )
     trace = next(item for item in _source_traces() if item.run_id == candidate.source_run_id)
-    view = DiagnosticTraceView.from_trace(trace)
+    view = project_trace(trace)
     view_json = canonical_json(view)
     snapshot = ReviewInputSnapshot(
         trace_id=trace.trace_id,

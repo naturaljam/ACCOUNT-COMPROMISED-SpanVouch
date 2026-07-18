@@ -1,6 +1,6 @@
 from hashlib import sha256
 
-from spanvouch.diagnosis.evidence import EvidenceCatalog
+from spanvouch.contracts.trace import DiagnosticTraceView
 from spanvouch.diagnosis.models import (
     AbstainReason,
     ClaimStage,
@@ -11,10 +11,10 @@ from spanvouch.diagnosis.models import (
     DiagnosisStatus,
     EvidenceRef,
 )
-from spanvouch.diagnosis.trace_view import DiagnosticTraceView
 from spanvouch.failure_types import FailureType
 from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.invariants.models import InvariantResult, InvariantStatus, RuleContext, RuleScope
+from spanvouch.trace.evidence_catalog import EvidenceCatalog
 
 
 def _unique_evidence(findings: tuple[InvariantResult, ...]) -> tuple[EvidenceRef, ...]:

@@ -4,16 +4,16 @@ from pathlib import Path
 
 import pytest
 
-from spanvouch.diagnosis import trace_view as trace_view_module
-from spanvouch.diagnosis.trace_view import (
+from spanvouch.contracts import trace as trace_view_module
+from spanvouch.contracts.trace import DiagnosticTraceView, TraceIR
+from spanvouch.review.models import canonical_json
+from spanvouch.trace.diagnostic_view import (
     ALLOWED_ATTRIBUTES,
     SECRET_REDACTION,
-    DiagnosticTraceView,
+    TraceProjector,
     sanitize_diagnostic_trace_view,
     sanitize_diagnostic_value,
 )
-from spanvouch.review.models import canonical_json
-from spanvouch.trace_ir.models import TraceIR
 
 DATASET = Path("evals/datasets/supportlab-v1/traces.jsonl")
 FORBIDDEN_PARTS = (
@@ -33,11 +33,15 @@ def load_trace(run_id: str) -> TraceIR:
     raise AssertionError(f"missing fixture: {run_id}")
 
 
+def project_trace(trace: TraceIR) -> DiagnosticTraceView:
+    return TraceProjector().project(trace).view
+
+
 def test_trace_view_removes_identity_and_fault_injection_fields() -> None:
     trace = load_trace("invalid_argument-01")
     original = trace.model_dump()
 
-    view = DiagnosticTraceView.from_trace(trace)
+    view = project_trace(trace)
 
     assert not hasattr(view, "trace_id")
     assert not hasattr(view, "run_id")
@@ -55,7 +59,7 @@ def test_trace_view_removes_identity_and_fault_injection_fields() -> None:
 
 
 def test_trace_view_keeps_only_diagnostic_business_attributes() -> None:
-    view = DiagnosticTraceView.from_trace(load_trace("policy_violation-01"))
+    view = project_trace(load_trace("policy_violation-01"))
     submit = next(span for span in view.spans if span.name == "submit_refund")
 
     assert submit.attributes["tool.arguments.approval"] == "none"
@@ -88,7 +92,7 @@ def test_trace_view_recursively_redacts_credentials_inside_allowed_values() -> N
     )
     trace = trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
 
-    view = DiagnosticTraceView.from_trace(trace)
+    view = project_trace(trace)
     serialized = canonical_json(view)
 
     assert VALUE_SECRET not in serialized
@@ -126,7 +130,7 @@ def test_trace_view_redacts_every_authorization_scheme_inside_allowed_strings() 
         )
         candidate = trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
 
-        serialized = canonical_json(DiagnosticTraceView.from_trace(candidate))
+        serialized = canonical_json(project_trace(candidate))
 
         assert VALUE_SECRET not in serialized
         assert "safe retry context" not in serialized
@@ -154,7 +158,7 @@ def test_trace_view_sanitizes_escaped_and_double_encoded_json_idempotently() -> 
     )
     candidate = trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
 
-    view = DiagnosticTraceView.from_trace(candidate)
+    view = project_trace(candidate)
     serialized = canonical_json(view)
 
     assert VALUE_SECRET not in serialized
@@ -177,7 +181,7 @@ def test_trace_view_preserves_safe_bearer_prose_and_redacts_token_shaped_bearer(
     )
     candidate = trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
 
-    view = DiagnosticTraceView.from_trace(candidate)
+    view = project_trace(candidate)
 
     assert view.spans[0].attributes["run.final_message"] == safe_message
     assert VALUE_SECRET not in canonical_json(view)
@@ -210,7 +214,7 @@ def test_trace_view_redacts_opaque_bearer_tokens_only_at_value_boundaries() -> N
     )
     candidate = trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
 
-    view = DiagnosticTraceView.from_trace(candidate)
+    view = project_trace(candidate)
     serialized = canonical_json(view)
 
     assert f"Bearer {opaque_letters}" not in serialized
@@ -279,7 +283,7 @@ def test_trace_view_uses_one_classifier_for_common_nested_credential_keys() -> N
         }
     )
 
-    view = DiagnosticTraceView.from_trace(
+    view = project_trace(
         trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
     )
     serialized = canonical_json(view)
@@ -326,7 +330,7 @@ def test_trace_view_classifies_mapping_labels_after_stripping_delimiters_and_pat
         }
     )
 
-    view = DiagnosticTraceView.from_trace(
+    view = project_trace(
         trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
     )
     serialized = canonical_json(view)
@@ -351,7 +355,7 @@ def test_trace_view_sanitizes_span_names_mapping_keys_and_final_messages() -> No
         }
     )
 
-    view = DiagnosticTraceView.from_trace(
+    view = project_trace(
         trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
     )
 
@@ -379,7 +383,7 @@ def test_trace_view_sanitizes_deep_encoding_and_fails_closed_at_budget() -> None
         }
     )
 
-    view = DiagnosticTraceView.from_trace(
+    view = project_trace(
         trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
     )
     serialized = canonical_json(view)
@@ -516,7 +520,7 @@ def test_trace_view_preserves_ordinary_bearer_prose_byte_for_byte(
         }
     )
 
-    view = DiagnosticTraceView.from_trace(
+    view = project_trace(
         trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
     )
 
@@ -541,7 +545,7 @@ def test_trace_view_redacts_long_and_short_credential_shaped_bearer_values() -> 
         }
     )
 
-    view = DiagnosticTraceView.from_trace(
+    view = project_trace(
         trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
     )
     serialized = canonical_json(view)
@@ -581,7 +585,7 @@ def test_trace_view_fails_closed_for_delimited_keys_and_complete_auth_headers() 
         }
     )
 
-    view = DiagnosticTraceView.from_trace(
+    view = project_trace(
         trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
     )
     serialized = canonical_json(view)
@@ -2487,7 +2491,7 @@ def test_trace_view_preserves_safe_urls_and_redacts_punctuation_labels() -> None
     )
     candidate = trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
 
-    view = DiagnosticTraceView.from_trace(candidate)
+    view = project_trace(candidate)
     message = view.spans[0].attributes["tool.error.message"]
 
     assert isinstance(message, str)
@@ -2547,7 +2551,7 @@ def test_trace_view_redacts_additional_sensitive_mapping_families() -> None:
     )
     candidate = trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
 
-    view = DiagnosticTraceView.from_trace(candidate)
+    view = project_trace(candidate)
     result = view.spans[0].attributes["tool.result"]
 
     assert result == {
@@ -2579,7 +2583,7 @@ def test_trace_view_redacts_composed_multiline_tool_result() -> None:
     )
     candidate = trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
 
-    view = DiagnosticTraceView.from_trace(candidate)
+    view = project_trace(candidate)
     result = view.spans[0].attributes["tool.result"]
 
     assert isinstance(result, str)

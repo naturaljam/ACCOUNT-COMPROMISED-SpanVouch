@@ -16,12 +16,11 @@ from fastapi.testclient import TestClient
 
 from spanvouch.api.app import create_app
 from spanvouch.cli import review as review_cli
+from spanvouch.contracts.trace import TraceIR
 from spanvouch.diagnosis.errors import ProviderProtocolError
-from spanvouch.diagnosis.evidence import EvidenceCatalog
 from spanvouch.diagnosis.models import DiagnoserKind, EvidenceSelector
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
 from spanvouch.diagnosis.service import DiagnosisService
-from spanvouch.diagnosis.trace_view import SECRET_REDACTION, DiagnosticTraceView
 from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.invariants.supportlab import supportlab_rules
 from spanvouch.review.evidence_verifier import EvidenceVerifier
@@ -36,8 +35,9 @@ from spanvouch.review.semantic_verifier import SemanticVerifier
 from spanvouch.review.service import ReviewService
 from spanvouch.review.sqlite_repository import SQLiteReviewRepository
 from spanvouch.review.workflow import ReviewWorkflow, ReviewWorkflowProviderError
-from spanvouch.trace_ir.models import TraceIR
-from spanvouch.trace_ir.repository import InMemoryTraceRepository
+from spanvouch.trace.diagnostic_view import SECRET_REDACTION, TraceProjector
+from spanvouch.trace.evidence_catalog import EvidenceCatalog
+from spanvouch.trace.repository import InMemoryTraceRepository
 
 ROOT = Path(__file__).resolve().parents[2]
 SENTINEL_KEY = "sentinel" + "-private-deepseek-key"
@@ -368,8 +368,9 @@ def test_allowed_trace_value_secrets_never_reach_sqlite_or_public_aggregate(
         case_id = created.case.case_id
 
     detail = asyncio.run(repository.get_detail(case_id))
-    trace_view = DiagnosticTraceView.from_trace(_trace_with_value_secrets())
-    catalog = EvidenceCatalog.from_view(trace_view)
+    context = TraceProjector().project(_trace_with_value_secrets())
+    trace_view = context.view
+    catalog = EvidenceCatalog.from_context(context)
     catalog_refs = tuple(
         catalog.resolve(
             EvidenceSelector(

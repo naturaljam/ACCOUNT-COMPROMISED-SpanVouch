@@ -5,6 +5,7 @@ import os
 from collections.abc import Sequence
 from pathlib import Path
 
+from spanvouch.contracts.trace import TraceIR
 from spanvouch.diagnosis.deepseek import DeepSeekConfig, DeepSeekProvider
 from spanvouch.diagnosis.errors import ProviderConfigurationError
 from spanvouch.diagnosis.llm_diagnoser import LlmDiagnoser
@@ -15,7 +16,6 @@ from spanvouch.evals.diagnosis_labels import DiagnosisGoldLabel, load_diagnosis_
 from spanvouch.evals.diagnosis_metrics import DiagnosisEvaluationReport, evaluate_diagnoser
 from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.invariants.supportlab import supportlab_rules
-from spanvouch.trace_ir.models import TraceIR
 
 DEFAULT_DATASET = Path("evals/datasets/supportlab-v1")
 DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"

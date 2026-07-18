@@ -16,8 +16,8 @@ from spanvouch.review.errors import (
     ReviewValidationError,
 )
 from spanvouch.review.workflow import ReviewWorkflowProviderError
-from spanvouch.trace_ir.repository import InMemoryTraceRepository
-from tests.diagnosis.test_trace_view import load_trace
+from spanvouch.trace.repository import InMemoryTraceRepository
+from tests.trace.test_diagnostic_view import load_trace
 
 
 @pytest.fixture(autouse=True)

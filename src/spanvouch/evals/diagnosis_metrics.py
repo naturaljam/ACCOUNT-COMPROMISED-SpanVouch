@@ -2,8 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from spanvouch.contracts.trace import TraceIR
 from spanvouch.diagnosis.errors import DiagnosisError
-from spanvouch.diagnosis.evidence import EvidenceCatalog
 from spanvouch.diagnosis.models import (
     AbstainReason,
     DiagnoserKind,
@@ -11,11 +11,11 @@ from spanvouch.diagnosis.models import (
     DiagnosisStatus,
 )
 from spanvouch.diagnosis.service import DiagnosisService
-from spanvouch.diagnosis.trace_view import DiagnosticTraceView
 from spanvouch.evals.baselines import final_state_baseline, rule_only_baseline
 from spanvouch.evals.diagnosis_labels import DiagnosisGoldLabel, validate_dataset_join
 from spanvouch.failure_types import FailureType
-from spanvouch.trace_ir.models import TraceIR
+from spanvouch.trace.diagnostic_view import TraceProjector
+from spanvouch.trace.evidence_catalog import EvidenceCatalog
 
 
 class DiagnosisSampleResult(BaseModel):
@@ -257,9 +257,8 @@ def _compute_metrics(
     for sample in samples:
         if sample.report is None:
             continue
-        catalog = EvidenceCatalog.from_view(
-            DiagnosticTraceView.from_trace(traces[sample.run_id])
-        )
+        context = TraceProjector().project(traces[sample.run_id])
+        catalog = EvidenceCatalog.from_context(context)
         selectors = set(catalog.selectors)
         for item in sample.report.evidence:
             total_evidence += 1

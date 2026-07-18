@@ -13,7 +13,6 @@ from pydantic import (
     model_validator,
 )
 
-from spanvouch.diagnosis.evidence import EvidenceCatalog
 from spanvouch.diagnosis.models import ClaimStage, EvidenceSelector, ProviderUsage
 from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig, ModelProvider
 from spanvouch.failure_types import FailureType
@@ -30,6 +29,7 @@ from spanvouch.review.models import (
     canonical_json,
     canonical_sha256,
 )
+from spanvouch.trace.evidence_catalog import EvidenceCatalog
 
 _SEMANTIC_POLICY_VERSION = "semantic-policy-v1"
 _SEMANTIC_SCHEMA_VERSION = "semantic-verifier-schema-v1"

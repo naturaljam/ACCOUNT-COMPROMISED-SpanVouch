@@ -6,8 +6,8 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from spanvouch.contracts.trace import TraceIR
 from spanvouch.diagnosis.errors import ProviderError
-from spanvouch.diagnosis.trace_view import DiagnosticTraceView
 from spanvouch.evals.generate_review_dataset import MutationKind, ReviewCandidate
 from spanvouch.evals.review_labels import (
     ReviewGoldLabel,
@@ -22,7 +22,7 @@ from spanvouch.review.models import (
     canonical_json,
     canonical_sha256,
 )
-from spanvouch.trace_ir.models import TraceIR
+from spanvouch.trace.diagnostic_view import TraceProjector
 
 _SNAPSHOT_TIME = datetime(2026, 7, 17, tzinfo=UTC)
 
@@ -259,7 +259,7 @@ def _compute_metrics(
 
 
 def _snapshot(trace: TraceIR) -> ReviewInputSnapshot:
-    view = DiagnosticTraceView.from_trace(trace)
+    view = TraceProjector().project(trace).view
     return ReviewInputSnapshot(
         trace_id=trace.trace_id,
         run_id=trace.run_id,

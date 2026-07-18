@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from spanvouch.diagnosis.evidence import EvidenceCatalog
+from spanvouch.contracts.trace import DiagnosticTraceView
 from spanvouch.diagnosis.llm_diagnoser import LlmDiagnoser
 from spanvouch.diagnosis.models import AbstainReason, DiagnosisStatus, ProviderUsage
 from spanvouch.diagnosis.protocols import (
@@ -10,9 +10,10 @@ from spanvouch.diagnosis.protocols import (
     GenerationConfig,
     ProviderResponse,
 )
-from spanvouch.diagnosis.trace_view import DiagnosticTraceView
 from spanvouch.failure_types import FailureType
-from tests.diagnosis.test_trace_view import load_trace
+from spanvouch.trace.diagnostic_view import TraceProjector
+from spanvouch.trace.evidence_catalog import EvidenceCatalog
+from tests.trace.test_diagnostic_view import load_trace
 
 
 class RecordingProvider:
@@ -43,8 +44,8 @@ class RecordingProvider:
 
 
 def inputs() -> tuple[DiagnosticTraceView, EvidenceCatalog]:
-    view = DiagnosticTraceView.from_trace(load_trace("invalid_argument-01"))
-    return view, EvidenceCatalog.from_view(view)
+    context = TraceProjector().project(load_trace("invalid_argument-01"))
+    return context.view, EvidenceCatalog.from_context(context)
 
 
 @pytest.mark.asyncio

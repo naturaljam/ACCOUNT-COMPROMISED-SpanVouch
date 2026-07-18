@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
-from spanvouch.diagnosis.evidence import EvidenceCatalog
+from spanvouch.contracts.trace import DiagnosticSpan, DiagnosticTraceView, SpanKind, SpanStatus
 from spanvouch.diagnosis.models import (
     ClaimStage,
     DiagnoserKind,
@@ -10,7 +10,6 @@ from spanvouch.diagnosis.models import (
     DiagnosisStatus,
     EvidenceSelector,
 )
-from spanvouch.diagnosis.trace_view import DiagnosticSpan, DiagnosticTraceView
 from spanvouch.failure_types import FailureType
 from spanvouch.review.models import (
     CorrectionClaim,
@@ -32,7 +31,7 @@ from spanvouch.review.models import (
     canonical_json,
     canonical_sha256,
 )
-from spanvouch.trace_ir.models import SpanKind, SpanStatus
+from spanvouch.trace.evidence_catalog import EvidenceCatalog
 
 NOW = datetime(2026, 7, 17, 8, 0, tzinfo=UTC)
 

@@ -1,0 +1,1 @@
+{"run_id":"run-1","schema_name":"spanvouch.diagnostic-context","schema_version":"1.0","trace_id":"trace-1","view":{"spans":[{"attributes":{"error.type":"tool_error"},"ended_at":"2026-07-18T00:00:00Z","kind":"agent","name":"agent","parent_span_id":null,"span_id":"root","started_at":"2026-07-18T00:00:00Z","status":"error"}]}}

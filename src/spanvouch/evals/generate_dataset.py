@@ -8,14 +8,14 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
+from spanvouch.contracts.trace import TraceIR, TraceSpan
 from spanvouch.observability.tracing import build_test_tracer
 from spanvouch.supportlab.decision import ScriptedDecisionModel
 from spanvouch.supportlab.graph import run_support_scenario
 from spanvouch.supportlab.repository import build_seed_repository
 from spanvouch.supportlab.scenarios import build_scenarios
 from spanvouch.supportlab.tools import SupportTools
-from spanvouch.trace_ir.mapper import map_spans
-from spanvouch.trace_ir.models import TraceIR, TraceSpan
+from spanvouch.trace.mapper import map_spans
 
 
 class DatasetManifest(BaseModel):
@@ -136,7 +136,7 @@ async def generate_dataset(output_dir: Path, seed: int = 20260715) -> DatasetMan
             map_spans(scenario.scenario_id, exporter.get_finished_spans()),
             sequence,
         )
-        trace_rows.append(trace.model_dump(mode="json"))
+        trace_rows.append(trace.model_dump(mode="json", exclude={"schema_name"}))
         label_rows.append(
             {
                 "run_id": scenario.scenario_id,

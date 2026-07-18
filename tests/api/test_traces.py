@@ -4,8 +4,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from spanvouch.api.app import create_app
-from spanvouch.trace_ir.models import TraceIR
-from spanvouch.trace_ir.repository import InMemoryTraceRepository
+from spanvouch.contracts.trace import TraceIR
+from spanvouch.trace.repository import InMemoryTraceRepository
 
 
 class ValueErrorTraceRepository:

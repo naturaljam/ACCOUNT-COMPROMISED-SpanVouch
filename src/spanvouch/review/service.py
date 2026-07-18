@@ -5,7 +5,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from hashlib import sha256
 
-from spanvouch.diagnosis.evidence import EvidenceCatalog
+from spanvouch.contracts.trace import DiagnosticContext, TraceIR
 from spanvouch.diagnosis.models import (
     DiagnoserKind,
     DiagnosisClaim,
@@ -14,7 +14,6 @@ from spanvouch.diagnosis.models import (
     EvidenceRef,
 )
 from spanvouch.diagnosis.service import DiagnosisService
-from spanvouch.diagnosis.trace_view import DiagnosticTraceView
 from spanvouch.review.commands import (
     ApplyHumanDecision,
     CreateReviewCase,
@@ -42,7 +41,8 @@ from spanvouch.review.models import (
     resume_requires_live_api,
 )
 from spanvouch.review.protocols import ReviewRepository, ReviewWorkflowRunner, Verifier
-from spanvouch.trace_ir.models import TraceIR
+from spanvouch.trace.diagnostic_view import TraceProjector
+from spanvouch.trace.evidence_catalog import EvidenceCatalog
 
 CATALOG_VERSION = "evidence-catalog-v1"
 HUMAN_CORRECTION_VERSION = "human-correction-v1"
@@ -67,7 +67,12 @@ def _build_corrected_report(
     if any(span_id not in span_ids for span_id in draft.critical_span_ids):
         raise ValueError("correction contains an unknown critical span")
 
-    catalog = EvidenceCatalog.from_view(view)
+    context = DiagnosticContext(
+        trace_id=snapshot.trace_id,
+        run_id=snapshot.run_id,
+        view=view,
+    )
+    catalog = EvidenceCatalog.from_context(context)
     evidence_by_selector: dict[str, EvidenceRef] = {}
     claims: list[DiagnosisClaim] = []
     for claim in draft.causal_chain:
@@ -269,9 +274,9 @@ class ReviewService:
         verification_mode: VerificationMode,
         idempotency_key: str,
     ) -> DiagnosisReviewDetail:
-        view = DiagnosticTraceView.from_trace(trace)
-        view_json = canonical_json(view)
-        input_sha256 = canonical_sha256(view)
+        context = TraceProjector().project(trace)
+        view_json = canonical_json(context.view)
+        input_sha256 = canonical_sha256(context.view)
         request_sha256 = canonical_sha256(
             {
                 "trace_id": trace.trace_id,

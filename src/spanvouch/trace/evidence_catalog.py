@@ -4,6 +4,7 @@ from types import MappingProxyType
 
 from pydantic import JsonValue
 
+from spanvouch.contracts.trace import DiagnosticContext, DiagnosticTraceView
 from spanvouch.contracts.versioning import (
     canonical_json as canonical_json,
 )
@@ -11,7 +12,6 @@ from spanvouch.contracts.versioning import (
     canonical_sha256 as canonical_sha256,
 )
 from spanvouch.diagnosis.models import EvidenceRef, EvidenceSelector
-from spanvouch.diagnosis.trace_view import DiagnosticTraceView
 
 
 class EvidenceCatalog:
@@ -40,6 +40,10 @@ class EvidenceCatalog:
                     raise ValueError(f"duplicate evidence selector: {selector}")
                 values[selector] = value
         return cls(dict(sorted(values.items())))
+
+    @classmethod
+    def from_context(cls, context: DiagnosticContext) -> "EvidenceCatalog":
+        return cls.from_view(context.view)
 
     @property
     def selectors(self) -> tuple[str, ...]:

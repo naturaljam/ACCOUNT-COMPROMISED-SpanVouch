@@ -11,7 +11,7 @@ from spanvouch.diagnosis.models import (
 )
 from spanvouch.diagnosis.service import DiagnosisConflictError, DiagnosisService
 from spanvouch.failure_types import FailureType
-from tests.diagnosis.test_trace_view import load_trace
+from tests.trace.test_diagnostic_view import load_trace
 
 
 class RecordingDiagnoser:

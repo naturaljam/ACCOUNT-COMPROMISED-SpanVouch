@@ -2,8 +2,6 @@ from dataclasses import dataclass
 
 import pytest
 
-from spanvouch.diagnosis.evidence import EvidenceCatalog
-from spanvouch.diagnosis.trace_view import DiagnosticTraceView
 from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.invariants.models import (
     InvariantResult,
@@ -12,7 +10,9 @@ from spanvouch.invariants.models import (
     RuleScope,
     Severity,
 )
-from tests.diagnosis.test_trace_view import load_trace
+from spanvouch.trace.diagnostic_view import TraceProjector
+from spanvouch.trace.evidence_catalog import EvidenceCatalog
+from tests.trace.test_diagnostic_view import load_trace
 
 
 @dataclass(frozen=True)
@@ -43,8 +43,11 @@ class ExplodingRule:
 
 
 def context() -> RuleContext:
-    view = DiagnosticTraceView.from_trace(load_trace("clean-01"))
-    return RuleContext(view=view, evidence=EvidenceCatalog.from_view(view))
+    diagnostic_context = TraceProjector().project(load_trace("clean-01"))
+    return RuleContext(
+        view=diagnostic_context.view,
+        evidence=EvidenceCatalog.from_context(diagnostic_context),
+    )
 
 
 def test_engine_sorts_results_and_versions_independently_of_registration_order() -> None:

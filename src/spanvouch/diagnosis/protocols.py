@@ -4,9 +4,9 @@ from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from spanvouch.diagnosis.evidence import EvidenceCatalog
+from spanvouch.contracts.trace import DiagnosticTraceView
 from spanvouch.diagnosis.models import DiagnosisExecution, DiagnosisReport, ProviderUsage
-from spanvouch.diagnosis.trace_view import DiagnosticTraceView
+from spanvouch.trace.evidence_catalog import EvidenceCatalog
 
 if TYPE_CHECKING:
     from spanvouch.review.models import EvidenceGap

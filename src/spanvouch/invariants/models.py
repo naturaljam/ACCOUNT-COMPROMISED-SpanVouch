@@ -4,10 +4,10 @@ from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from spanvouch.diagnosis.evidence import EvidenceCatalog
+from spanvouch.contracts.trace import DiagnosticTraceView
 from spanvouch.diagnosis.models import EvidenceRef
-from spanvouch.diagnosis.trace_view import DiagnosticTraceView
 from spanvouch.failure_types import FailureType
+from spanvouch.trace.evidence_catalog import EvidenceCatalog
 
 
 class InvariantStatus(StrEnum):

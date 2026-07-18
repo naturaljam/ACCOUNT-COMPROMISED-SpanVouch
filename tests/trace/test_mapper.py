@@ -2,9 +2,9 @@ import pytest
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.trace import SpanContext, Status, StatusCode
 
+from spanvouch.contracts.trace import SpanKind, SpanStatus
 from spanvouch.observability.tracing import build_test_tracer
-from spanvouch.trace_ir.mapper import map_spans
-from spanvouch.trace_ir.models import SpanKind, SpanStatus
+from spanvouch.trace.mapper import map_spans
 
 
 def test_otel_spans_map_to_connected_trace_ir() -> None:

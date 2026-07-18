@@ -4,8 +4,7 @@ from hashlib import sha256
 
 from pydantic import JsonValue, ValidationError
 
-from spanvouch.diagnosis.evidence import EvidenceCatalog
-from spanvouch.diagnosis.evidence import canonical_json as evidence_json
+from spanvouch.contracts.trace import DiagnosticTraceView
 from spanvouch.diagnosis.models import (
     AbstainReason,
     ClaimStage,
@@ -14,7 +13,6 @@ from spanvouch.diagnosis.models import (
     DiagnosisStatus,
     EvidenceSelector,
 )
-from spanvouch.diagnosis.trace_view import DiagnosticTraceView
 from spanvouch.failure_types import FailureType
 from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.invariants.models import InvariantResult, InvariantStatus, RuleContext, RuleScope
@@ -31,6 +29,8 @@ from spanvouch.review.models import (
     canonical_json,
     canonical_sha256,
 )
+from spanvouch.trace.evidence_catalog import EvidenceCatalog
+from spanvouch.trace.evidence_catalog import canonical_json as evidence_json
 
 _FINDING_ORDER = {
     FindingCode.INVALID_VERIFIER_OUTPUT: 0,

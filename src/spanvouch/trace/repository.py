@@ -1,6 +1,6 @@
 from typing import Protocol
 
-from spanvouch.trace_ir.models import TraceIR
+from spanvouch.contracts.trace import TraceIR
 
 
 class TraceConflictError(ValueError):

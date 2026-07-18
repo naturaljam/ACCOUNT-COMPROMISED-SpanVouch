@@ -12,6 +12,7 @@ from pydantic import (
     model_validator,
 )
 
+from spanvouch.contracts.trace import DiagnosticTraceView
 from spanvouch.contracts.versioning import (
     canonical_json as canonical_json,
 )
@@ -28,7 +29,6 @@ from spanvouch.diagnosis.models import (
     EvidenceSelector,
     ProviderUsage,
 )
-from spanvouch.diagnosis.trace_view import DiagnosticTraceView
 from spanvouch.failure_types import SUPPORTED_DIAGNOSIS_FAILURE_TYPES, FailureType
 
 SHA256_PATTERN = r"^[0-9a-f]{64}$"

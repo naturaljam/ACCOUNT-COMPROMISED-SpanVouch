@@ -30,8 +30,7 @@ from spanvouch.review.reviser import DiagnosisReviser
 from spanvouch.review.service import ReviewService
 from spanvouch.review.sqlite_repository import SQLiteReviewRepository
 from spanvouch.review.workflow import ReviewWorkflow
-from spanvouch.trace_ir.repository import InMemoryTraceRepository
-from tests.diagnosis.test_trace_view import load_trace
+from spanvouch.trace.repository import InMemoryTraceRepository
 from tests.review.factories import NOW, make_review_snapshot, make_revision
 from tests.review.test_workflow import (
     FakeReviser,
@@ -40,6 +39,7 @@ from tests.review.test_workflow import (
     _report,
     _workflow,
 )
+from tests.trace.test_diagnostic_view import load_trace
 
 
 @pytest.fixture(autouse=True)

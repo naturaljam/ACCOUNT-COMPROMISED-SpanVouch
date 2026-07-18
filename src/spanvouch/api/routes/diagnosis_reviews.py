@@ -25,7 +25,7 @@ from spanvouch.review.models import (
 )
 from spanvouch.review.service import ReviewService
 from spanvouch.review.workflow import ReviewWorkflowProviderError
-from spanvouch.trace_ir.repository import TraceRepository
+from spanvouch.trace.repository import TraceRepository
 
 _REQUEST_ERROR_CODES = {
     "transport_error",

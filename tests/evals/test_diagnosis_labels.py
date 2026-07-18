@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from spanvouch.contracts.trace import TraceIR
 from spanvouch.diagnosis.models import DiagnosisStatus
 from spanvouch.evals.diagnosis_labels import (
     DiagnosisDatasetManifest,
@@ -10,7 +11,6 @@ from spanvouch.evals.diagnosis_labels import (
     load_diagnosis_labels,
     validate_dataset_join,
 )
-from spanvouch.trace_ir.models import TraceIR
 
 DATASET_DIR = Path("evals/datasets/supportlab-v1")
 

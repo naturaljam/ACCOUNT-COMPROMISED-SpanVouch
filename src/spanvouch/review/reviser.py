@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from spanvouch.diagnosis.evidence import EvidenceCatalog
 from spanvouch.diagnosis.models import DiagnoserKind, DiagnosisReport
 from spanvouch.diagnosis.protocols import Diagnoser, RevisionCapableDiagnoser
 from spanvouch.review.errors import ReviewConflictError
 from spanvouch.review.models import EvidenceGap, ReviewRuntimeBundle
+from spanvouch.trace.evidence_catalog import EvidenceCatalog
 
 
 class DiagnosisReviser:

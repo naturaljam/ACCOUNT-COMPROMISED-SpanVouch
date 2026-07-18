@@ -1,7 +1,5 @@
 import pytest
 
-from spanvouch.diagnosis.evidence import EvidenceCatalog
-from spanvouch.diagnosis.trace_view import DiagnosticTraceView
 from spanvouch.failure_types import FailureType
 from spanvouch.invariants.models import InvariantRule, InvariantStatus, RuleContext
 from spanvouch.invariants.supportlab import (
@@ -12,12 +10,17 @@ from spanvouch.invariants.supportlab import (
     SubmitRefundPolicyRule,
     supported_rules,
 )
-from tests.diagnosis.test_trace_view import load_trace
+from spanvouch.trace.diagnostic_view import TraceProjector
+from spanvouch.trace.evidence_catalog import EvidenceCatalog
+from tests.trace.test_diagnostic_view import load_trace
 
 
 def context(run_id: str) -> RuleContext:
-    view = DiagnosticTraceView.from_trace(load_trace(run_id))
-    return RuleContext(view=view, evidence=EvidenceCatalog.from_view(view))
+    diagnostic_context = TraceProjector().project(load_trace(run_id))
+    return RuleContext(
+        view=diagnostic_context.view,
+        evidence=EvidenceCatalog.from_context(diagnostic_context),
+    )
 
 
 @pytest.mark.parametrize(

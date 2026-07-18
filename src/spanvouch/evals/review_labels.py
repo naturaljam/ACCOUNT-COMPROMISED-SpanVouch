@@ -6,6 +6,7 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
+from spanvouch.contracts.trace import TraceIR
 from spanvouch.diagnosis.models import DiagnosisStatus
 from spanvouch.evals.diagnosis_labels import (
     DiagnosisDatasetManifest,
@@ -27,7 +28,6 @@ from spanvouch.evals.generate_review_dataset import (
     validate_source_dataset,
 )
 from spanvouch.review.models import FindingCode, VerifierVerdict
-from spanvouch.trace_ir.models import TraceIR
 
 
 class ReviewGoldLabel(BaseModel):

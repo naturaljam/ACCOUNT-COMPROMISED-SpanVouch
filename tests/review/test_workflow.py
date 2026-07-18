@@ -3,7 +3,6 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from spanvouch.diagnosis.evidence import EvidenceCatalog
 from spanvouch.diagnosis.models import (
     ClaimStage,
     DiagnoserKind,
@@ -33,6 +32,7 @@ from spanvouch.review.models import (
 )
 from spanvouch.review.sqlite_repository import SQLiteReviewRepository
 from spanvouch.review.workflow import ReviewWorkflow
+from spanvouch.trace.evidence_catalog import EvidenceCatalog
 from tests.review.factories import (
     NOW,
     make_diagnosis_report,

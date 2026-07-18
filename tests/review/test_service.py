@@ -42,13 +42,13 @@ from spanvouch.review.models import (
 )
 from spanvouch.review.service import ReviewService
 from spanvouch.review.sqlite_repository import SQLiteReviewRepository
-from tests.diagnosis.test_trace_view import load_trace
 from tests.review.factories import NOW, make_verifier_report
 from tests.review.test_sqlite_repository import (
     _claim_command,
     _route_command,
     _verifier_command,
 )
+from tests.trace.test_diagnostic_view import load_trace
 
 
 class SelectorDiagnoser:

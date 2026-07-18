@@ -4,11 +4,11 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from spanvouch.diagnosis.evidence import EvidenceCatalog
+from spanvouch.contracts.trace import TraceIR
 from spanvouch.diagnosis.models import DiagnosisStatus, EvidenceSelector
-from spanvouch.diagnosis.trace_view import DiagnosticTraceView
 from spanvouch.failure_types import SUPPORTED_DIAGNOSIS_FAILURE_TYPES, FailureType
-from spanvouch.trace_ir.models import TraceIR
+from spanvouch.trace.diagnostic_view import TraceProjector
+from spanvouch.trace.evidence_catalog import EvidenceCatalog
 
 
 class DiagnosisGoldLabel(BaseModel):
@@ -78,9 +78,8 @@ def validate_dataset_join(
         span_ids = {span.span_id for span in trace.spans}
         if not set(label.acceptable_critical_span_ids) <= span_ids:
             raise ValueError(f"unknown critical span in label: {run_id}")
-        selectors = set(
-            EvidenceCatalog.from_view(DiagnosticTraceView.from_trace(trace)).selectors
-        )
+        context = TraceProjector().project(trace)
+        selectors = set(EvidenceCatalog.from_context(context).selectors)
         if not {item.canonical for item in label.acceptable_evidence} <= selectors:
             raise ValueError(f"unknown evidence selector in label: {run_id}")
 

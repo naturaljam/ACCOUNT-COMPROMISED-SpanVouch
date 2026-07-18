@@ -1,8 +1,8 @@
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, ConfigDict
 
-from spanvouch.trace_ir.models import TraceIR
-from spanvouch.trace_ir.repository import TraceConflictError, TraceRepository
+from spanvouch.contracts.trace import TraceIR
+from spanvouch.trace.repository import TraceConflictError, TraceRepository
 
 
 class TraceCreated(BaseModel):

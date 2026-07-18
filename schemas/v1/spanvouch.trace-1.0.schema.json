@@ -1,0 +1,132 @@
+{
+  "$defs": {
+    "JsonValue": {},
+    "SpanKind": {
+      "enum": [
+        "agent",
+        "llm",
+        "tool",
+        "retrieval",
+        "approval",
+        "workflow"
+      ],
+      "title": "SpanKind",
+      "type": "string"
+    },
+    "SpanStatus": {
+      "enum": [
+        "ok",
+        "error",
+        "unset"
+      ],
+      "title": "SpanStatus",
+      "type": "string"
+    },
+    "TraceSpan": {
+      "additionalProperties": false,
+      "properties": {
+        "attributes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Attributes",
+          "type": "object"
+        },
+        "ended_at": {
+          "format": "date-time",
+          "title": "Ended At",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/SpanKind"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "parent_span_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Span Id"
+        },
+        "span_id": {
+          "minLength": 1,
+          "title": "Span Id",
+          "type": "string"
+        },
+        "started_at": {
+          "format": "date-time",
+          "title": "Started At",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/SpanStatus",
+          "default": "unset"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "title": "Trace Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "trace_id",
+        "span_id",
+        "name",
+        "kind",
+        "started_at",
+        "ended_at"
+      ],
+      "title": "TraceSpan",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "run_id": {
+      "minLength": 1,
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_name": {
+      "const": "spanvouch.trace",
+      "default": "spanvouch.trace",
+      "title": "Schema Name",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "spans": {
+      "items": {
+        "$ref": "#/$defs/TraceSpan"
+      },
+      "minItems": 1,
+      "title": "Spans",
+      "type": "array"
+    },
+    "trace_id": {
+      "minLength": 1,
+      "title": "Trace Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "trace_id",
+    "run_id",
+    "spans"
+  ],
+  "title": "TraceIR",
+  "type": "object"
+}

@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from spanvouch.diagnosis.evidence import EvidenceCatalog
+from spanvouch.contracts.trace import DiagnosticTraceView
 from spanvouch.diagnosis.models import (
     AbstainReason,
     ClaimStage,
@@ -23,11 +23,9 @@ from spanvouch.diagnosis.protocols import (
     GenerationConfig,
     ModelProvider,
 )
-from spanvouch.diagnosis.trace_view import (
-    DiagnosticTraceView,
-    sanitize_diagnostic_trace_view,
-)
 from spanvouch.failure_types import SUPPORTED_DIAGNOSIS_FAILURE_TYPES, FailureType
+from spanvouch.trace.diagnostic_view import sanitize_diagnostic_trace_view
+from spanvouch.trace.evidence_catalog import EvidenceCatalog
 
 if TYPE_CHECKING:
     from spanvouch.review.models import EvidenceGap

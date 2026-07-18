@@ -10,10 +10,6 @@ from spanvouch.diagnosis.errors import (
 )
 from spanvouch.diagnosis.models import DiagnosisReport, ProviderUsage
 from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig, ProviderResponse
-from spanvouch.diagnosis.trace_view import (
-    SECRET_REDACTION,
-    sanitize_diagnostic_trace_view,
-)
 from spanvouch.review.models import (
     FindingCode,
     ReviewInputSnapshot,
@@ -24,6 +20,10 @@ from spanvouch.review.models import (
     canonical_sha256,
 )
 from spanvouch.review.semantic_verifier import SemanticVerifier
+from spanvouch.trace.diagnostic_view import (
+    SECRET_REDACTION,
+    sanitize_diagnostic_trace_view,
+)
 from tests.review.factories import (
     make_diagnosis_report,
     make_review_snapshot,

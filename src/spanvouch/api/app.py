@@ -30,7 +30,7 @@ from spanvouch.review.semantic_verifier import SemanticVerifier
 from spanvouch.review.service import ReviewService
 from spanvouch.review.sqlite_repository import SQLiteReviewRepository
 from spanvouch.review.workflow import ReviewWorkflow
-from spanvouch.trace_ir.repository import InMemoryTraceRepository, TraceRepository
+from spanvouch.trace.repository import InMemoryTraceRepository, TraceRepository
 
 DEFAULT_REVIEW_DATABASE = Path(".data/spanvouch.db")
 

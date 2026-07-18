@@ -2,7 +2,6 @@ import json
 
 import pytest
 
-from spanvouch.diagnosis.evidence import EvidenceCatalog
 from spanvouch.diagnosis.llm_diagnoser import LlmDiagnoser
 from spanvouch.diagnosis.models import (
     AbstainReason,
@@ -18,7 +17,6 @@ from spanvouch.diagnosis.protocols import (
     RevisionCapableDiagnoser,
 )
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
-from spanvouch.diagnosis.trace_view import SECRET_REDACTION
 from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.review.errors import ReviewConflictError
 from spanvouch.review.models import (
@@ -33,6 +31,8 @@ from spanvouch.review.models import (
     canonical_sha256,
 )
 from spanvouch.review.reviser import DiagnosisReviser
+from spanvouch.trace.diagnostic_view import SECRET_REDACTION
+from spanvouch.trace.evidence_catalog import EvidenceCatalog
 from tests.review.factories import (
     NOW,
     make_awaiting_human_case,

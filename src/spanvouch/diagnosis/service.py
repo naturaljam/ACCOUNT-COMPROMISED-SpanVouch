@@ -3,12 +3,12 @@ import json
 from collections.abc import Mapping
 from hashlib import sha256
 
+from spanvouch.contracts.trace import TraceIR
 from spanvouch.diagnosis.errors import DiagnosisConflictError, DiagnosisUnavailableError
-from spanvouch.diagnosis.evidence import EvidenceCatalog
 from spanvouch.diagnosis.models import DiagnoserKind, DiagnosisReport
 from spanvouch.diagnosis.protocols import Diagnoser
-from spanvouch.diagnosis.trace_view import DiagnosticTraceView
-from spanvouch.trace_ir.models import TraceIR
+from spanvouch.trace.diagnostic_view import TraceProjector
+from spanvouch.trace.evidence_catalog import EvidenceCatalog
 
 
 class DiagnosisService:
@@ -64,9 +64,9 @@ class DiagnosisService:
         fingerprint: str,
     ) -> DiagnosisReport:
         try:
-            view = DiagnosticTraceView.from_trace(trace)
-            evidence = EvidenceCatalog.from_view(view)
-            execution = await diagnoser.diagnose(view, evidence)
+            context = TraceProjector().project(trace)
+            evidence = EvidenceCatalog.from_context(context)
+            execution = await diagnoser.diagnose(context.view, evidence)
             report = DiagnosisReport(
                 **execution.decision.model_dump(),
                 trace_id=trace.trace_id,

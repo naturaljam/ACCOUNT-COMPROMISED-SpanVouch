@@ -3,6 +3,7 @@ from unittest.mock import patch
 import pytest
 from opentelemetry.trace import StatusCode
 
+from spanvouch.contracts.trace import SpanStatus
 from spanvouch.observability.tracing import build_test_tracer
 from spanvouch.supportlab.decision import (
     AgentDecision,
@@ -15,8 +16,7 @@ from spanvouch.supportlab.models import Order
 from spanvouch.supportlab.repository import build_seed_repository
 from spanvouch.supportlab.scenarios import FailureType, Scenario, build_scenarios
 from spanvouch.supportlab.tools import SupportTools
-from spanvouch.trace_ir.mapper import map_spans
-from spanvouch.trace_ir.models import SpanStatus
+from spanvouch.trace.mapper import map_spans
 
 
 def scenario_for(failure_type: FailureType) -> Scenario:

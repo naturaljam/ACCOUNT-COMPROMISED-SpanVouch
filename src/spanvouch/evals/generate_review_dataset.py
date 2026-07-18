@@ -10,7 +10,7 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from spanvouch.diagnosis.evidence import EvidenceCatalog
+from spanvouch.contracts.trace import TraceIR
 from spanvouch.diagnosis.models import (
     ClaimStage,
     DiagnoserKind,
@@ -22,12 +22,12 @@ from spanvouch.diagnosis.models import (
 )
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
 from spanvouch.diagnosis.service import DiagnosisService
-from spanvouch.diagnosis.trace_view import DiagnosticTraceView
 from spanvouch.evals.generate_dataset import DatasetManifest
 from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.invariants.supportlab import supportlab_rules
 from spanvouch.review.models import FindingCode, VerifierVerdict
-from spanvouch.trace_ir.models import TraceIR
+from spanvouch.trace.diagnostic_view import TraceProjector
+from spanvouch.trace.evidence_catalog import EvidenceCatalog
 
 CANDIDATES_FILENAME = "review-candidates-v1.jsonl"
 LABELS_FILENAME = "review-labels-v1.jsonl"
@@ -203,7 +203,7 @@ def mutate_evidence_value_hash_mismatch(
 
 
 def mutate_claim_not_grounded(report: DiagnosisReport, trace: TraceIR) -> DiagnosisReport:
-    catalog = EvidenceCatalog.from_view(DiagnosticTraceView.from_trace(trace))
+    catalog = EvidenceCatalog.from_context(TraceProjector().project(trace))
     critical_spans = set(report.critical_span_ids)
     decoy_canonical = next(
         selector

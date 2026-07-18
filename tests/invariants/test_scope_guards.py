@@ -2,20 +2,23 @@ from pathlib import Path
 
 import pytest
 
-from spanvouch.diagnosis.evidence import EvidenceCatalog
 from spanvouch.diagnosis.models import DiagnosisStatus
-from spanvouch.diagnosis.trace_view import DiagnosticTraceView
 from spanvouch.evals.diagnosis_labels import load_diagnosis_labels
 from spanvouch.invariants.models import InvariantStatus, RuleContext, RuleScope
 from spanvouch.invariants.supportlab import unsupported_guards
-from tests.diagnosis.test_trace_view import load_trace
+from spanvouch.trace.diagnostic_view import TraceProjector
+from spanvouch.trace.evidence_catalog import EvidenceCatalog
+from tests.trace.test_diagnostic_view import load_trace
 
 LABELS = Path("evals/datasets/supportlab-v1/diagnosis-labels-v1.jsonl")
 
 
 def context(run_id: str) -> RuleContext:
-    view = DiagnosticTraceView.from_trace(load_trace(run_id))
-    return RuleContext(view=view, evidence=EvidenceCatalog.from_view(view))
+    diagnostic_context = TraceProjector().project(load_trace(run_id))
+    return RuleContext(
+        view=diagnostic_context.view,
+        evidence=EvidenceCatalog.from_context(diagnostic_context),
+    )
 
 
 @pytest.mark.parametrize(

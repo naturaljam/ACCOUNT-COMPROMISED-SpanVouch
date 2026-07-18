@@ -2,8 +2,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from spanvouch.trace_ir.models import TraceIR, TraceSpan
-from spanvouch.trace_ir.repository import InMemoryTraceRepository, TraceConflictError
+from spanvouch.contracts.trace import TraceIR, TraceSpan
+from spanvouch.trace.repository import InMemoryTraceRepository, TraceConflictError
 
 
 def make_trace(*, trace_id: str = "trace-repository-1", run_id: str = "run-1") -> TraceIR:

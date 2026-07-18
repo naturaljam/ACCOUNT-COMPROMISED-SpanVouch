@@ -1,7 +1,7 @@
 from decimal import Decimal, InvalidOperation
 
+from spanvouch.contracts.trace import DiagnosticSpan
 from spanvouch.diagnosis.models import EvidenceRef, EvidenceSelector
-from spanvouch.diagnosis.trace_view import DiagnosticSpan
 from spanvouch.failure_types import FailureType
 from spanvouch.invariants.models import (
     InvariantResult,
