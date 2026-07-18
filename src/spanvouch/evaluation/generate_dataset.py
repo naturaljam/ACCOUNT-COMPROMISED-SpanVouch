@@ -9,6 +9,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from spanvouch.contracts.trace import TraceIR, TraceSpan
+from spanvouch.contracts.versioning import canonical_json
 from spanvouch.evaluation.provenance import (
     ProvenanceCollector,
     default_collector,
@@ -178,6 +179,10 @@ def main(argv: Sequence[str] | None = None, *, collector: ProvenanceCollector | 
     try:
         require_release_eligible(provenance, allow_dirty=arguments.allow_dirty_artifact)
         manifest = asyncio.run(generate_dataset(arguments.output, arguments.seed))
+        # The CLI report is canonical so the bound bundle can preserve it byte-for-byte.
+        (arguments.output / "manifest.json").write_text(
+            canonical_json(manifest) + "\n", encoding="utf-8", newline="\n"
+        )
         write_bound_bundle(
             output=arguments.output,
             report=manifest.model_dump(mode="json"),

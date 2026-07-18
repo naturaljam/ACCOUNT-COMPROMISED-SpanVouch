@@ -221,29 +221,6 @@ def dataset_provenance(
     )
 
 
-def artifact_safe_report_payload(report: Mapping[str, object]) -> dict[str, object]:
-    """Remove non-persistable prompt/provider internals before report publication.
-
-    Pydantic readers retain their default ``None`` values for omitted optional
-    provenance fields, while the on-disk report cannot be mistaken for a raw
-    provider transcript or prompt record.
-    """
-    forbidden = {"prompt_version", "prompt_sha256", "model", "provider"}
-
-    def clean(value: object) -> object:
-        if isinstance(value, Mapping):
-            return {key: clean(item) for key, item in value.items() if key not in forbidden}
-        if isinstance(value, list):
-            return [clean(item) for item in value]
-        if isinstance(value, tuple):
-            return [clean(item) for item in value]
-        return value
-
-    cleaned = clean(report)
-    assert isinstance(cleaned, dict)
-    return cleaned
-
-
 def _environment(code: CodeProvenance, runtime: RuntimeProvenance) -> str:
     values = {
         "architecture": runtime.architecture,
