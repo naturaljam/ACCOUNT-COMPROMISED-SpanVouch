@@ -72,12 +72,9 @@ _TOKEN_PREFIX = re.compile(
 )
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b")
 _PEM_PRIVATE_KEY = re.compile(r"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----")
-_OPAQUE_TOKEN = re.compile(r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-])")
+_LEXICAL_ATOM = re.compile(r"[A-Za-z0-9_-]+")
 _GIT_COMMIT = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
-_VERSION = re.compile(r"^v?\d+(?:\.\d+){1,3}(?:[-+][A-Za-z0-9.-]+)?$")
-_IDENTIFIER_VALUE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]*$")
-_RELATIVE_POSIX_PATH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
 _HASH_FIELDS = frozenset(
     {
         "dependencylocksha256",
@@ -88,34 +85,6 @@ _HASH_FIELDS = frozenset(
         "sha256",
     }
 )
-_SAFE_IDENTIFIER_FIELDS = frozenset(
-    {
-        "architecture",
-        "artifact_id",
-        "artifact_kind",
-        "basis",
-        "command_name",
-        "dataset_id",
-        "endpoint_class",
-        "implementation",
-        "media_type",
-        "mode",
-        "model",
-        "name",
-        "os",
-        "package",
-        "policy_version",
-        "pricing_ref",
-        "provider",
-        "provider_status",
-        "repository_identity",
-        "schema_name",
-        "status",
-        "verifier",
-    }
-)
-_VERSION_FIELDS = frozenset({"package_version", "python", "schema_version", "version"})
-_CONFIG_DATASET_PATHS = frozenset({("config", "dataset"), ("config", "source_dataset")})
 
 
 def collect_git_provenance(repository: Path) -> CodeProvenance:
@@ -403,23 +372,28 @@ class ArtifactSecretClassifier:
         )
 
     def _is_sensitive_string(self, value: str, *, path: tuple[str, ...]) -> bool:
+        """Run non-bypassable credential and opaque-atom scans before field shapes."""
+        if self._has_credential_signature(value):
+            return True
+        if self._is_cryptographic_bypass(value, path=path):
+            return False
+        return any(self._is_high_entropy(atom) for atom in _LEXICAL_ATOM.findall(value))
+
+    @staticmethod
+    def _has_credential_signature(value: str) -> bool:
         try:
             parsed = urlsplit(value)
         except ValueError:
             parsed = None
         if parsed is not None and (parsed.username is not None or parsed.password is not None):
             return True
-        if (
+        return bool(
             _CREDENTIAL_ASSIGNMENT.search(value)
             or _AUTH_SCHEME.search(value)
             or _TOKEN_PREFIX.search(value)
             or _JWT.search(value)
             or _PEM_PRIVATE_KEY.search(value)
-        ):
-            return True
-        if self._is_explicit_safe_value(value, path=path):
-            return False
-        return any(self._is_high_entropy(candidate) for candidate in _OPAQUE_TOKEN.findall(value))
+        )
 
     @staticmethod
     def _key_tokens(key: str) -> tuple[str, ...]:
@@ -429,32 +403,14 @@ class ArtifactSecretClassifier:
         )
 
     @staticmethod
-    def _is_explicit_safe_value(value: str, *, path: tuple[str, ...]) -> bool:
+    def _is_cryptographic_bypass(value: str, *, path: tuple[str, ...]) -> bool:
         if not path:
             return False
         field = path[-1]
         normalized = "".join(ArtifactSecretClassifier._key_tokens(field))
         if normalized in _HASH_FIELDS and _SHA256.fullmatch(value):
             return True
-        if field == "git_commit" and _GIT_COMMIT.fullmatch(value):
-            return True
-        if field in _VERSION_FIELDS and _VERSION.fullmatch(value):
-            return True
-        if field in _SAFE_IDENTIFIER_FIELDS and _IDENTIFIER_VALUE.fullmatch(value):
-            return True
-        return ArtifactSecretClassifier._is_contextual_relative_path(value, path)
-
-    @staticmethod
-    def _is_contextual_relative_path(value: str, path: tuple[str, ...]) -> bool:
-        if not _RELATIVE_POSIX_PATH.fullmatch(value) or any(
-            segment in {"", ".", ".."} for segment in value.split("/")
-        ):
-            return False
-        if path in _CONFIG_DATASET_PATHS:
-            return True
-        return path[0] == "manifest" and (
-            path[-1] == "path" or path[-1].endswith("_ref")
-        )
+        return field == "git_commit" and _GIT_COMMIT.fullmatch(value) is not None
 
     @staticmethod
     def _is_high_entropy(candidate: str) -> bool:

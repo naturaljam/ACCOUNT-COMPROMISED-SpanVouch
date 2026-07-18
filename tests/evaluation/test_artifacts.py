@@ -417,6 +417,10 @@ def test_secret_classifier_rejects_url_userinfo_even_without_a_sensitive_key() -
         )
 
 
+def test_secret_classifier_accepts_short_pathless_text() -> None:
+    artifacts_module.ArtifactSecretClassifier().require_safe("offline evaluation")
+
+
 @pytest.mark.parametrize("key", ("apiKey", "api_key", "api-key", "api_key_sha256"))
 def test_secret_classifier_rejects_sensitive_key_variants_with_short_values(key: str) -> None:
     with pytest.raises(ValueError, match="unsafe artifact content"):
@@ -464,6 +468,66 @@ def test_bundle_writer_rejects_path_embedded_credential_before_hashing(
             manifest=artifact_manifest,
             config={"dataset": "evals/ghp_0123456789abcdefghijklmnopqrstuv"},
             metrics={"status": "complete"},
+            structured_events=(),
+            environment="python=3.12",
+            readme="# Reproduce\n",
+        )
+
+
+_LOWERCASE_OPAQUE_TOKEN = "qwertyuiopasdfghjklzxcvbnmabcdef"
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    (
+        (("config", "dataset"), f"evals/{_LOWERCASE_OPAQUE_TOKEN}"),
+        (("metrics", "status"), _LOWERCASE_OPAQUE_TOKEN),
+        (("manifest", "artifact_id"), _LOWERCASE_OPAQUE_TOKEN),
+        (("manifest", "configuration", "media_type"), f"application/{_LOWERCASE_OPAQUE_TOKEN}"),
+        (("manifest", "outputs", "path"), f"reports/{_LOWERCASE_OPAQUE_TOKEN}.json"),
+    ),
+)
+def test_secret_classifier_scans_opaque_atoms_before_semantic_acceptance(
+    path: tuple[str, ...], value: str
+) -> None:
+    with pytest.raises(ValueError, match="unsafe artifact content"):
+        artifacts_module.ArtifactSecretClassifier().require_safe(value, path=path)
+
+
+@pytest.mark.parametrize("surface", ("config_dataset", "metrics_status"))
+def test_bundle_writer_rejects_opaque_semantic_values_before_hashing(
+    tmp_path: Path, artifact_manifest: object, surface: str
+) -> None:
+    config = {"mode": "deterministic"}
+    metrics = {"status": "complete"}
+    manifest = artifact_manifest
+    if surface == "config_dataset":
+        config = {"dataset": f"evals/{_LOWERCASE_OPAQUE_TOKEN}"}
+        reference = artifact_manifest.configuration.model_copy(
+            update={"sha256": canonical_sha256(config)}
+        )
+        manifest = artifact_manifest.model_copy(
+            update={"configuration": reference, "inputs": (reference,)}
+        )
+    else:
+        metrics = {"status": _LOWERCASE_OPAQUE_TOKEN}
+        digest = canonical_sha256(metrics)
+        manifest = artifact_manifest.model_copy(
+            update={
+                "outputs": tuple(
+                    reference.model_copy(update={"sha256": digest})
+                    if reference.path == "metrics.json"
+                    else reference
+                    for reference in artifact_manifest.outputs
+                )
+            }
+        )
+
+    with pytest.raises(ValueError, match="unsafe artifact content"):
+        ArtifactBundleWriter(tmp_path / "bundle").write(
+            manifest=manifest,
+            config=config,
+            metrics=metrics,
             structured_events=(),
             environment="python=3.12",
             readme="# Reproduce\n",
