@@ -157,7 +157,6 @@ Phoenix. OTLP exporter wiring and a visible SpanVouch-to-Phoenix trace path belo
 
 ## Design documents
 
-- `docs/superpowers/specs/2026-07-15-agent-failure-clinic-design.md`
 - `docs/superpowers/specs/2026-07-17-phase2-evidence-diagnosis-mvp-design.md`
 - `docs/superpowers/specs/2026-07-17-phase3-verification-review-workflow-design.md`
 - `docs/evaluation/phase2-diagnosis-evaluation.md`

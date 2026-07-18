@@ -321,6 +321,18 @@ def test_ci_builds_and_installs_the_hash_constrained_wheel_before_checks() -> No
 
 
 def test_active_delivery_configuration_has_only_spanvouch_public_names() -> None:
+    legacy_product = "AF" + "C"
+    legacy_import = legacy_product.lower()
+    forbidden_literals = (
+        f"{legacy_product}_",
+        f"{legacy_import}-",
+        f"{legacy_import}_data",
+        f"src/{legacy_import}",
+        f"from {legacy_import}",
+        f"import {legacy_import}",
+        "Agent Failure" + " Clinic",
+        "agent-failure" + "-clinic",
+    )
     active_paths = (
         ROOT / "src",
         ROOT / ".github" / "workflows",
@@ -340,8 +352,26 @@ def test_active_delivery_configuration_has_only_spanvouch_public_names() -> None
     )
     active_text = "\n".join(path.read_text(encoding="utf-8") for path in files)
 
-    for old_name in ("AFC_DB_PATH", "AFC_API_URL", "afc_data", "afc-"):
-        assert old_name not in active_text
+    active_hits = {literal for literal in forbidden_literals if literal in active_text}
+    assert active_hits == set()
+
+    test_files = sorted((ROOT / "tests").rglob("*.py"))
+    test_text_by_path = {
+        path.relative_to(ROOT).as_posix(): path.read_text(encoding="utf-8")
+        for path in test_files
+    }
+    test_hits = {
+        (relative_path, literal)
+        for relative_path, test_text in test_text_by_path.items()
+        for literal in forbidden_literals
+        if literal in test_text
+    }
+    expected_negative_assertions = {
+        ("tests/api/test_health.py", f"{legacy_product}_"),
+        ("tests/cli/test_review.py", f"{legacy_product}_"),
+        ("tests/test_package_identity.py", f"import {legacy_import}"),
+    }
+    assert test_hits == expected_negative_assertions
 
     metadata = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert metadata["project"]["scripts"] == {

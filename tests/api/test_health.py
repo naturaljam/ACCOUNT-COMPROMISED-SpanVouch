@@ -14,7 +14,7 @@ def test_health_returns_service_identity() -> None:
     assert response.status_code == 200
     assert response.json() == {
         "status": "ok",
-        "service": "agent-failure-clinic",
+        "service": "spanvouch",
     }
 
 
