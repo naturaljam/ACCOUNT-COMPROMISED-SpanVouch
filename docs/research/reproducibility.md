@@ -1,0 +1,32 @@
+# Phase 4 Reproducibility
+
+Release evidence is a clean-worktree artifact. Create it only from a committed
+candidate with `dirty_worktree=false`; exploratory dirty output is explicitly
+non-release evidence. The reference bundle has `manifest.json`, `config.json`,
+`metrics.json`, `environment.txt`, and `README.md`. Its manifest binds the
+code commit, lockfile/runtime, contract versions, dataset hashes, configuration
+hash, output hashes, provider metadata, usage, and cost semantics.
+
+The frozen SupportLab and review datasets are regenerated from their recorded
+seeds and compared by manifest/payload hash. Old AFC artifacts remain immutable
+and are linked as parent provenance rather than rewritten. Default commands use
+the deterministic offline provider state: `provider_status=not_used`, zero
+requests, zero input/output tokens, and no cost object. A live provider requires
+an explicit opt-in and must record sanitized provider metadata, never raw
+responses or credentials.
+
+Gold labels, mutation metadata, expected findings, split identity, API keys,
+authorization headers, prompt text, hidden reasoning, raw provider bodies, and
+local environment values are excluded from bundles. Provider-visible data and
+evaluator label joins use separate interfaces; the join occurs after verifier
+calls return.
+
+From a clean release candidate, reproduce the checked-in reference evidence:
+
+```powershell
+uv run spanvouch evaluate review --output .cache/phase4-reproduction/metrics.json --bundle-dir .cache/phase4-reproduction/bundle --artifact-id phase4-offline-reference
+```
+
+Compare `.cache/phase4-reproduction/metrics.json` with
+`evals/reports/reference/phase4-offline-bundle/metrics.json` byte-for-byte and
+compare the generated manifest hash with the published reference manifest.

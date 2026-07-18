@@ -370,6 +370,8 @@ def test_active_delivery_configuration_has_only_spanvouch_public_names() -> None
         ("tests/api/test_health.py", f"{legacy_product}_"),
         ("tests/cli/test_review.py", f"{legacy_product}_"),
         ("tests/test_package_identity.py", f"import {legacy_import}"),
+        ("tests/test_delivery_config.py", f"{legacy_product}_"),
+        ("tests/test_delivery_config.py", f"{legacy_import}-"),
     }
     assert test_hits == expected_negative_assertions
 
@@ -377,3 +379,58 @@ def test_active_delivery_configuration_has_only_spanvouch_public_names() -> None
     assert metadata["project"]["scripts"] == {
         "spanvouch": "spanvouch.cli.main:main"
     }
+
+
+def test_phase_4_release_candidate_documents_delivery_and_six_contract_roots() -> None:
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
+    docker_runtime = (ROOT / "Dockerfile").read_text(encoding="utf-8").rsplit(
+        "FROM ", maxsplit=1
+    )[1]
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    dockerignore = (ROOT / ".dockerignore").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert project["project"]["name"] == "spanvouch"
+    assert project["project"]["version"] == "0.2.0"
+    assert project["project"]["scripts"] == {"spanvouch": "spanvouch.cli.main:main"}
+    assert "SPANVOUCH_DB_PATH" in compose
+    assert "AFC_DB_PATH" not in compose
+    assert "name: spanvouch" in compose
+    assert "10001:10001" in docker_runtime
+    assert 'org.opencontainers.image.title="SpanVouch"' in dockerfile
+    assert "evals/reports/reference/" in dockerignore
+    assert "tests/contracts tests/architecture tests/test_delivery_config.py -v" in workflow
+    assert "docs/contracts/catalog.md" in readme
+    assert "IVAD" in readme
+
+    expected_roots = {
+        "artifact-manifest",
+        "diagnosis",
+        "diagnostic-context",
+        "review",
+        "trace",
+        "verification",
+    }
+    schema_roots = {
+        path.name.removeprefix("spanvouch.").removesuffix("-1.0.schema.json")
+        for path in (ROOT / "schemas" / "v1").glob("spanvouch.*-1.0.schema.json")
+    }
+    fixture_roots = {
+        path.name.removesuffix(".valid.json")
+        for path in (ROOT / "tests" / "contracts" / "fixtures" / "v1").glob("*.valid.json")
+    }
+    assert schema_roots == expected_roots
+    assert fixture_roots == expected_roots
+
+    required_release_files = (
+        "docs/contracts/catalog.md",
+        "docs/architecture/adr-002-contract-versioning.md",
+        "docs/architecture/adr-003-core-adapter-boundaries.md",
+        "docs/migrations/afc-to-spanvouch.md",
+        "docs/research/reproducibility.md",
+        "docs/research/ivad-claim-evidence-ledger.md",
+    )
+    missing = [path for path in required_release_files if not (ROOT / path).is_file()]
+    assert not missing, f"missing Phase 4 release documentation: {missing}"

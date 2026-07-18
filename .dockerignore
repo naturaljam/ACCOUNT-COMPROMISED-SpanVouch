@@ -6,6 +6,7 @@
 .cache/
 .data/
 evals/reports/generated/
+evals/reports/reference/
 __pycache__
 *.pyc
 htmlcov

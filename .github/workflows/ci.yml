@@ -23,6 +23,8 @@ jobs:
       - run: uv run --no-sync ruff check src tests
       - run: uv run --no-sync mypy
       - run: uv run --no-sync pytest --cov=spanvouch --cov-report=term-missing
+      - name: Verify Phase 4 contracts, architecture, and delivery configuration
+        run: uv run --no-sync pytest tests/contracts tests/architecture tests/test_delivery_config.py -v
       - run: uv run --no-sync spanvouch dataset generate --output .cache/ci-dataset --seed 20260715
       - name: Verify frozen dataset hashes
         shell: python
