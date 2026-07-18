@@ -562,6 +562,34 @@ async def test_invalid_revision_output_abstains_without_a_repair_loop() -> None:
 
 
 @pytest.mark.asyncio
+async def test_revision_enforces_supportlab_supported_taxonomy_boundary() -> None:
+    payload = json.loads(_valid_draft())
+    payload["failure_type"] = "missing_precondition"
+    provider = CaptureProvider(json.dumps(payload))
+    diagnoser = LlmDiagnoser(provider)
+    runtime = _deepseek_runtime()
+    context = _context(runtime)
+
+    execution = await diagnoser.revise(
+        context,
+        EvidenceCatalog.from_context(context),
+        runtime.revisions[-1].report,
+        (_gap(),),
+    )
+
+    assert execution.decision.status is DiagnosisStatus.ABSTAINED
+    assert execution.decision.failure_type is None
+    assert execution.decision.critical_span_ids == ()
+    assert execution.decision.causal_chain == ()
+    assert execution.decision.evidence == ()
+    assert execution.decision.confidence == 0.0
+    assert (
+        execution.decision.abstain_reason
+        is AbstainReason.UNSUPPORTED_FAILURE_TYPE
+    )
+
+
+@pytest.mark.asyncio
 async def test_revision_rejects_unknown_gap_selector_before_provider_call() -> None:
     provider = CaptureProvider(_valid_draft())
     diagnoser = LlmDiagnoser(provider)

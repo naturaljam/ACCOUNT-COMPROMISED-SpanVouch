@@ -24,7 +24,7 @@ from spanvouch.diagnosis.protocols import (
     GenerationConfig,
     ModelProvider,
 )
-from spanvouch.failure_types import SUPPORTED_DIAGNOSIS_FAILURE_TYPES, FailureType
+from spanvouch.failure_types import SUPPORTED_DIAGNOSIS_FAILURE_TYPES
 from spanvouch.trace.diagnostic_view import sanitize_diagnostic_trace_view
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
 
@@ -44,7 +44,7 @@ class _DiagnosisDraft(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     status: DiagnosisStatus
-    failure_type: FailureType | None = None
+    failure_type: str | None = Field(default=None, min_length=1)
     critical_span_ids: tuple[str, ...] = ()
     causal_chain: tuple[_ClaimDraft, ...] = Field(default=(), max_length=3)
     confidence: float = Field(ge=0.0, le=1.0)
@@ -286,6 +286,15 @@ class LlmDiagnoser:
         view: DiagnosticTraceView,
         catalog: EvidenceCatalog,
     ) -> DiagnosisDecision:
+        if (
+            draft.status is DiagnosisStatus.DIAGNOSED
+            and draft.failure_type not in SUPPORTED_DIAGNOSIS_FAILURE_TYPES
+        ):
+            return DiagnosisDecision(
+                status=DiagnosisStatus.ABSTAINED,
+                confidence=0.0,
+                abstain_reason=AbstainReason.UNSUPPORTED_FAILURE_TYPE,
+            )
         span_ids = {span.span_id for span in view.spans}
         if not set(draft.critical_span_ids) <= span_ids:
             raise KeyError("unknown critical span")

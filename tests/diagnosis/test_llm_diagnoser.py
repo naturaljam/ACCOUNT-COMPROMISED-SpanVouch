@@ -185,3 +185,70 @@ async def test_nonexistent_selector_becomes_evidence_abstain() -> None:
 
     assert execution.decision.status is DiagnosisStatus.ABSTAINED
     assert execution.decision.abstain_reason is AbstainReason.INVALID_EVIDENCE_REFERENCE
+
+
+@pytest.mark.asyncio
+async def test_known_but_unsupported_supportlab_type_becomes_scope_abstain() -> None:
+    provider = RecordingProvider(
+        json.dumps(
+            {
+                "status": "diagnosed",
+                "failure_type": "missing_precondition",
+                "critical_span_ids": ["span-005"],
+                "causal_chain": [
+                    {
+                        "stage": "cause",
+                        "statement": "A required lookup was skipped.",
+                        "evidence_selectors": ["span-005::name"],
+                    }
+                ],
+                "confidence": 0.9,
+                "abstain_reason": None,
+            }
+        )
+    )
+    context, evidence = inputs()
+
+    execution = await LlmDiagnoser(provider).diagnose(context, evidence)
+
+    assert execution.decision.status is DiagnosisStatus.ABSTAINED
+    assert execution.decision.failure_type is None
+    assert execution.decision.critical_span_ids == ()
+    assert execution.decision.causal_chain == ()
+    assert execution.decision.evidence == ()
+    assert execution.decision.confidence == 0.0
+    assert (
+        execution.decision.abstain_reason
+        is AbstainReason.UNSUPPORTED_FAILURE_TYPE
+    )
+
+
+@pytest.mark.asyncio
+async def test_future_taxonomy_identifier_is_rejected_at_supportlab_boundary() -> None:
+    provider = RecordingProvider(
+        json.dumps(
+            {
+                "status": "diagnosed",
+                "failure_type": "opslab.deadlock_cycle",
+                "critical_span_ids": ["span-005"],
+                "causal_chain": [
+                    {
+                        "stage": "cause",
+                        "statement": "A future taxonomy diagnosis.",
+                        "evidence_selectors": ["span-005::name"],
+                    }
+                ],
+                "confidence": 0.9,
+                "abstain_reason": None,
+            }
+        )
+    )
+    context, evidence = inputs()
+
+    execution = await LlmDiagnoser(provider).diagnose(context, evidence)
+
+    assert execution.decision.status is DiagnosisStatus.ABSTAINED
+    assert (
+        execution.decision.abstain_reason
+        is AbstainReason.UNSUPPORTED_FAILURE_TYPE
+    )
