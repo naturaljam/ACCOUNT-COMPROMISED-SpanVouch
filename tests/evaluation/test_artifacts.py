@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
+import spanvouch.evaluation.artifacts as artifacts_module
 from spanvouch.contracts.artifacts import ArtifactRef, ModelProvenance, UsageProvenance
 from spanvouch.contracts.versioning import canonical_sha256
 from spanvouch.evaluation.artifacts import ArtifactBundleWriter, collect_git_provenance
@@ -136,7 +138,7 @@ def test_bundle_writer_permits_provenance_hashes_but_rejects_raw_secrets(
             ),
         }
     )
-    with pytest.raises(ValueError, match="sensitive value"):
+    with pytest.raises(ValueError, match="unsafe artifact content"):
         ArtifactBundleWriter(tmp_path / "bundle").write(
             manifest=used_manifest,
             config={"mode": "deterministic"},
@@ -160,7 +162,7 @@ def test_bundle_writer_rejects_provider_bodies_and_environment_values(
     structured_events: tuple[object, ...],
     environment: str,
 ) -> None:
-    with pytest.raises(ValueError, match="sensitive"):
+    with pytest.raises(ValueError, match="unsafe artifact content"):
         ArtifactBundleWriter(tmp_path / "bundle").write(
             manifest=artifact_manifest,
             config={"mode": "deterministic"},
@@ -169,3 +171,158 @@ def test_bundle_writer_rejects_provider_bodies_and_environment_values(
             environment=environment,
             readme="# Reproduce\n",
         )
+
+
+@pytest.mark.parametrize(
+    ("config", "metrics", "structured_events", "environment"),
+    (
+        ({"system_prompt": "do not persist me"}, {"status": "complete"}, (), "python=3.12"),
+        ({"mode": "deterministic"}, {"response_raw": "provider body"}, (), "python=3.12"),
+        (
+            {"mode": "deterministic"},
+            {"status": "complete"},
+            ({"headers": {"Authorization": "Bearer private"}},),
+            "python=3.12",
+        ),
+        ({"mode": "deterministic"}, {"token": "private"}, (), "python=3.12"),
+        ({"mode": "deterministic"}, {"password": "private"}, (), "python=3.12"),
+        ({"mode": "deterministic"}, {"hidden reasoning": "private"}, (), "python=3.12"),
+        (
+            {"mode": "deterministic"},
+            {"status": "complete"},
+            (),
+            "AWS_SECRET_ACCESS_KEY=private",
+        ),
+    ),
+)
+def test_bundle_writer_rejects_sensitive_structured_content_before_hashing(
+    tmp_path: Path,
+    artifact_manifest: object,
+    config: object,
+    metrics: object,
+    structured_events: tuple[object, ...],
+    environment: str,
+) -> None:
+    with pytest.raises(ValueError, match="unsafe artifact content") as raised:
+        ArtifactBundleWriter(tmp_path / "bundle").write(
+            manifest=artifact_manifest,
+            config=config,
+            metrics=metrics,
+            structured_events=structured_events,
+            environment=environment,
+            readme="# Reproduce\n",
+        )
+    assert "private" not in str(raised.value)
+
+
+def test_bundle_writer_rejects_unknown_config_keys_before_hashing(
+    tmp_path: Path, artifact_manifest: object
+) -> None:
+    with pytest.raises(ValueError, match="unsafe artifact content"):
+        ArtifactBundleWriter(tmp_path / "bundle").write(
+            manifest=artifact_manifest,
+            config={"unreviewed_nested_option": {"value": True}},
+            metrics={"status": "complete"},
+            structured_events=(),
+            environment="python=3.12",
+            readme="# Reproduce\n",
+        )
+
+
+def test_bundle_writer_accepts_the_task15_reference_config(
+    tmp_path: Path, artifact_manifest: object
+) -> None:
+    reference_config = {
+        "schema_version": "1.0",
+        "dataset": "evals/datasets/supportlab-review-v1",
+        "source_dataset": "evals/datasets/supportlab-v1",
+        "verifier": "deterministic",
+        "policy_version": "supportlab-review-policy-v1",
+        "seed": 20260717,
+        "allow_live_api": False,
+    }
+    reference = ArtifactRef(
+        path="config.json",
+        sha256=canonical_sha256(reference_config),
+        media_type="application/json",
+    )
+    manifest = artifact_manifest.model_copy(
+        update={"configuration": reference, "inputs": (reference,)}
+    )
+    written = ArtifactBundleWriter(tmp_path / "bundle").write(
+        manifest=manifest,
+        config=reference_config,
+        metrics={"status": "complete"},
+        structured_events=(),
+        environment="python=3.12",
+        readme="# Reproduce\n",
+    )
+    assert (tmp_path / "bundle" / "config.json") in written
+
+
+@pytest.mark.parametrize(
+    ("config", "environment", "readme"),
+    (
+        ([], "python=3.12", "# Reproduce"),
+        ({"mode": ""}, "python=3.12", "# Reproduce"),
+        ({"seed": True}, "python=3.12", "# Reproduce"),
+        ({"allow_live_api": "false"}, "python=3.12", "# Reproduce"),
+        ({"mode": "deterministic"}, "", "# Reproduce"),
+        ({"mode": "deterministic"}, "python=3.12", "Bearer private"),
+    ),
+)
+def test_bundle_writer_rejects_invalid_safe_content_shapes(
+    tmp_path: Path,
+    artifact_manifest: object,
+    config: object,
+    environment: str,
+    readme: str,
+) -> None:
+    with pytest.raises(ValueError, match="unsafe artifact content"):
+        ArtifactBundleWriter(tmp_path / "bundle").write(
+            manifest=artifact_manifest,
+            config=config,
+            metrics={"status": "complete"},
+            structured_events=(),
+            environment=environment,
+            readme=readme,
+        )
+
+
+def test_bundle_writer_publishes_exactly_once_under_concurrent_writers(
+    tmp_path: Path, artifact_manifest: object
+) -> None:
+    destination = tmp_path / "bundle"
+
+    def write_once() -> str:
+        try:
+            ArtifactBundleWriter(destination).write(
+                manifest=artifact_manifest,
+                config={"mode": "deterministic"},
+                metrics={"status": "complete"},
+                structured_events=(),
+                environment="python=3.12",
+                readme="# Reproduce\n",
+            )
+        except FileExistsError:
+            return "exists"
+        return "published"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = tuple(executor.map(lambda _: write_once(), range(2)))
+    assert sorted(results) == ["exists", "published"]
+    assert {path.name for path in destination.iterdir()} == {
+        "manifest.json",
+        "config.json",
+        "metrics.json",
+        "structured-events.jsonl",
+        "environment.txt",
+        "README.md",
+    }
+
+
+def test_publish_fails_closed_when_atomic_no_replace_is_unsupported(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    with pytest.raises(RuntimeError, match="atomic no-replace"):
+        artifacts_module._publish_no_replace(source, tmp_path / "destination", platform="other")

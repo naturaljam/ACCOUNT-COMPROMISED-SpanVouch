@@ -38,7 +38,7 @@ class ArtifactRef(ContractModel):
     @field_validator("path")
     @classmethod
     def validate_relative_posix_path(cls, value: str) -> str:
-        if value.startswith("/") or "\\" in value or any(
+        if value.startswith("/") or "\\" in value or ":" in value or any(
             segment in {"", ".", ".."} for segment in value.split("/")
         ):
             raise ValueError("artifact path must be a relative POSIX path")

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import ctypes
+import errno
 import json
 import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from collections.abc import Iterable, Mapping
 from hashlib import sha256
@@ -36,6 +39,33 @@ _SENSITIVE_ASSIGNMENT = re.compile(
     r"access[_\s-]?token|credential)\s*(?:=|:)",
     re.IGNORECASE,
 )
+_ENVIRONMENT_FIELDS = frozenset(
+    {
+        "architecture",
+        "dependency_lock_sha256",
+        "git_commit",
+        "implementation",
+        "os",
+        "package",
+        "package_version",
+        "python",
+        "repository_identity",
+    }
+)
+_CONFIG_STRING_FIELDS = frozenset(
+    {
+        "dataset",
+        "mode",
+        "policy_version",
+        "schema_version",
+        "source_dataset",
+        "verifier",
+    }
+)
+_CONFIG_FIELDS = _CONFIG_STRING_FIELDS | {"seed", "allow_live_api"}
+_ENVIRONMENT_VALUE = re.compile(r"^[A-Za-z0-9._+:/ -]+$")
+_AT_FDCWD = -100
+_RENAME_NOREPLACE = 1
 
 
 def collect_git_provenance(repository: Path) -> CodeProvenance:
@@ -65,7 +95,7 @@ def _git(repository: Path, *arguments: str) -> str:
 
 
 class ArtifactBundleWriter:
-    """Write a complete evaluation bundle using a same-parent atomic rename."""
+    """Write a complete evaluation bundle with atomic no-replace publication."""
 
     def __init__(self, destination: Path) -> None:
         self._destination = destination
@@ -106,14 +136,9 @@ class ArtifactBundleWriter:
                 target.write_bytes(content)
                 if target.read_bytes() != content:
                     raise ValueError(f"artifact write verification failed: {filename}")
-                sha256(content).hexdigest()
             if {path.name for path in temporary.iterdir()} != _REQUIRED_FILENAMES:
                 raise ValueError("artifact bundle must contain exactly the required files")
-            if self._destination.exists():
-                raise FileExistsError(
-                    f"artifact bundle destination already exists: {self._destination}"
-                )
-            os.rename(temporary, self._destination)
+            _publish_no_replace(temporary, self._destination)
             return tuple(self._destination / filename for filename in sorted(_REQUIRED_FILENAMES))
         except Exception:
             if temporary.exists():
@@ -132,10 +157,10 @@ class ArtifactBundleWriter:
     ) -> dict[str, bytes]:
         events = tuple(structured_events)
         _require_safe("manifest", manifest.model_dump(mode="python"))
-        _require_safe("config", config)
+        _validate_config(config)
         _require_safe("metrics", metrics)
         _require_safe("structured_events", events)
-        _require_safe("environment", environment)
+        _validate_environment(environment)
         _require_safe("readme", readme)
         return {
             "manifest.json": canonical_bytes(manifest) + b"\n",
@@ -184,14 +209,116 @@ def _normalized_text(value: str) -> bytes:
     )
 
 
+def _publish_no_replace(source: Path, destination: Path, *, platform: str | None = None) -> None:
+    """Atomically publish *source* only when *destination* does not exist."""
+    current_platform = sys.platform if platform is None else platform
+    if current_platform == "win32":
+        os.rename(source, destination)
+        return
+    if current_platform.startswith("linux"):
+        _linux_rename_no_replace(source, destination)
+        return
+    raise RuntimeError("atomic no-replace publication is unsupported on this platform")
+
+
+def _linux_rename_no_replace(source: Path, destination: Path) -> None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    try:
+        renameat2 = libc.renameat2
+    except AttributeError as error:
+        raise RuntimeError(
+            "atomic no-replace publication is unsupported on this platform"
+        ) from error
+    renameat2.argtypes = (
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    )
+    renameat2.restype = ctypes.c_int
+    result = renameat2(
+        _AT_FDCWD,
+        os.fsencode(source),
+        _AT_FDCWD,
+        os.fsencode(destination),
+        _RENAME_NOREPLACE,
+    )
+    if result == 0:
+        return
+    error_number = ctypes.get_errno()
+    if error_number == errno.EEXIST:
+        raise FileExistsError(f"artifact bundle destination already exists: {destination}")
+    raise OSError(error_number, os.strerror(error_number), destination)
+
+
+def _unsafe_artifact_content() -> None:
+    raise ValueError("unsafe artifact content")
+
+
+def _validate_config(value: Any) -> None:
+    if not isinstance(value, Mapping):
+        _unsafe_artifact_content()
+    for key, item in value.items():
+        if not isinstance(key, str) or key not in _CONFIG_FIELDS:
+            _unsafe_artifact_content()
+        if key in _CONFIG_STRING_FIELDS:
+            if not isinstance(item, str) or not item:
+                _unsafe_artifact_content()
+        elif key == "seed":
+            if not isinstance(item, int) or isinstance(item, bool):
+                _unsafe_artifact_content()
+        elif not isinstance(item, bool):
+            _unsafe_artifact_content()
+        _require_safe("config", item)
+
+
+def _validate_environment(value: str) -> None:
+    normalized = value.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n")
+    if not normalized:
+        _unsafe_artifact_content()
+    for line in normalized.split("\n"):
+        key, separator, item = line.partition("=")
+        if (
+            separator != "="
+            or key not in _ENVIRONMENT_FIELDS
+            or not item
+            or not _ENVIRONMENT_VALUE.fullmatch(item)
+        ):
+            _unsafe_artifact_content()
+        _require_safe("environment", item)
+
+
+def _normalized_key(value: object) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(value).casefold())
+
+
+def _is_sensitive_key(key: object) -> bool:
+    normalized = _normalized_key(key)
+    if normalized.endswith("sha256"):
+        return False
+    if normalized in {"header", "headers", "raw", "response", "prompt", "reasoning"}:
+        return True
+    return normalized.endswith(
+        (
+            "apikey",
+            "authorization",
+            "credential",
+            "password",
+            "prompt",
+            "raw",
+            "reasoning",
+            "secret",
+            "token",
+        )
+    )
+
+
 def _require_safe(location: str, value: Any) -> None:
     if isinstance(value, Mapping):
         for key, item in value.items():
-            key_name = str(key).casefold()
-            if _SENSITIVE_KEY_PART.search(key_name) or (
-                key_name in {"prompt", "reasoning", "hidden_reasoning"}
-            ):
-                raise ValueError(f"artifact bundle forbids sensitive field: {location}.{key}")
+            if _SENSITIVE_KEY_PART.search(str(key)) or _is_sensitive_key(key):
+                _unsafe_artifact_content()
             _require_safe(f"{location}.{key}", item)
         return
     if isinstance(value, (tuple, list)):
@@ -201,4 +328,4 @@ def _require_safe(location: str, value: Any) -> None:
     if isinstance(value, str) and (
         _SENSITIVE_VALUE.search(value) or _SENSITIVE_ASSIGNMENT.search(value)
     ):
-        raise ValueError(f"artifact bundle forbids sensitive value: {location}")
+        _unsafe_artifact_content()

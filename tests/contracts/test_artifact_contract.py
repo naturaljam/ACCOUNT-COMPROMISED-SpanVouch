@@ -82,7 +82,17 @@ def test_manifest_requires_utc_and_sorted_unique_reference_identities() -> None:
         ArtifactManifest.model_validate(payload)
 
 
-@pytest.mark.parametrize("path", ("/absolute.json", "../escape.json", "folder\\file.json"))
+@pytest.mark.parametrize(
+    "path",
+    (
+        "/absolute.json",
+        "../escape.json",
+        "folder\\file.json",
+        "C:/drive-path.json",
+        "//server/share.json",
+        "urn:artifact:one",
+    ),
+)
 def test_artifact_reference_rejects_unsafe_paths(path: str) -> None:
     with pytest.raises(ValueError, match="relative POSIX path"):
         ArtifactRef(path=path, sha256="a" * 64, media_type="application/json")
