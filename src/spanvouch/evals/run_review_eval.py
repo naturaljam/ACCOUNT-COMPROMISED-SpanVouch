@@ -74,7 +74,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             config = DeepSeekConfig.from_env()
         except ProviderConfigurationError as exc:
             parser.error(str(exc))
-        semantic_verifier = SemanticVerifier(DeepSeekProvider(config), model=arguments.model)
+        semantic_verifier = SemanticVerifier(
+            DeepSeekProvider(config),
+            provider_id="deepseek",
+            model=arguments.model,
+        )
     try:
         report = asyncio.run(
             _run(

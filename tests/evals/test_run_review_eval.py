@@ -246,7 +246,11 @@ async def test_semantic_invalid_output_is_not_counted_as_structured_success() ->
     report = await _run(
         Path("evals/datasets/supportlab-review-v1"),
         Path("evals/datasets/supportlab-v1"),
-        semantic_verifier=SemanticVerifier(InvalidOutputProvider()),
+        semantic_verifier=SemanticVerifier(
+            InvalidOutputProvider(),
+            provider_id="invalid-output-fixture",
+            model="fixture-semantic-model",
+        ),
         semantic_candidate_ids=("clean-01--unmodified",),
     )
 
@@ -338,7 +342,11 @@ async def test_full_cohort_semantic_prompts_exclude_hidden_mutation_metadata() -
     await _run(
         dataset,
         source,
-        semantic_verifier=SemanticVerifier(provider),
+        semantic_verifier=SemanticVerifier(
+            provider,
+            provider_id="recording-fixture",
+            model="fixture-semantic-model",
+        ),
         semantic_candidate_ids=tuple(candidate.candidate_id for candidate in candidates),
     )
 

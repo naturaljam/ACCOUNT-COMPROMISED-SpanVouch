@@ -474,7 +474,11 @@ async def test_invalid_semantic_provider_body_is_not_copied_into_verifier_report
             )
 
     diagnosis = make_diagnosis_report()
-    report = await SemanticVerifier(InvalidBodyProvider()).verify(
+    report = await SemanticVerifier(
+        InvalidBodyProvider(),
+        provider_id="invalid-body-fixture",
+        model="fixture-semantic-model",
+    ).verify(
         VerificationInput(
             snapshot=make_review_snapshot(),
             report=diagnosis,

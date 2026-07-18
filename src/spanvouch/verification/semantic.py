@@ -111,10 +111,16 @@ class SemanticVerifier:
         self,
         provider: ModelProvider,
         *,
-        model: str = "deepseek-v4-flash",
+        provider_id: str,
+        model: str,
         prompt_version: str = "semantic-verifier-v1",
     ) -> None:
+        if not provider_id.strip():
+            raise ValueError("provider_id must be non-empty")
+        if not model.strip():
+            raise ValueError("model must be non-empty")
         self._provider = provider
+        self._provider_id = provider_id
         self._generation = GenerationConfig(model=model)
         self._prompt_version = prompt_version
         version_source = f"{prompt_version}:{model}:{_SEMANTIC_SCHEMA_VERSION}"
@@ -143,7 +149,7 @@ class SemanticVerifier:
             prompt_version=self._prompt_version,
             prompt_sha256=prompt_sha256,
             model=response.model,
-            provider="deepseek",
+            provider=self._provider_id,
         )
         run_seed = {
             "verifier_version": self.version_fingerprint,
@@ -235,7 +241,7 @@ class SemanticVerifier:
             verifier_version=self.version_fingerprint,
             policy_version=_SEMANTIC_POLICY_VERSION,
             model=self._generation.model,
-            provider="deepseek",
+            provider=self._provider_id,
         )
         return self._invalid_report(
             run_id,

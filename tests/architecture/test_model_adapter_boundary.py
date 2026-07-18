@@ -97,6 +97,17 @@ def test_core_does_not_import_concrete_model_providers() -> None:
     assert _deepseek_endpoint_literals(CORE_ROOTS) == ()
 
 
+def test_semantic_core_has_no_deepseek_identity_literals() -> None:
+    semantic = SOURCE_ROOT / "verification" / "semantic.py"
+    tree = ast.parse(semantic.read_text(encoding="utf-8"), filename=str(semantic))
+    literals = {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    assert not any("deepseek" in literal.casefold() for literal in literals)
+
+
 def test_only_composition_roots_import_deepseek_adapter() -> None:
     importers = {
         path.relative_to(SOURCE_ROOT).as_posix()

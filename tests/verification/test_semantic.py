@@ -126,6 +126,60 @@ def _gap(*, selectors: list[str] | None = None) -> dict[str, Any]:
     }
 
 
+def _semantic_verifier(provider: RecordingProvider) -> SemanticVerifier:
+    return SemanticVerifier(
+        provider,
+        provider_id="fixture-provider",
+        model="fixture-semantic-model",
+    )
+
+
+@pytest.mark.asyncio
+async def test_success_provenance_uses_injected_provider_identity() -> None:
+    provider = RecordingProvider(json.dumps(_draft("verified")))
+
+    report = await SemanticVerifier(
+        provider,
+        provider_id="fixture-provider",
+        model="fixture-semantic-model",
+    ).verify(_input())
+
+    assert report.provenance.provider == "fixture-provider"
+    assert report.provenance.model == "fixture-semantic-model"
+
+
+@pytest.mark.asyncio
+async def test_preflight_provenance_uses_injected_provider_identity() -> None:
+    provider = RecordingProvider(json.dumps(_draft("verified")))
+    forged_input = _input().model_copy(update={"report_sha256": "0" * 64})
+
+    report = await SemanticVerifier(
+        provider,
+        provider_id="fixture-provider",
+        model="fixture-semantic-model",
+    ).verify(forged_input)
+
+    assert report.provenance.provider == "fixture-provider"
+    assert report.provenance.model == "fixture-semantic-model"
+    assert provider.calls == []
+
+
+@pytest.mark.parametrize(
+    ("provider_id", "model"),
+    (("", "model"), (" ", "model"), ("provider", ""), ("provider", " ")),
+)
+def test_provider_identity_and_model_must_be_non_empty(
+    provider_id: str,
+    model: str,
+) -> None:
+    with pytest.raises(ValueError, match="must be non-empty"):
+        SemanticVerifier(
+            RecordingProvider(),
+            provider_id=provider_id,
+            model=model,
+        )
+
+
 @pytest.mark.parametrize(
     ("payload", "expected_verdict", "expected_code"),
     (
@@ -158,7 +212,7 @@ async def test_valid_strict_outputs_resolve_selectors_locally(
 ) -> None:
     provider = RecordingProvider(json.dumps(payload))
 
-    report = await SemanticVerifier(provider).verify(_input())
+    report = await _semantic_verifier(provider).verify(_input())
 
     assert report.verifier_kind == VerifierKind.SEMANTIC
     assert report.verdict is expected_verdict
@@ -172,8 +226,8 @@ async def test_valid_strict_outputs_resolve_selectors_locally(
     assert report.usage.request_id == "semantic-request-1"
     assert report.provenance.prompt_version == "semantic-verifier-v1"
     assert report.provenance.prompt_sha256 is not None
-    assert report.provenance.model == "deepseek-v4-flash"
-    assert report.provenance.provider == "deepseek"
+    assert report.provenance.model == "fixture-semantic-model"
+    assert report.provenance.provider == "fixture-provider"
     assert len(provider.calls) == 1
 
 
@@ -234,7 +288,7 @@ async def test_invalid_success_output_maps_without_repair_call(
     content = payload if isinstance(payload, str) else json.dumps(payload)
     provider = RecordingProvider(content, finish_reason=finish_reason)
 
-    report = await SemanticVerifier(provider).verify(_input())
+    report = await _semantic_verifier(provider).verify(_input())
 
     assert report.verdict is VerifierVerdict.REVIEW_REQUIRED
     assert tuple(finding.code for finding in report.findings) == (
@@ -259,7 +313,7 @@ async def test_provider_operational_errors_propagate_unchanged(error: Exception)
     provider = RecordingProvider(error=error)
 
     with pytest.raises(type(error)) as raised:
-        await SemanticVerifier(provider).verify(_input())
+        await _semantic_verifier(provider).verify(_input())
 
     assert raised.value is error
     assert len(provider.calls) == 1
@@ -282,7 +336,7 @@ async def test_report_fingerprint_mismatch_fails_before_prompt_or_provider(
     provider = RecordingProvider(content, finish_reason=finish_reason)
     forged_input = _input().model_copy(update={"report_sha256": "0" * 64})
 
-    report = await SemanticVerifier(provider).verify(forged_input)
+    report = await _semantic_verifier(provider).verify(forged_input)
 
     assert report.verdict is VerifierVerdict.REVIEW_REQUIRED
     assert tuple(finding.code for finding in report.findings) == (
@@ -298,7 +352,7 @@ async def test_forged_report_evidence_selector_fails_before_provider() -> None:
     forged_report = report.model_copy(update={"evidence": (forged_evidence,)})
     provider = RecordingProvider(json.dumps(_draft("verified")))
 
-    result = await SemanticVerifier(provider).verify(_input(report=forged_report))
+    result = await _semantic_verifier(provider).verify(_input(report=forged_report))
 
     assert result.verdict is VerifierVerdict.REVIEW_REQUIRED
     assert result.findings[0].code is FindingCode.INVALID_VERIFIER_OUTPUT
@@ -317,7 +371,7 @@ async def test_corrupt_claim_evidence_mapping_fails_stably_before_provider() -> 
         report=corrupt_report,
         report_sha256=canonical_sha256(corrupt_report),
     )
-    result = await SemanticVerifier(provider).verify(input_)
+    result = await _semantic_verifier(provider).verify(input_)
 
     assert result.verdict is VerifierVerdict.REVIEW_REQUIRED
     assert result.findings[0].code is FindingCode.INVALID_VERIFIER_OUTPUT
@@ -443,10 +497,10 @@ async def test_prompt_contains_only_independent_canonical_allowlist_data() -> No
     )
     provider = RecordingProvider(json.dumps(_draft("verified")))
 
-    await SemanticVerifier(provider).verify(_input(snapshot))
+    await _semantic_verifier(provider).verify(_input(snapshot))
 
     messages, generation = provider.calls[0]
-    assert generation == GenerationConfig(model="deepseek-v4-flash")
+    assert generation == GenerationConfig(model="fixture-semantic-model")
     assert len(messages) == 2
     assert messages[0].role == "system"
     assert "untrusted" in messages[0].content.lower()

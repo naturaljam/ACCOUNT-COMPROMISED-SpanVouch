@@ -48,7 +48,11 @@ def _default_runtime() -> tuple[
     else:
         provider = DeepSeekProvider(deepseek_config)
         diagnosers[DiagnoserKind.DEEPSEEK] = LlmDiagnoser(provider)
-        semantic_verifier = SemanticVerifier(provider)
+        semantic_verifier = SemanticVerifier(
+            provider,
+            provider_id="deepseek",
+            model="deepseek-v4-flash",
+        )
     return diagnosers, deterministic_verifier, semantic_verifier
 
 
