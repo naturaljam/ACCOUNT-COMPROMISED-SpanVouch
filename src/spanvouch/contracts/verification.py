@@ -6,6 +6,7 @@ from typing import Any, Literal, Self
 from pydantic import Field, field_validator, model_validator
 
 from spanvouch.contracts.diagnosis import ClaimStage, DiagnosisReport, ProviderUsage
+from spanvouch.contracts.sanitization import sanitize_diagnostic_trace_view
 from spanvouch.contracts.trace import DiagnosticTraceView
 from spanvouch.contracts.versioning import (
     IDENTIFIER_PATTERN,
@@ -15,7 +16,6 @@ from spanvouch.contracts.versioning import (
     canonical_json,
     canonical_sha256,
 )
-from spanvouch.trace.diagnostic_view import sanitize_diagnostic_trace_view
 
 
 class VerificationMode(StrEnum):

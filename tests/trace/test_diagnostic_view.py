@@ -5,17 +5,16 @@ from pathlib import Path
 
 import pytest
 
-from spanvouch.contracts.trace import DiagnosticTraceView, TraceIR
-from spanvouch.contracts.versioning import canonical_json
-from spanvouch.trace import diagnostic_view as trace_view_module
-from spanvouch.trace.diagnostic_view import (
+from spanvouch.contracts import sanitization as trace_view_module
+from spanvouch.contracts.sanitization import (
     ALLOWED_ATTRIBUTES,
     SECRET_REDACTION,
-    TraceProjector,
-    TraceProjectorPort,
     sanitize_diagnostic_trace_view,
     sanitize_diagnostic_value,
 )
+from spanvouch.contracts.trace import DiagnosticTraceView, TraceIR
+from spanvouch.contracts.versioning import canonical_json
+from spanvouch.trace.diagnostic_view import TraceProjector, TraceProjectorPort
 
 DATASET = Path("evals/datasets/supportlab-v1/traces.jsonl")
 FORBIDDEN_PARTS = (

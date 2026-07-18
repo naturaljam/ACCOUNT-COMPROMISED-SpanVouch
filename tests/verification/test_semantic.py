@@ -4,6 +4,10 @@ from typing import Any
 import pytest
 
 from spanvouch.contracts.diagnosis import DiagnosisReport, ProviderUsage
+from spanvouch.contracts.sanitization import (
+    SECRET_REDACTION,
+    sanitize_diagnostic_trace_view,
+)
 from spanvouch.contracts.verification import (
     FindingCode,
     ReviewInputSnapshot,
@@ -21,10 +25,6 @@ from spanvouch.diagnosis.errors import (
     ProviderRequestError,
 )
 from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig, ProviderResponse
-from spanvouch.trace.diagnostic_view import (
-    SECRET_REDACTION,
-    sanitize_diagnostic_trace_view,
-)
 from spanvouch.verification.semantic import SemanticVerifier
 from tests.review.factories import (
     make_diagnosis_report,

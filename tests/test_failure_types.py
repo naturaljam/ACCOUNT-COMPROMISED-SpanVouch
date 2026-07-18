@@ -1,5 +1,5 @@
 from spanvouch.failure_types import SUPPORTED_DIAGNOSIS_FAILURE_TYPES, FailureType
-from spanvouch.supportlab.scenarios import FailureType as LegacyFailureType
+from spanvouch.labs.supportlab.scenarios import FailureType as LegacyFailureType
 
 
 def test_failure_type_has_one_shared_definition() -> None:

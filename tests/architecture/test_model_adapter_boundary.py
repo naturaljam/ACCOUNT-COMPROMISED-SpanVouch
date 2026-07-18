@@ -17,9 +17,9 @@ FORBIDDEN_PROVIDER_PREFIXES = (
     "spanvouch.diagnosis.deepseek",
 )
 ALLOWED_ADAPTER_IMPORTERS = {
-    "api/app.py",
-    "evals/run_diagnosis_eval.py",
-    "evals/run_review_eval.py",
+    "api/composition.py",
+    "evaluation/run_diagnosis_eval.py",
+    "evaluation/run_review_eval.py",
 }
 
 

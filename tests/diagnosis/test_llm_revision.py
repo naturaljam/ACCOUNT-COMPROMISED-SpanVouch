@@ -14,6 +14,7 @@ from spanvouch.contracts.review import (
     DiagnosisRevision,
     RevisionOrigin,
 )
+from spanvouch.contracts.sanitization import SECRET_REDACTION
 from spanvouch.contracts.trace import DiagnosticContext
 from spanvouch.contracts.verification import (
     EvidenceGap,
@@ -34,7 +35,6 @@ from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
 from spanvouch.review.errors import ReviewConflictError
 from spanvouch.review.reviser import DiagnosisReviser
 from spanvouch.review.runtime import ReviewRuntimeBundle
-from spanvouch.trace.diagnostic_view import SECRET_REDACTION
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
 from spanvouch.verification.invariant_engine import InvariantEngine
 from tests.review.factories import (

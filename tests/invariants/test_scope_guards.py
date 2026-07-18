@@ -3,8 +3,8 @@ from pathlib import Path
 import pytest
 
 from spanvouch.contracts.diagnosis import DiagnosisStatus
-from spanvouch.evals.diagnosis_labels import load_diagnosis_labels
-from spanvouch.invariants.supportlab import unsupported_guards
+from spanvouch.evaluation.diagnosis_labels import load_diagnosis_labels
+from spanvouch.labs.supportlab.invariants import unsupported_guards
 from spanvouch.trace.diagnostic_view import TraceProjector
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
 from spanvouch.verification.invariants import InvariantStatus, RuleContext, RuleScope

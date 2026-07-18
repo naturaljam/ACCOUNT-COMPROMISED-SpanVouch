@@ -1,7 +1,7 @@
 import pytest
 
 from spanvouch.failure_types import FailureType
-from spanvouch.invariants.supportlab import (
+from spanvouch.labs.supportlab.invariants import (
     FinalStateRule,
     KnownToolRule,
     StepBudgetRule,

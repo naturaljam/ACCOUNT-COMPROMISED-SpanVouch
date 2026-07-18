@@ -10,60 +10,21 @@ from uuid import uuid4
 from fastapi import FastAPI
 
 from spanvouch.adapters.frameworks.langgraph_review import LangGraphReviewWorkflow
-from spanvouch.adapters.models.deepseek import DeepSeekConfig, DeepSeekProvider
 from spanvouch.adapters.storage.sqlite import SQLiteReviewRepository
+from spanvouch.api.composition import default_runtime, deterministic_runtime
 from spanvouch.api.routes.diagnoses import build_diagnosis_router
 from spanvouch.api.routes.diagnosis_reviews import build_diagnosis_review_router
 from spanvouch.api.routes.health import router as health_router
 from spanvouch.api.routes.traces import build_trace_router
-from spanvouch.contracts.diagnosis import DiagnoserKind
 from spanvouch.diagnosis.engine import DiagnosisEngine
-from spanvouch.diagnosis.errors import ProviderConfigurationError
-from spanvouch.diagnosis.llm_diagnoser import LlmDiagnoser
 from spanvouch.diagnosis.protocols import Diagnoser
-from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
-from spanvouch.invariants.supportlab import supportlab_rules
 from spanvouch.review.application import ReviewApplication
-from spanvouch.review.policy import DEFAULT_REVIEW_POLICY_VERSION
 from spanvouch.review.protocols import ReviewRepository
 from spanvouch.review.reviser import DiagnosisReviser
 from spanvouch.trace.repository import InMemoryTraceRepository, TraceRepository
-from spanvouch.verification.deterministic import DeterministicVerifier
-from spanvouch.verification.invariant_engine import InvariantEngine
 from spanvouch.verification.protocols import Verifier
-from spanvouch.verification.semantic import SemanticVerifier
 
 DEFAULT_REVIEW_DATABASE = Path(".data/spanvouch.db")
-
-
-def _default_runtime() -> tuple[dict[str, Diagnoser], DeterministicVerifier, Verifier | None]:
-    diagnosers, deterministic_verifier = _deterministic_runtime()
-    semantic_verifier: Verifier | None = None
-    try:
-        deepseek_config = DeepSeekConfig.from_env()
-    except ProviderConfigurationError:
-        pass
-    else:
-        provider = DeepSeekProvider(deepseek_config)
-        diagnosers[DiagnoserKind.DEEPSEEK.value] = LlmDiagnoser(provider)
-        semantic_verifier = SemanticVerifier(
-            provider,
-            provider_id="deepseek",
-            model="deepseek-v4-flash",
-        )
-    return diagnosers, deterministic_verifier, semantic_verifier
-
-
-def _deterministic_runtime() -> tuple[dict[str, Diagnoser], DeterministicVerifier]:
-    engine = InvariantEngine(supportlab_rules())
-    diagnosers: dict[str, Diagnoser] = {
-        DiagnoserKind.RULES.value: RuleDiagnoser(engine)
-    }
-    deterministic_verifier = DeterministicVerifier(
-        engine,
-        policy_version=DEFAULT_REVIEW_POLICY_VERSION,
-    )
-    return diagnosers, deterministic_verifier
 
 
 def _new_id() -> str:
@@ -79,7 +40,7 @@ def _ensure_database_parent(database: str | Path) -> None:
 
 
 def build_default_diagnosis_service() -> DiagnosisEngine:
-    diagnosers, _, _ = _default_runtime()
+    diagnosers, _, _ = default_runtime()
     return DiagnosisEngine(diagnosers)
 
 
@@ -133,11 +94,11 @@ def create_app(
         review_store = None
 
     if diagnosis_service is None:
-        diagnosers, deterministic_verifier, semantic_verifier = _default_runtime()
+        diagnosers, deterministic_verifier, semantic_verifier = default_runtime()
         diagnosis = DiagnosisEngine(diagnosers)
     else:
         diagnosers = {}
-        _, deterministic_verifier = _deterministic_runtime()
+        _, deterministic_verifier = deterministic_runtime()
         semantic_verifier = None
         diagnosis = diagnosis_service
 

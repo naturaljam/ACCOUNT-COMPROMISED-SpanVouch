@@ -27,7 +27,7 @@ from spanvouch.contracts.versioning import (
     canonical_json,
     canonical_sha256,
 )
-from spanvouch.invariants.supportlab import supportlab_rules
+from spanvouch.labs.supportlab.invariants import supportlab_rules
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
 from spanvouch.verification.deterministic import DeterministicVerifier
 from spanvouch.verification.invariant_engine import InvariantEngine

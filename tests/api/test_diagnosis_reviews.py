@@ -26,7 +26,7 @@ from spanvouch.contracts.versioning import canonical_json
 from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.diagnosis.errors import ProviderProtocolError, ProviderRequestError
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
-from spanvouch.invariants.supportlab import supportlab_rules
+from spanvouch.labs.supportlab.invariants import supportlab_rules
 from spanvouch.review.application import ReviewApplication
 from spanvouch.review.commands import ClaimReviewWork, CreateReviewCase
 from spanvouch.review.reviser import DiagnosisReviser

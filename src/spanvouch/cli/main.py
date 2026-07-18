@@ -4,10 +4,10 @@ import argparse
 from collections.abc import Callable, Sequence
 
 from spanvouch.cli.review import main as review
-from spanvouch.evals.generate_dataset import main as generate_dataset
-from spanvouch.evals.generate_review_dataset import main as generate_review
-from spanvouch.evals.run_diagnosis_eval import main as evaluate_diagnosis
-from spanvouch.evals.run_review_eval import main as evaluate_review
+from spanvouch.evaluation.generate_dataset import main as generate_dataset
+from spanvouch.evaluation.generate_review_dataset import main as generate_review
+from spanvouch.evaluation.run_diagnosis_eval import main as evaluate_diagnosis
+from spanvouch.evaluation.run_review_eval import main as evaluate_review
 
 Handler = Callable[[Sequence[str] | None], int]
 

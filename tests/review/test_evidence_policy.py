@@ -33,7 +33,7 @@ from spanvouch.contracts.versioning import (
 )
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
 from spanvouch.failure_types import FailureType
-from spanvouch.invariants.supportlab import supportlab_rules
+from spanvouch.labs.supportlab.invariants import supportlab_rules
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
 from spanvouch.verification.deterministic import DeterministicVerifier
 from spanvouch.verification.invariant_engine import InvariantEngine

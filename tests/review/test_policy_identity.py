@@ -1,15 +1,15 @@
 from pathlib import Path
 
-from spanvouch.api.app import _deterministic_runtime
+from spanvouch.api.composition import deterministic_runtime
 from spanvouch.contracts.verification import VerificationInput
 from spanvouch.contracts.versioning import canonical_sha256
-from spanvouch.evals.run_review_eval import DEFAULT_POLICY_VERSION
+from spanvouch.evaluation.run_review_eval import DEFAULT_POLICY_VERSION
 from spanvouch.review.policy import DEFAULT_REVIEW_POLICY_VERSION
 from tests.review.factories import make_diagnosis_report, make_review_snapshot
 
 
 async def test_production_and_evaluator_share_one_default_policy_identity() -> None:
-    _, verifier = _deterministic_runtime()
+    _, verifier = deterministic_runtime()
     report = make_diagnosis_report()
 
     verified = await verifier.verify(

@@ -98,7 +98,8 @@ def test_diagnosis_contract_does_not_import_runtime_or_supportlab_modules() -> N
             (
                 "spanvouch.diagnosis",
                 "spanvouch.failure_types",
-                "spanvouch.supportlab",
+                "spanvouch.labs",
+                "spanvouch.evaluation",
                 "spanvouch.verification",
                 "spanvouch.review",
                 "spanvouch.adapters",

@@ -18,6 +18,7 @@ from spanvouch.contracts.diagnosis import (
     ProviderUsage,
     TaxonomyRef,
 )
+from spanvouch.contracts.sanitization import sanitize_diagnostic_trace_view
 from spanvouch.contracts.trace import DiagnosticContext, DiagnosticTraceView
 from spanvouch.diagnosis.protocols import (
     ChatMessage,
@@ -25,7 +26,6 @@ from spanvouch.diagnosis.protocols import (
     ModelProvider,
 )
 from spanvouch.failure_types import SUPPORTED_DIAGNOSIS_FAILURE_TYPES
-from spanvouch.trace.diagnostic_view import sanitize_diagnostic_trace_view
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
 
 if TYPE_CHECKING:

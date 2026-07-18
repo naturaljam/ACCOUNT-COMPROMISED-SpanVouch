@@ -20,7 +20,6 @@ FORBIDDEN_IMPORT_PREFIXES = (
     "spanvouch.api",
     "spanvouch.diagnosis.deepseek",
     "spanvouch.evaluation",
-    "spanvouch.evals",
     "spanvouch.labs",
     "spanvouch.persistence",
     "spanvouch.review",

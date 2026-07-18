@@ -105,7 +105,7 @@ def test_trace_contract_source_contains_no_runtime_sanitizer_policy() -> None:
     contract_source = (ROOT / "src/spanvouch/contracts/trace.py").read_text(
         encoding="utf-8"
     )
-    runtime_source = (ROOT / "src/spanvouch/trace/diagnostic_view.py").read_text(
+    runtime_source = (ROOT / "src/spanvouch/contracts/sanitization.py").read_text(
         encoding="utf-8"
     )
     runtime_symbols = (
