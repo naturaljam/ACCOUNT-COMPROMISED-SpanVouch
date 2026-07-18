@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI
 
+from spanvouch.adapters.frameworks.langgraph_review import LangGraphReviewWorkflow
 from spanvouch.adapters.models.deepseek import DeepSeekConfig, DeepSeekProvider
 from spanvouch.adapters.storage.sqlite import SQLiteReviewRepository
 from spanvouch.api.routes.diagnoses import build_diagnosis_router
@@ -22,11 +23,10 @@ from spanvouch.diagnosis.llm_diagnoser import LlmDiagnoser
 from spanvouch.diagnosis.protocols import Diagnoser
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
 from spanvouch.invariants.supportlab import supportlab_rules
+from spanvouch.review.application import ReviewApplication
 from spanvouch.review.policy import DEFAULT_REVIEW_POLICY_VERSION
 from spanvouch.review.protocols import ReviewRepository
 from spanvouch.review.reviser import DiagnosisReviser
-from spanvouch.review.service import ReviewService
-from spanvouch.review.workflow import ReviewWorkflow
 from spanvouch.trace.repository import InMemoryTraceRepository, TraceRepository
 from spanvouch.verification.deterministic import DeterministicVerifier
 from spanvouch.verification.invariant_engine import InvariantEngine
@@ -36,9 +36,7 @@ from spanvouch.verification.semantic import SemanticVerifier
 DEFAULT_REVIEW_DATABASE = Path(".data/spanvouch.db")
 
 
-def _default_runtime() -> tuple[
-    dict[DiagnoserKind, Diagnoser], DeterministicVerifier, Verifier | None
-]:
+def _default_runtime() -> tuple[dict[str, Diagnoser], DeterministicVerifier, Verifier | None]:
     diagnosers, deterministic_verifier = _deterministic_runtime()
     semantic_verifier: Verifier | None = None
     try:
@@ -47,7 +45,7 @@ def _default_runtime() -> tuple[
         pass
     else:
         provider = DeepSeekProvider(deepseek_config)
-        diagnosers[DiagnoserKind.DEEPSEEK] = LlmDiagnoser(provider)
+        diagnosers[DiagnoserKind.DEEPSEEK.value] = LlmDiagnoser(provider)
         semantic_verifier = SemanticVerifier(
             provider,
             provider_id="deepseek",
@@ -56,10 +54,10 @@ def _default_runtime() -> tuple[
     return diagnosers, deterministic_verifier, semantic_verifier
 
 
-def _deterministic_runtime() -> tuple[dict[DiagnoserKind, Diagnoser], DeterministicVerifier]:
+def _deterministic_runtime() -> tuple[dict[str, Diagnoser], DeterministicVerifier]:
     engine = InvariantEngine(supportlab_rules())
-    diagnosers: dict[DiagnoserKind, Diagnoser] = {
-        DiagnoserKind.RULES: RuleDiagnoser(engine)
+    diagnosers: dict[str, Diagnoser] = {
+        DiagnoserKind.RULES.value: RuleDiagnoser(engine)
     }
     deterministic_verifier = DeterministicVerifier(
         engine,
@@ -89,12 +87,12 @@ def _build_review_service(
     *,
     diagnosis_service: DiagnosisEngine,
     repository: ReviewRepository,
-    diagnosers: Mapping[DiagnoserKind, Diagnoser],
+    diagnosers: Mapping[str, Diagnoser],
     deterministic_verifier: Verifier,
     semantic_verifier: Verifier | None,
-) -> ReviewService:
+) -> ReviewApplication:
     reviser = DiagnosisReviser(diagnosers)
-    workflow = ReviewWorkflow(
+    workflow = LangGraphReviewWorkflow(
         repository=repository,
         deterministic_verifier=deterministic_verifier,
         semantic_verifier=semantic_verifier,
@@ -104,7 +102,7 @@ def _build_review_service(
         lease_owner="api",
         lease_duration=timedelta(seconds=30),
     )
-    return ReviewService(
+    return ReviewApplication(
         diagnosis_service=diagnosis_service,
         repository=repository,
         workflow=workflow,
@@ -119,7 +117,7 @@ def create_app(
     diagnosis_service: DiagnosisEngine | None = None,
     *,
     review_repository: ReviewRepository | None = None,
-    review_service: ReviewService | None = None,
+    review_service: ReviewApplication | None = None,
     review_database: str | Path | None = None,
 ) -> FastAPI:
     trace_store = trace_repository or InMemoryTraceRepository()

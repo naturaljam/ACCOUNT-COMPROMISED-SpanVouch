@@ -205,6 +205,37 @@ def make_awaiting_human_case() -> DiagnosisReviewCase:
     )
 
 
+def make_pending_case() -> DiagnosisReviewCase:
+    return make_awaiting_human_case().model_copy(
+        update={
+            "status": ReviewStatus.PENDING_VERIFICATION,
+            "version": 0,
+            "deterministic_run_id": None,
+            "composite_verdict": None,
+        }
+    )
+
+
+def make_revision_one_case() -> DiagnosisReviewCase:
+    return make_pending_case().model_copy(
+        update={
+            "status": ReviewStatus.REVISION_REQUESTED,
+            "current_revision_number": 1,
+            "evidence_revision_count": 1,
+        }
+    )
+
+
+def make_confirmed_case() -> DiagnosisReviewCase:
+    return make_awaiting_human_case().model_copy(
+        update={
+            "status": ReviewStatus.CONFIRMED,
+            "version": 3,
+            "terminal_decision_id": "decision-1",
+        }
+    )
+
+
 def make_review_detail() -> DiagnosisReviewDetail:
     return DiagnosisReviewDetail(
         case=make_awaiting_human_case(),

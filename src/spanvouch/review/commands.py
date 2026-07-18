@@ -4,7 +4,6 @@ from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from spanvouch.contracts.diagnosis import DiagnoserKind
 from spanvouch.contracts.review import (
     DecisionAction,
     DiagnosisRevision,
@@ -21,27 +20,9 @@ from spanvouch.contracts.verification import (
     VerifierVerdict,
 )
 from spanvouch.contracts.versioning import canonical_json
+from spanvouch.review.transitions import human_decision_transition
 
 SHA256_PATTERN = r"^[0-9a-f]{64}$"
-
-
-def human_decision_transition(
-    action: DecisionAction,
-) -> tuple[ReviewStatus, WorkflowEventType]:
-    return {
-        DecisionAction.CONFIRM: (
-            ReviewStatus.CONFIRMED,
-            WorkflowEventType.HUMAN_CONFIRMED,
-        ),
-        DecisionAction.CORRECT: (
-            ReviewStatus.CORRECTED,
-            WorkflowEventType.HUMAN_CORRECTED,
-        ),
-        DecisionAction.REJECT: (
-            ReviewStatus.REJECTED,
-            WorkflowEventType.HUMAN_REJECTED,
-        ),
-    }[action]
 
 
 def _require_utc(value: datetime, field_name: str) -> None:
@@ -91,7 +72,7 @@ class CreateReviewCase(EventCommand):
     initial_revision: DiagnosisRevision
     target_status: ReviewStatus
     verification_mode: VerificationMode
-    diagnoser: DiagnoserKind
+    diagnoser: str = Field(min_length=1)
     idempotency_scope: str = Field(min_length=1)
     idempotency_key: str = Field(min_length=1)
     request_sha256: str = Field(pattern=SHA256_PATTERN)

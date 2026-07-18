@@ -12,7 +12,7 @@ from spanvouch.trace.evidence_catalog import EvidenceCatalog
 
 
 class DiagnosisEngine:
-    def __init__(self, diagnosers: Mapping[DiagnoserKind, Diagnoser]) -> None:
+    def __init__(self, diagnosers: Mapping[str, Diagnoser]) -> None:
         self._diagnosers = dict(diagnosers)
         self._completed: dict[str, DiagnosisReport] = {}
         self._inflight: dict[str, asyncio.Task[DiagnosisReport]] = {}
@@ -22,13 +22,13 @@ class DiagnosisEngine:
     async def diagnose(
         self,
         trace: TraceIR,
-        kind: DiagnoserKind = DiagnoserKind.RULES,
+        kind: str = DiagnoserKind.RULES,
         *,
         idempotency_key: str | None = None,
     ) -> DiagnosisReport:
         diagnoser = self._diagnosers.get(kind)
         if diagnoser is None:
-            raise DiagnosisUnavailableError(f"diagnoser is not configured: {kind.value}")
+            raise DiagnosisUnavailableError(f"diagnoser is not configured: {kind}")
         fingerprint = self._fingerprint(trace, kind, diagnoser.version_fingerprint)
         async with self._lock:
             if idempotency_key is not None:
@@ -58,7 +58,7 @@ class DiagnosisEngine:
     async def _execute_diagnosis(
         self,
         trace: TraceIR,
-        kind: DiagnoserKind,
+        kind: str,
         diagnoser: Diagnoser,
         *,
         fingerprint: str,
@@ -90,11 +90,11 @@ class DiagnosisEngine:
             task.exception()
 
     @staticmethod
-    def _fingerprint(trace: TraceIR, kind: DiagnoserKind, version: str) -> str:
+    def _fingerprint(trace: TraceIR, kind: str, version: str) -> str:
         trace_json = json.dumps(
             trace.model_dump(mode="json"),
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
         )
-        return sha256(f"{trace_json}\n{kind.value}\n{version}".encode()).hexdigest()
+        return sha256(f"{trace_json}\n{kind}\n{version}".encode()).hexdigest()

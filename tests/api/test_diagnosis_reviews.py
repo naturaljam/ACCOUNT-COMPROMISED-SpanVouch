@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from spanvouch.adapters.frameworks.langgraph_review import LangGraphReviewWorkflow
 from spanvouch.adapters.storage.sqlite import SQLiteReviewRepository
 from spanvouch.api.app import create_app
 from spanvouch.contracts.diagnosis import DiagnoserKind
@@ -26,21 +27,20 @@ from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.diagnosis.errors import ProviderProtocolError, ProviderRequestError
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
 from spanvouch.invariants.supportlab import supportlab_rules
+from spanvouch.review.application import ReviewApplication
 from spanvouch.review.commands import ClaimReviewWork, CreateReviewCase
 from spanvouch.review.reviser import DiagnosisReviser
-from spanvouch.review.service import ReviewService
-from spanvouch.review.workflow import ReviewWorkflow
 from spanvouch.trace.repository import InMemoryTraceRepository
 from spanvouch.verification.deterministic import DeterministicVerifier
 from spanvouch.verification.invariant_engine import InvariantEngine
-from tests.review.factories import NOW, make_review_snapshot, make_revision
-from tests.review.test_workflow import (
+from tests.adapters.frameworks.test_langgraph_review import (
     FakeReviser,
     FakeVerifier,
     _create_case,
     _report,
     _workflow,
 )
+from tests.review.factories import NOW, make_review_snapshot, make_revision
 from tests.trace.test_diagnostic_view import load_trace
 
 
@@ -129,7 +129,7 @@ def _real_workflow_app(
     )
     clock = MutableClock()
     ids = SequenceIds()
-    workflow = ReviewWorkflow(
+    workflow = LangGraphReviewWorkflow(
         repository=repository,
         deterministic_verifier=deterministic,
         semantic_verifier=semantic,
@@ -139,7 +139,7 @@ def _real_workflow_app(
         lease_owner="api-integration-worker",
         lease_duration=timedelta(seconds=30),
     )
-    review_service = ReviewService(
+    review_service = ReviewApplication(
         diagnosis_service=diagnosis_service,
         repository=repository,
         workflow=workflow,

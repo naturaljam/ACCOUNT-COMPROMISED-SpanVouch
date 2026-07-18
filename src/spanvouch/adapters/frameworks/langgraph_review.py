@@ -48,9 +48,14 @@ from spanvouch.review.commands import (
     RouteToHumanReview,
     WorkflowEventType,
 )
-from spanvouch.review.errors import ReviewConflictError, ReviewError
+from spanvouch.review.errors import ReviewConflictError, ReviewWorkflowProviderError
 from spanvouch.review.protocols import ReviewRepository, ReviewReviser
 from spanvouch.review.runtime import ReviewRuntimeBundle
+from spanvouch.review.transitions import (
+    ReviewRoute,
+    next_route,
+    should_request_revision,
+)
 from spanvouch.verification.protocols import Verifier
 from spanvouch.verification.verdicts import MergedVerifierReports, merge_verifier_reports
 
@@ -72,16 +77,6 @@ class ReviewWorkflowState(TypedDict):
     provider_commit_status: NotRequired[str]
     provider_commit_revision_count: NotRequired[int]
     provider_commit_report_count: NotRequired[int]
-
-
-class ReviewWorkflowProviderError(ReviewError):
-    """Sanitized provider failure raised only after durable human routing."""
-
-    def __init__(self, case_id: str, code: str, *, retryable: bool) -> None:
-        super().__init__(f"review provider failed: {code}")
-        self.case_id = case_id
-        self.code = code
-        self.retryable = retryable
 
 
 def _require_aware_utc(value: datetime) -> datetime:
@@ -106,7 +101,7 @@ def _provider_failure(error: ProviderError) -> tuple[str, bool]:
     return "provider_error", False
 
 
-class ReviewWorkflow:
+class LangGraphReviewWorkflow:
     """Coordinate one bounded review invocation over SQLite-authoritative state.
 
     A provider call is made only after a durable lease claim. Crash recovery may
@@ -347,18 +342,8 @@ class ReviewWorkflow:
 
     async def _dispatch(self, state: ReviewWorkflowState) -> ReviewWorkflowState:
         runtime = await self._repository.load_runtime(state["case_id"])
-        status = runtime.case.status
-        if status is ReviewStatus.PENDING_VERIFICATION:
-            route = "verify_initial"
-        elif status is ReviewStatus.VERIFYING:
-            route = (
-                "verify_initial" if runtime.case.current_revision_number == 0 else "verify_final"
-            )
-        elif status is ReviewStatus.REVISION_REQUESTED:
-            route = "request_revision"
-        elif status is ReviewStatus.REVISING:
-            route = "revise_once"
-        else:
+        route = next_route(runtime.case)
+        if route in {ReviewRoute.END, ReviewRoute.ROUTE_TO_HUMAN}:
             raise ReviewConflictError("review case cannot be resumed from its current status")
         return {
             **state,
@@ -368,7 +353,7 @@ class ReviewWorkflow:
                 if runtime.case.composite_verdict is not None
                 else None
             ),
-            "route": route,
+            "route": route.value,
             "lease_claimed": False,
         }
 
@@ -419,16 +404,6 @@ class ReviewWorkflow:
                 semantic = report
         return deterministic, semantic
 
-    def _should_request_revision(
-        self, runtime: ReviewRuntimeBundle, verdict: VerifierVerdict
-    ) -> bool:
-        return (
-            verdict is VerifierVerdict.NEEDS_EVIDENCE
-            and runtime.case.current_revision_number == 0
-            and runtime.case.evidence_revision_count == 0
-            and self._reviser.supports(runtime.case.diagnoser)
-        )
-
     async def _verify_round(
         self, state: ReviewWorkflowState, *, expected_round: int
     ) -> ReviewWorkflowState:
@@ -469,7 +444,11 @@ class ReviewWorkflow:
                 report, VerifierKind.DETERMINISTIC, expected_round
             )
             merged = merge_verifier_reports(deterministic, None)
-            request_revision = self._should_request_revision(runtime, merged.verdict)
+            request_revision = should_request_revision(
+                runtime.case,
+                merged.verdict,
+                reviser_supported=self._reviser.supports(runtime.case.diagnoser),
+            )
             runtime = await self._append_verifier(
                 runtime,
                 deterministic,
@@ -544,8 +523,12 @@ class ReviewWorkflow:
                         outcome, VerifierKind.SEMANTIC, expected_round
                     )
                     merged = merge_verifier_reports(deterministic, normalized)
-                    request_revision = self._should_request_revision(
-                        claimed_runtime, merged.verdict
+                    request_revision = should_request_revision(
+                        claimed_runtime.case,
+                        merged.verdict,
+                        reviser_supported=self._reviser.supports(
+                            claimed_runtime.case.diagnoser
+                        ),
                     )
                     await self._commit_verifier(
                         claimed_runtime,

@@ -20,3 +20,13 @@ class ReviewValidationError(ReviewError):
 
 class ReviewPersistenceError(ReviewError):
     """SQLite could not complete a review operation."""
+
+
+class ReviewWorkflowProviderError(ReviewError):
+    """Sanitized provider failure raised only after durable human routing."""
+
+    def __init__(self, case_id: str, code: str, *, retryable: bool) -> None:
+        super().__init__(f"review provider failed: {code}")
+        self.case_id = case_id
+        self.code = code
+        self.retryable = retryable

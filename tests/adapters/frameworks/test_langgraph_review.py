@@ -3,6 +3,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from spanvouch.adapters.frameworks.langgraph_review import LangGraphReviewWorkflow
 from spanvouch.adapters.storage.sqlite import SQLiteReviewRepository
 from spanvouch.contracts.diagnosis import (
     ClaimStage,
@@ -31,7 +32,6 @@ from spanvouch.contracts.verification import (
 )
 from spanvouch.contracts.versioning import canonical_json, canonical_sha256
 from spanvouch.review.commands import CreateReviewCase, WorkflowEventType
-from spanvouch.review.workflow import ReviewWorkflow
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
 from spanvouch.verification.deterministic import DeterministicVerifier
 from spanvouch.verification.invariant_engine import InvariantEngine
@@ -240,8 +240,8 @@ def _workflow(
     lease_owner: str = "workflow-worker",
     lease_token_factory: Callable[[], str] | None = None,
     lease_duration: timedelta = timedelta(seconds=30),
-) -> ReviewWorkflow:
-    return ReviewWorkflow(
+) -> LangGraphReviewWorkflow:
+    return LangGraphReviewWorkflow(
         repository=repository,
         deterministic_verifier=deterministic,
         semantic_verifier=semantic,
@@ -452,7 +452,7 @@ async def test_identical_report_bytes_reverify_with_revision_safe_run_identity(
     reviser = FakeReviser(
         supported=(DiagnoserKind.DEEPSEEK,), outcomes=[same_report]
     )
-    workflow = ReviewWorkflow(
+    workflow = LangGraphReviewWorkflow(
         repository=repository,
         deterministic_verifier=verifier,
         semantic_verifier=None,

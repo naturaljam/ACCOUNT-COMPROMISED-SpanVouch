@@ -392,7 +392,7 @@ class SQLiteReviewRepository:
                     command.case_id,
                     command.target_status.value,
                     command.verification_mode.value,
-                    command.diagnoser.value,
+                    command.diagnoser,
                     _timestamp(command.created_at),
                     _timestamp(command.created_at),
                 ),

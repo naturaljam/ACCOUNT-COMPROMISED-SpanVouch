@@ -6,6 +6,7 @@ from spanvouch.contracts.review import (
     DiagnosisReviewCase,
     DiagnosisReviewDetail,
 )
+from spanvouch.contracts.trace import TraceIR
 from spanvouch.contracts.verification import (
     EvidenceGap,
 )
@@ -21,6 +22,17 @@ from spanvouch.review.commands import (
     RouteToHumanReview,
 )
 from spanvouch.review.runtime import ReviewRuntimeBundle
+
+
+class DiagnosisRunner(Protocol):
+    async def diagnose(
+        self,
+        trace: TraceIR,
+        kind: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> DiagnosisReport:
+        raise NotImplementedError
 
 
 class ReviewWorkflowRunner(Protocol):

@@ -33,15 +33,18 @@ from spanvouch.contracts.verification import (
     VerifierVerdict,
 )
 from spanvouch.contracts.versioning import canonical_json, canonical_sha256
-from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.review.commands import (
     ApplyHumanDecision,
     CreateReviewCase,
     WorkflowEventType,
-    human_decision_transition,
 )
 from spanvouch.review.errors import ReviewConflictError, ReviewValidationError
-from spanvouch.review.protocols import ReviewRepository, ReviewWorkflowRunner
+from spanvouch.review.protocols import (
+    DiagnosisRunner,
+    ReviewRepository,
+    ReviewWorkflowRunner,
+)
+from spanvouch.review.transitions import human_decision_transition
 from spanvouch.trace.diagnostic_view import TraceProjector
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
 from spanvouch.verification.protocols import Verifier
@@ -127,11 +130,11 @@ def _build_corrected_report(
     )
 
 
-class ReviewService:
+class ReviewApplication:
     def __init__(
         self,
         *,
-        diagnosis_service: DiagnosisEngine,
+        diagnosis_service: DiagnosisRunner,
         repository: ReviewRepository,
         workflow: ReviewWorkflowRunner,
         deterministic_verifier: Verifier,
@@ -189,7 +192,7 @@ class ReviewService:
     async def _complete_reserved_create(
         self,
         trace: TraceIR,
-        diagnoser: DiagnoserKind,
+        diagnoser: str,
         *,
         verification_mode: VerificationMode,
         scope: str,
@@ -239,7 +242,7 @@ class ReviewService:
                     event_type=WorkflowEventType.CASE_CREATED,
                     event_metadata_json=canonical_json(
                         {
-                            "diagnoser": diagnoser.value,
+                            "diagnoser": str(diagnoser),
                             "verification_mode": verification_mode.value,
                         }
                     ),
@@ -272,7 +275,7 @@ class ReviewService:
         self,
         trace: TraceIR,
         *,
-        diagnoser: DiagnoserKind,
+        diagnoser: str,
         verification_mode: VerificationMode,
         idempotency_key: str,
     ) -> DiagnosisReviewDetail:
@@ -284,7 +287,7 @@ class ReviewService:
                 "trace_id": trace.trace_id,
                 "run_id": trace.run_id,
                 "input_sha256": input_sha256,
-                "diagnoser": diagnoser.value,
+                "diagnoser": str(diagnoser),
                 "verification_mode": verification_mode.value,
             }
         )

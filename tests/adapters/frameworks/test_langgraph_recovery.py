@@ -5,6 +5,9 @@ from pathlib import Path
 
 import pytest
 
+from spanvouch.adapters.frameworks.langgraph_review import (
+    LangGraphReviewWorkflow,
+)
 from spanvouch.adapters.storage.sqlite import SQLiteReviewRepository
 from spanvouch.contracts.diagnosis import DiagnoserKind
 from spanvouch.contracts.review import (
@@ -22,11 +25,10 @@ from spanvouch.diagnosis.errors import (
     ProviderRequestError,
 )
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
-from spanvouch.review.errors import ReviewConflictError
-from spanvouch.review.service import ReviewService
-from spanvouch.review.workflow import ReviewWorkflow, ReviewWorkflowProviderError
+from spanvouch.review.application import ReviewApplication
+from spanvouch.review.errors import ReviewConflictError, ReviewWorkflowProviderError
 from spanvouch.verification.invariant_engine import InvariantEngine
-from tests.review.test_workflow import (
+from tests.adapters.frameworks.test_langgraph_review import (
     FakeReviser,
     FakeVerifier,
     MutableClock,
@@ -89,13 +91,13 @@ def _utc_now() -> datetime:
 
 def _resume_service(
     repository: SQLiteReviewRepository,
-    workflow: ReviewWorkflow,
+    workflow: LangGraphReviewWorkflow,
     deterministic: FakeVerifier,
     ids: SequenceIds,
-) -> ReviewService:
+) -> ReviewApplication:
     engine = InvariantEngine(())
     diagnosis_service = DiagnosisEngine({DiagnoserKind.RULES: RuleDiagnoser(engine)})
-    return ReviewService(
+    return ReviewApplication(
         diagnosis_service=diagnosis_service,
         repository=repository,
         workflow=workflow,

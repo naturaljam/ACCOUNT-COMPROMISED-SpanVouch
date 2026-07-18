@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from spanvouch.contracts.diagnosis import DiagnoserKind, DiagnosisReport
+from spanvouch.contracts.diagnosis import DiagnosisReport
 from spanvouch.contracts.trace import DiagnosticContext
 from spanvouch.contracts.verification import EvidenceGap
 from spanvouch.diagnosis.protocols import Diagnoser, RevisionCapableDiagnoser
@@ -14,8 +14,8 @@ from spanvouch.trace.evidence_catalog import EvidenceCatalog
 class DiagnosisReviser:
     """Adapt optional diagnoser revision to the persisted review runtime."""
 
-    def __init__(self, diagnosers: Mapping[DiagnoserKind, Diagnoser]) -> None:
-        self._diagnosers = {kind.value: diagnoser for kind, diagnoser in diagnosers.items()}
+    def __init__(self, diagnosers: Mapping[str, Diagnoser]) -> None:
+        self._diagnosers = dict(diagnosers)
 
     def supports(self, diagnoser_kind: str) -> bool:
         diagnoser = self._diagnosers.get(diagnoser_kind)

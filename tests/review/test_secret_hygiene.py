@@ -14,6 +14,9 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from spanvouch.adapters.frameworks.langgraph_review import (
+    LangGraphReviewWorkflow,
+)
 from spanvouch.adapters.storage.sqlite import SQLiteReviewRepository
 from spanvouch.api.app import create_app
 from spanvouch.cli import review as review_cli
@@ -29,9 +32,9 @@ from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.diagnosis.errors import ProviderProtocolError
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
 from spanvouch.invariants.supportlab import supportlab_rules
+from spanvouch.review.application import ReviewApplication
+from spanvouch.review.errors import ReviewWorkflowProviderError
 from spanvouch.review.reviser import DiagnosisReviser
-from spanvouch.review.service import ReviewService
-from spanvouch.review.workflow import ReviewWorkflow, ReviewWorkflowProviderError
 from spanvouch.trace.diagnostic_view import SECRET_REDACTION, TraceProjector
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
 from spanvouch.trace.repository import InMemoryTraceRepository
@@ -239,14 +242,14 @@ def _trace_with_value_secrets() -> TraceIR:
 
 def _review_runtime(
     database: Path,
-) -> tuple[ReviewService, SQLiteReviewRepository, FailingSemanticVerifier]:
+) -> tuple[ReviewApplication, SQLiteReviewRepository, FailingSemanticVerifier]:
     engine = InvariantEngine(supportlab_rules())
     diagnoser = RuleDiagnoser(engine)
     diagnosis_service = DiagnosisEngine({DiagnoserKind.RULES: diagnoser})
     repository = SQLiteReviewRepository(database)
     deterministic = DeterministicVerifier(engine, policy_version="supportlab-review-v1")
     semantic = FailingSemanticVerifier()
-    workflow = ReviewWorkflow(
+    workflow = LangGraphReviewWorkflow(
         repository=repository,
         deterministic_verifier=deterministic,
         semantic_verifier=semantic,
@@ -256,7 +259,7 @@ def _review_runtime(
         lease_owner="secret-hygiene-worker",
         lease_duration=timedelta(seconds=30),
     )
-    service = ReviewService(
+    service = ReviewApplication(
         diagnosis_service=diagnosis_service,
         repository=repository,
         workflow=workflow,

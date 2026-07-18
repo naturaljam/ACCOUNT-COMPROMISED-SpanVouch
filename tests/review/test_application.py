@@ -40,10 +40,10 @@ from spanvouch.contracts.verification import (
 from spanvouch.contracts.versioning import canonical_json, canonical_sha256
 from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.failure_types import FailureType
+from spanvouch.review.application import ReviewApplication
 from spanvouch.review.commands import ApplyHumanDecision, CreateReviewCase
 from spanvouch.review.errors import ReviewConflictError, ReviewValidationError
 from spanvouch.review.runtime import ReviewRuntimeBundle
-from spanvouch.review.service import ReviewService
 from tests.adapters.storage.test_sqlite import (
     _claim_command,
     _route_command,
@@ -450,7 +450,7 @@ def make_service(
     repository: RecordingRepository,
     *,
     verifier: RecordingVerifier | None = None,
-) -> tuple[ReviewService, SelectorDiagnoser, RecordingWorkflow, RecordingVerifier]:
+) -> tuple[ReviewApplication, SelectorDiagnoser, RecordingWorkflow, RecordingVerifier]:
     diagnoser = SelectorDiagnoser(
         EvidenceSelector(
             span_id="span-005",
@@ -462,7 +462,7 @@ def make_service(
     )
     workflow = RecordingWorkflow(repository)
     deterministic = verifier or RecordingVerifier()
-    service = ReviewService(
+    service = ReviewApplication(
         diagnosis_service=diagnosis_service,
         repository=repository,
         workflow=workflow,
@@ -474,7 +474,7 @@ def make_service(
 
 
 async def create_case(
-    service: ReviewService,
+    service: ReviewApplication,
     repository: RecordingRepository,
     *,
     key: str = "create-key",
@@ -504,7 +504,7 @@ async def test_blocked_live_diagnosis_does_not_delay_unrelated_rules_review_crea
         }
     )
     workflow = RecordingWorkflow(repository)
-    service = ReviewService(
+    service = ReviewApplication(
         diagnosis_service=diagnosis_service,
         repository=repository,
         workflow=workflow,
@@ -569,7 +569,7 @@ async def test_create_persists_canonical_snapshot_before_requested_workflow() ->
 
     command = repository.create_commands[0]
     assert diagnoser.calls == 1
-    assert command.diagnoser is DiagnoserKind.RULES
+    assert command.diagnoser == DiagnoserKind.RULES.value
     assert command.verification_mode is VerificationMode.DETERMINISTIC
     assert command.snapshot.view_json == canonical_json(command.snapshot.trace_view())
     assert command.snapshot.input_sha256 == canonical_sha256(command.snapshot.trace_view())
@@ -612,7 +612,7 @@ async def test_create_restart_preflight_replays_without_diagnosis_or_id_allocati
     def forbidden_id() -> str:
         raise AssertionError("id factory must not run during durable preflight")
 
-    restarted = ReviewService(
+    restarted = ReviewApplication(
         diagnosis_service=DiagnosisEngine(
             {
                 DiagnoserKind.RULES: FailingDiagnoser(),
@@ -648,7 +648,7 @@ async def test_create_changed_fingerprint_conflicts_before_any_diagnoser(
     repository = RecordingRepository()
     service, _, _, _ = make_service(repository)
     await create_case(service, repository, key="preflight-conflict")
-    restarted = ReviewService(
+    restarted = ReviewApplication(
         diagnosis_service=DiagnosisEngine(
             {
                 DiagnoserKind.RULES: FailingDiagnoser(),
@@ -709,7 +709,7 @@ async def test_concurrent_create_reservation_blocks_duplicates_before_diagnosis(
         field_path="attributes.tool.error.type",
     )
     diagnoser = BlockingDiagnoser(selector)
-    service = ReviewService(
+    service = ReviewApplication(
         diagnosis_service=DiagnosisEngine({DiagnoserKind.RULES: diagnoser}),
         repository=repository,
         workflow=NoopWorkflow(),
@@ -776,7 +776,7 @@ async def test_active_create_heartbeat_prevents_takeover_after_original_expiry(
         field_path="attributes.tool.error.type",
     )
     diagnoser = BlockingDiagnoser(selector)
-    first = ReviewService(
+    first = ReviewApplication(
         diagnosis_service=DiagnosisEngine({DiagnoserKind.RULES: diagnoser}),
         repository=repository,
         workflow=NoopWorkflow(),
@@ -786,7 +786,7 @@ async def test_active_create_heartbeat_prevents_takeover_after_original_expiry(
         idempotency_lease_duration=timedelta(seconds=30),
         idempotency_heartbeat_interval=timedelta(milliseconds=10),
     )
-    duplicate = ReviewService(
+    duplicate = ReviewApplication(
         diagnosis_service=DiagnosisEngine({DiagnoserKind.RULES: diagnoser}),
         repository=repository,
         workflow=NoopWorkflow(),
@@ -849,7 +849,7 @@ async def test_active_create_heartbeat_continues_through_atomic_finalization(
             field_path="attributes.tool.error.type",
         )
     )
-    first = ReviewService(
+    first = ReviewApplication(
         diagnosis_service=DiagnosisEngine({DiagnoserKind.RULES: diagnoser}),
         repository=repository,
         workflow=NoopWorkflow(),
@@ -859,7 +859,7 @@ async def test_active_create_heartbeat_continues_through_atomic_finalization(
         idempotency_lease_duration=timedelta(seconds=30),
         idempotency_heartbeat_interval=timedelta(milliseconds=10),
     )
-    duplicate = ReviewService(
+    duplicate = ReviewApplication(
         diagnosis_service=DiagnosisEngine({DiagnoserKind.RULES: diagnoser}),
         repository=repository,
         workflow=NoopWorkflow(),
@@ -925,7 +925,7 @@ async def test_post_diagnosis_renewal_failure_cancels_finalization_and_joins_tas
             field_path="attributes.tool.error.type",
         )
     )
-    service = ReviewService(
+    service = ReviewApplication(
         diagnosis_service=DiagnosisEngine({DiagnoserKind.RULES: diagnoser}),
         repository=repository,
         workflow=NoopWorkflow(),
@@ -986,7 +986,7 @@ async def test_create_heartbeat_failure_stops_waiting_without_cancelling_shared_
         )
     )
     diagnosis_service = DiagnosisEngine({DiagnoserKind.RULES: diagnoser})
-    service = ReviewService(
+    service = ReviewApplication(
         diagnosis_service=diagnosis_service,
         repository=repository,
         workflow=NoopWorkflow(),
@@ -1062,7 +1062,7 @@ async def test_stale_create_reservation_allows_same_fingerprint_takeover_only(
     await repository.initialize()
     clock = NOW
     crashing = CrashingDiagnoser()
-    first = ReviewService(
+    first = ReviewApplication(
         diagnosis_service=DiagnosisEngine({DiagnoserKind.RULES: crashing}),
         repository=repository,
         workflow=NoopWorkflow(),
@@ -1088,7 +1088,7 @@ async def test_stale_create_reservation_allows_same_fingerprint_takeover_only(
             field_path="attributes.tool.error.type",
         )
     )
-    recovered = ReviewService(
+    recovered = ReviewApplication(
         diagnosis_service=DiagnosisEngine({DiagnoserKind.RULES: recovered_diagnoser}),
         repository=repository,
         workflow=NoopWorkflow(),
@@ -1360,7 +1360,7 @@ async def test_correction_and_idempotency_are_atomic_with_sqlite(tmp_path: Path)
         )
     )
     verifier = RecordingVerifier()
-    service = ReviewService(
+    service = ReviewApplication(
         diagnosis_service=DiagnosisEngine({DiagnoserKind.RULES: diagnoser}),
         repository=repository,
         workflow=NoopWorkflow(),
@@ -1381,7 +1381,7 @@ async def test_correction_and_idempotency_are_atomic_with_sqlite(tmp_path: Path)
 
     reopened = SQLiteReviewRepository(tmp_path / "reviews.sqlite3")
     await reopened.initialize()
-    restarted = ReviewService(
+    restarted = ReviewApplication(
         diagnosis_service=DiagnosisEngine(
             {
                 DiagnoserKind.RULES: FailingDiagnoser(),
@@ -1614,7 +1614,7 @@ def test_clock_must_return_aware_utc() -> None:
         )
     )
     with pytest.raises(ValueError, match="aware UTC"):
-        ReviewService(
+        ReviewApplication(
             diagnosis_service=DiagnosisEngine({DiagnoserKind.RULES: diagnoser}),
             repository=repository,
             workflow=RecordingWorkflow(repository),
@@ -1623,7 +1623,7 @@ def test_clock_must_return_aware_utc() -> None:
             clock=lambda: datetime(2026, 7, 17),
         )
     with pytest.raises(ValueError, match="aware UTC"):
-        ReviewService(
+        ReviewApplication(
             diagnosis_service=DiagnosisEngine({DiagnoserKind.RULES: diagnoser}),
             repository=repository,
             workflow=RecordingWorkflow(repository),
@@ -1644,7 +1644,7 @@ def test_human_correction_dependency_cannot_be_a_semantic_verifier() -> None:
     verifier.kind = VerifierKind.SEMANTIC
 
     with pytest.raises(ValueError, match="deterministic verifier"):
-        ReviewService(
+        ReviewApplication(
             diagnosis_service=DiagnosisEngine({DiagnoserKind.RULES: diagnoser}),
             repository=repository,
             workflow=RecordingWorkflow(repository),

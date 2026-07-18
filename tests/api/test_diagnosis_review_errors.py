@@ -14,8 +14,8 @@ from spanvouch.review.errors import (
     ReviewNotFoundError,
     ReviewPersistenceError,
     ReviewValidationError,
+    ReviewWorkflowProviderError,
 )
-from spanvouch.review.workflow import ReviewWorkflowProviderError
 from spanvouch.trace.repository import InMemoryTraceRepository
 from tests.trace.test_diagnostic_view import load_trace
 

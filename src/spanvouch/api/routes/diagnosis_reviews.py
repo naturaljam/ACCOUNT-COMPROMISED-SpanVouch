@@ -18,15 +18,15 @@ from spanvouch.diagnosis.errors import (
     ProviderProtocolError,
     ProviderRequestError,
 )
+from spanvouch.review.application import ReviewApplication
 from spanvouch.review.errors import (
     ReviewConflictError,
     ReviewNotFoundError,
     ReviewPersistenceError,
     ReviewSchemaError,
     ReviewValidationError,
+    ReviewWorkflowProviderError,
 )
-from spanvouch.review.service import ReviewService
-from spanvouch.review.workflow import ReviewWorkflowProviderError
 from spanvouch.trace.repository import TraceRepository
 
 _REQUEST_ERROR_CODES = {
@@ -119,7 +119,7 @@ def _error_response(error: Exception) -> JSONResponse:
 
 def build_diagnosis_review_router(
     trace_repository: TraceRepository,
-    review_service: ReviewService,
+    review_service: ReviewApplication,
 ) -> APIRouter:
     router = APIRouter(tags=["diagnosis-reviews"])
 
