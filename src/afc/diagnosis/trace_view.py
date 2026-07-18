@@ -44,6 +44,7 @@ _SAFE_METADATA_TERMINALS = frozenset(
         "enabled",
         "expires",
         "expiry",
+        "field",
         "id",
         "length",
         "name",
@@ -161,7 +162,6 @@ _COMPACT_SAFE_METADATA_LABELS = frozenset(
     for qualifier in _COMPACT_SAFE_METADATA_QUALIFIERS
     for terminal in _SAFE_METADATA_TERMINALS
 )
-_NONEMPTY_LINE = re.compile(r"[^\r\n]+")
 _COOKIE_PAIR_VALUE = re.compile(
     r"(?i)(?:^|;\s*)[!#$%&'*+\-.^_`|~0-9A-Za-z]+\s*="
 )
@@ -465,10 +465,101 @@ def _quoted_assignment_value_span(
         if not line.startswith(wrapper, value_start):
             continue
         inner_start = value_start + len(wrapper)
-        closer_start = line.find(wrapper, inner_start)
-        if closer_start >= 0:
-            return inner_start, closer_start, closer_start + len(wrapper)
+        quote = wrapper[-1]
+        escaped_outer_wrapper = len(wrapper) == 2
+        quote_index = inner_start
+        while (quote_index := line.find(quote, quote_index)) >= 0:
+            backslash_start = quote_index
+            while (
+                backslash_start > inner_start
+                and line[backslash_start - 1] == "\\"
+            ):
+                backslash_start -= 1
+            backslash_count = quote_index - backslash_start
+            is_closer = (
+                backslash_count == 1
+                if escaped_outer_wrapper
+                else backslash_count % 2 == 0
+            )
+            if is_closer:
+                closer_start = (
+                    backslash_start if escaped_outer_wrapper else quote_index
+                )
+                return inner_start, closer_start, quote_index + 1
+            quote_index += 1
     return None
+
+
+def _quoted_assignment_wrapper(line: str, value_start: int) -> str | None:
+    return next(
+        (
+            wrapper
+            for wrapper in ('\\"', "\\'", '"', "'")
+            if line.startswith(wrapper, value_start)
+        ),
+        None,
+    )
+
+
+def _next_structural_field_start(line: str, value_start: int) -> int | None:
+    hard_boundary: int | None = None
+    soft_boundary: int | None = None
+    index = value_start
+    while index < len(line):
+        character = line[index]
+        if character in "\r\n":
+            if not (character == "\n" and index > 0 and line[index - 1] == "\r"):
+                hard_boundary = index
+            soft_boundary = index
+            index += 1
+            continue
+        if _is_structural_label_whitespace(
+            character
+        ) or _is_structural_field_boundary(character):
+            soft_boundary = index
+            if not _is_structural_label_whitespace(character):
+                hard_boundary = index
+            index += 1
+            continue
+
+        if _normalize_structural_delimiter(character) is not None:
+            boundary_index = (
+                hard_boundary
+                if hard_boundary is not None
+                else soft_boundary
+            )
+            if boundary_index is not None:
+                label = line[boundary_index + 1 : index].strip(
+                    _LABEL_DELIMITERS
+                )
+                if label and _normalize_credential_label(label):
+                    return boundary_index
+        index += 1
+    return None
+
+
+def _structural_assignment_value_end(line: str, value_start: int) -> int:
+    quoted_span = _quoted_assignment_value_span(line, value_start)
+    if quoted_span is not None:
+        return quoted_span[2]
+    if _quoted_assignment_wrapper(line, value_start) is not None:
+        return len(line)
+    next_field_start = _next_structural_field_start(line, value_start)
+    return len(line) if next_field_start is None else next_field_start
+
+
+def _is_cookie_pair_value(value: str) -> bool:
+    candidate, _, _ = _unwrap_structural_value(value)
+    return bool(_COOKIE_PAIR_VALUE.search(candidate))
+
+
+def _physical_line_end(value: str, start: int) -> int:
+    line_feed = value.find("\n", start)
+    carriage_return = value.find("\r", start)
+    endings = tuple(
+        ending for ending in (line_feed, carriage_return) if ending >= 0
+    )
+    return min(endings, default=len(value))
 
 
 def _apply_structural_replacements(
@@ -565,17 +656,45 @@ def _sanitize_structural_credential_line(
             value_start += 1
         label_parts = _structural_credential_label_parts(label)
         if label_parts is not None:
-            value = line[value_start:]
             is_cookie_label = any(
                 part in {"cookie", "cookies"} for part in label_parts
             )
-            if not is_cookie_label or _is_credential_shaped_cookie_value(value):
-                prefix = _apply_structural_replacements(
-                    line,
-                    replacements,
-                    value_start,
+            line_end = _physical_line_end(line, value_start)
+            line_value = line[value_start:line_end]
+            unclosed_wrapper = (
+                _quoted_assignment_wrapper(line, value_start) is not None
+                and _quoted_assignment_value_span(line, value_start) is None
+            )
+            value_end = (
+                line_end
+                if (
+                    (is_cookie_label and _is_cookie_pair_value(line_value))
+                    or (
+                        any(
+                            part in {"auth", "authorization"}
+                            for part in label_parts
+                        )
+                        and ";" in line_value
+                    )
                 )
-                return _redact_structural_value(prefix, value)
+                else _structural_assignment_value_end(line, value_start)
+            )
+            value = line[value_start:value_end]
+            should_redact = (
+                not is_cookie_label
+                or unclosed_wrapper
+                or _is_credential_shaped_cookie_value(value)
+            )
+            if should_redact:
+                sanitized_value = _redact_structural_value("", value)
+                if sanitized_value != value:
+                    replacements.append(
+                        (value_start, value_end, sanitized_value)
+                    )
+                candidate_start = value_end
+                candidate_starts_with_previous_value = False
+                index = value_end
+                continue
 
         quoted_span = (
             _quoted_assignment_value_span(line, value_start)
@@ -605,10 +724,7 @@ def _sanitize_structural_credential_line(
 
 
 def _sanitize_structural_credential_lines(value: str) -> str:
-    return _NONEMPTY_LINE.sub(
-        lambda match: _sanitize_structural_credential_line(match.group(0)),
-        value,
-    )
+    return _sanitize_structural_credential_line(value)
 
 
 def _redact_bearer(match: re.Match[str]) -> str:

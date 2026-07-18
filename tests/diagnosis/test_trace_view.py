@@ -757,6 +757,12 @@ _EMBEDDED_STRUCTURAL_CREDENTIAL_LABELS = (
     *_METADATA_QUALIFIED_CREDENTIAL_LABELS,
 )
 _QUOTED_STRUCTURAL_WRAPPERS = ('"', "'", '\\"', "\\'")
+_ESCAPED_INNER_QUOTE_CASES = (
+    ('"', r'\"'),
+    ("'", r"\'"),
+    (r'\"', r'\\\"'),
+    (r"\'", r"\\\'"),
+)
 
 
 def _assert_sanitizer_fixed_point(source: str, expected: str) -> None:
@@ -966,6 +972,49 @@ def test_cookie_short_token_shapes_redact_without_hiding_recipe_prose() -> None:
         _assert_sanitizer_fixed_point(source, source)
 
 
+def test_cookie_tokens_stop_before_the_following_safe_field() -> None:
+    labels = (
+        "Cookie",
+        "Cookies",
+        "Set-Cookie",
+        "set_cookie",
+        "set.cookie",
+        "Session Cookie",
+        "request.session.cookie",
+        "headers.cookie",
+    )
+    for label, separator, wrapper in product(
+        labels,
+        (":", "="),
+        ("", '"', "'", r'\"', r"\'"),
+    ):
+        source = f"{label}{separator}{wrapper}secret-one{wrapper} field=ok"
+        expected = source.replace("secret-one", SECRET_REDACTION)
+        _assert_sanitizer_fixed_point(source, expected)
+
+
+def test_unclosed_cookie_values_fail_closed_without_inventing_a_closer() -> None:
+    labels = ("Cookie", "Set-Cookie", "Session Cookie", "headers.cookie")
+    for label, separator, wrapper in product(
+        labels,
+        (":", "="),
+        ('"', "'", r'\"', r"\'"),
+    ):
+        source = f"{label}{separator}{wrapper}secret-one field=ok"
+        expected = f"{label}{separator}{SECRET_REDACTION}"
+        _assert_sanitizer_fixed_point(source, expected)
+
+
+def test_cookie_prose_still_preserves_a_following_safe_field() -> None:
+    for label, separator, wrapper in product(
+        ("Cookie", "Set-Cookie", "Session Cookie", "headers.cookie"),
+        (":", "="),
+        ("", '"', "'", r'\"', r"\'"),
+    ):
+        source = f"{label}{separator}{wrapper}recipe{wrapper} field=ok"
+        _assert_sanitizer_fixed_point(source, source)
+
+
 def test_safe_credential_metadata_labels_remain_visible() -> None:
     for label, value in (
         ("cookie_count", "7"),
@@ -976,6 +1025,49 @@ def test_safe_credential_metadata_labels_remain_visible() -> None:
     ):
         source = f"{label}={value}; metadata remains safe"
         _assert_sanitizer_fixed_point(source, source)
+
+
+def test_field_terminal_uses_shared_safe_metadata_semantics() -> None:
+    compact_labels = (
+        "token_count_field",
+        "custom_token_count_field",
+        "tenant_custom_token_count_field",
+    )
+    for label in compact_labels:
+        assert sanitize_diagnostic_value({label: "ok"}) == {label: "ok"}
+        _assert_sanitizer_fixed_point(f"{label}=ok", f"{label}=ok")
+
+    for space, prefix, boundary in product(
+        _UNICODE_ZS_SPACES,
+        ("", "tenant ", "arbitrary tenant custom "),
+        ("", "status=ok; ", "status=ok | ", "status=ok\N{IDEOGRAPHIC COMMA}"),
+    ):
+        label = space.join((*prefix.split(), "token", "count", "field"))
+        source = f"{boundary}{label}=ok"
+        assert sanitize_diagnostic_value({label: "ok"}) == {label: "ok"}
+        _assert_sanitizer_fixed_point(source, source)
+
+        previous_value_source = f"safe={label}=ok"
+        _assert_sanitizer_fixed_point(
+            previous_value_source,
+            previous_value_source,
+        )
+
+
+def test_field_terminal_does_not_weaken_qualified_credential_labels() -> None:
+    for space, prefix, boundary, qualified_label in product(
+        _UNICODE_ZS_SPACES,
+        ("", "tenant custom "),
+        ("", "status=ok; ", "status=ok\N{IDEOGRAPHIC COMMA}"),
+        _METADATA_QUALIFIED_CREDENTIAL_LABELS,
+    ):
+        label = space.join((*prefix.split(), *qualified_label.split()))
+        source = f"{boundary}{label}=secret-one field=ok"
+        expected = source.replace("secret-one", SECRET_REDACTION)
+        assert sanitize_diagnostic_value({label: "secret-one"}) == {
+            label: SECRET_REDACTION
+        }
+        _assert_sanitizer_fixed_point(source, expected)
 
 
 def test_escaped_structural_label_and_value_wrappers_are_independent() -> None:
@@ -1474,6 +1566,99 @@ def test_quoted_safe_prose_preserves_closers_and_following_field_boundaries() ->
         )
 
 
+def test_quoted_inner_escapes_preserve_the_true_outer_closer() -> None:
+    for outer_wrapper, inner_quote in _ESCAPED_INNER_QUOTE_CASES:
+        other_quote = "'" if outer_wrapper.endswith('"') else '"'
+        safe_interior = (
+            f"note {inner_quote}quoted{inner_quote} and "
+            f"{other_quote}other{other_quote} custom token count"
+        )
+        safe_source = (
+            f"message={outer_wrapper}{safe_interior}{outer_wrapper} field=ok"
+        )
+        _assert_sanitizer_fixed_point(safe_source, safe_source)
+
+        credential_interior = (
+            f"note {inner_quote}quoted{inner_quote} "
+            "api key=secret-one"
+        )
+        credential_source = (
+            f"message={outer_wrapper}{credential_interior}{outer_wrapper} "
+            "field=ok"
+        )
+        credential_expected = credential_source.replace(
+            "secret-one",
+            SECRET_REDACTION,
+        )
+        _assert_sanitizer_fixed_point(
+            credential_source,
+            credential_expected,
+        )
+
+        marker_source = credential_source.replace(
+            "secret-one",
+            SECRET_REDACTION,
+        )
+        _assert_sanitizer_fixed_point(marker_source, marker_source)
+
+
+def test_quoted_inner_escapes_preserve_crlf_and_malformed_input() -> None:
+    for outer_wrapper, inner_quote in _ESCAPED_INNER_QUOTE_CASES:
+        safe_line = (
+            f"message={outer_wrapper}note {inner_quote}quoted{inner_quote} "
+            f"custom token count{outer_wrapper} field=ok"
+        )
+        credential_line = (
+            f"message={outer_wrapper}note {inner_quote}quoted{inner_quote} "
+            f"api key=secret-one{outer_wrapper} field=ok"
+        )
+        source = f"{safe_line}\r\n{credential_line}\r\n"
+        expected = source.replace("secret-one", SECRET_REDACTION)
+        _assert_sanitizer_fixed_point(source, expected)
+
+        malformed = (
+            f"message={outer_wrapper}note {inner_quote}quoted{inner_quote} "
+            "api key=secret-one"
+        )
+        malformed_expected = malformed.replace(
+            "secret-one",
+            SECRET_REDACTION,
+        )
+        _assert_sanitizer_fixed_point(malformed, malformed_expected)
+
+
+def test_sensitive_assignments_continue_across_lf_and_crlf() -> None:
+    for newline, label in product(
+        ("\n", "\r\n"),
+        ("api_key", "client_secret", "token"),
+    ):
+        source = f"{label}={newline}secret-one field=ok"
+        expected = source.replace("secret-one", SECRET_REDACTION)
+        _assert_sanitizer_fixed_point(source, expected)
+
+
+def test_quoted_sensitive_assignments_continue_across_lf_and_crlf() -> None:
+    for newline, outer_wrapper in product(
+        ("\n", "\r\n"),
+        _QUOTED_STRUCTURAL_WRAPPERS,
+    ):
+        source = (
+            f"message={outer_wrapper}api key={newline}secret-one"
+            f"{outer_wrapper} field=ok"
+        )
+        expected = source.replace("secret-one", SECRET_REDACTION)
+        _assert_sanitizer_fixed_point(source, expected)
+
+        malformed = (
+            f"message={outer_wrapper}api key={newline}secret-one"
+        )
+        malformed_expected = malformed.replace(
+            "secret-one",
+            SECRET_REDACTION,
+        )
+        _assert_sanitizer_fixed_point(malformed, malformed_expected)
+
+
 def test_unquoted_safe_assignment_values_keep_credential_first_tokens() -> None:
     separators = (*_UNICODE_ZS_SPACES, "\t")
     for separator, label, later_token in product(
@@ -1514,6 +1699,33 @@ def test_many_quoted_assignments_are_sanitized_without_recursive_depth() -> None
     sanitized = sanitize_diagnostic_value(source)
 
     assert sanitized == " ".join(expected)
+    assert sanitize_diagnostic_value(sanitized) == sanitized
+
+
+def test_many_inner_escaped_quotes_keep_outer_assignment_boundaries() -> None:
+    sources: list[str] = []
+    expected: list[str] = []
+    for index in range(2_000):
+        outer_wrapper, inner_quote = _ESCAPED_INNER_QUOTE_CASES[
+            index % len(_ESCAPED_INNER_QUOTE_CASES)
+        ]
+        interior = (
+            f"note {inner_quote}quoted-{index}{inner_quote} "
+            f"api key=secret-{index}"
+        )
+        sources.append(
+            f"message={outer_wrapper}{interior}{outer_wrapper} field=ok"
+        )
+        expected.append(
+            f"message={outer_wrapper}note "
+            f"{inner_quote}quoted-{index}{inner_quote} "
+            f"api key={SECRET_REDACTION}{outer_wrapper} field=ok"
+        )
+
+    source = "; ".join(sources)
+    sanitized = sanitize_diagnostic_value(source)
+
+    assert sanitized == "; ".join(expected)
     assert sanitize_diagnostic_value(sanitized) == sanitized
 
 
@@ -1759,7 +1971,14 @@ def test_trace_view_preserves_safe_urls_and_redacts_punctuation_labels() -> None
                     rf'message=\"token count payload={VALUE_SECRET}\" field=ok'
                     "\n"
                     f"message=private key={VALUE_SECRET}\n"
-                    'message="custom token count" field=ok quoted-value-safe'
+                    'message="custom token count" field=ok quoted-value-safe\n'
+                    "safe=custom token count field=ok field-terminal-safe\n"
+                    "cookie=secret-one field=cookie-field-safe\n"
+                    f"api_key=\r\n{VALUE_SECRET} field=newline-field-safe\r\n"
+                    f'message="api key=\n{VALUE_SECRET}" '
+                    "field=quoted-newline-safe\n"
+                    rf'message=\"note \\\"quoted\\\" api key={VALUE_SECRET}'
+                    r'\" field=escaped-inner-safe'
                 ),
             }
         }
@@ -1789,4 +2008,11 @@ def test_trace_view_preserves_safe_urls_and_redacts_punctuation_labels() -> None
     assert "full-label-parity-safe" in message
     assert "previous-value-safe" in message
     assert "quoted-value-safe" in message
+    assert "field-terminal-safe" in message
+    assert "cookie-field-safe" in message
+    assert "newline-field-safe" in message
+    assert "quoted-newline-safe" in message
+    assert "escaped-inner-safe" in message
+    assert "secret-one" not in message
+    assert f"api_key=\r\n{SECRET_REDACTION} field=newline-field-safe" in message
     assert sanitize_diagnostic_trace_view(view) == view
