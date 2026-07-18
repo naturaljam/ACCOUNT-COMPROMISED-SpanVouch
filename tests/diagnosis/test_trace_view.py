@@ -1366,6 +1366,57 @@ def test_punctuation_field_boundaries_remain_safe() -> None:
         _assert_sanitizer_fixed_point(source, source)
 
 
+def test_multiline_sensitive_assignments_keep_independent_label_boundaries() -> None:
+    line_boundaries = ("\n", "\r\n", "\r", "\N{LINE SEPARATOR}", "\N{PARAGRAPH SEPARATOR}")
+    first_labels = (
+        "api::key",
+        "session_id",
+        "jwt",
+        "passphrase",
+        "deepseek::api::key",
+    )
+    second_labels = ("api,key", "api;key", "api|key")
+
+    for first_label, second_label, boundary in product(
+        first_labels,
+        second_labels,
+        line_boundaries,
+    ):
+        source = (
+            f"{first_label}=secret-one{boundary}"
+            f"{second_label}=secret-two"
+        )
+        expected = (
+            f"{first_label}={SECRET_REDACTION}{boundary}"
+            f"{second_label}={SECRET_REDACTION}"
+        )
+        _assert_sanitizer_fixed_point(source, expected)
+
+
+def test_multiline_header_and_unfinished_value_controls() -> None:
+    for boundary in (
+        "\n",
+        "\r\n",
+        "\r",
+        "\N{LINE SEPARATOR}",
+        "\N{PARAGRAPH SEPARATOR}",
+    ):
+        safe_header = f"Cookie: token count{boundary}note=ok"
+        _assert_sanitizer_fixed_point(safe_header, safe_header)
+
+        unfinished = f"api_key={boundary}secret-one field=ok"
+        _assert_sanitizer_fixed_point(
+            unfinished,
+            unfinished.replace("secret-one", SECRET_REDACTION),
+        )
+
+        cookie_continuation = f"Cookie:{boundary}a_1 field=ok"
+        _assert_sanitizer_fixed_point(
+            cookie_continuation,
+            cookie_continuation.replace("a_1", SECRET_REDACTION),
+        )
+
+
 def test_url_authorities_are_not_structural_assignment_labels() -> None:
     safe_urls = (
         "https://auth.example.com:443/path",
@@ -2507,4 +2558,31 @@ def test_trace_view_redacts_additional_sensitive_mapping_families() -> None:
         "jwt_header": "visible",
         "passphrase_hint": "visible",
     }
+    assert sanitize_diagnostic_trace_view(view) == view
+
+
+def test_trace_view_redacts_composed_multiline_tool_result() -> None:
+    trace = load_trace("clean-01")
+    source = (
+        f"api::key={VALUE_SECRET}\r\n"
+        f"api,key={VALUE_SECRET}\N{LINE SEPARATOR}"
+        f"passphrase={VALUE_SECRET}\N{PARAGRAPH SEPARATOR}"
+        f"api|key={VALUE_SECRET}"
+    )
+    root = trace.spans[0].model_copy(
+        update={
+            "attributes": {
+                **trace.spans[0].attributes,
+                "tool.result": source,
+            }
+        }
+    )
+    candidate = trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
+
+    view = DiagnosticTraceView.from_trace(candidate)
+    result = view.spans[0].attributes["tool.result"]
+
+    assert isinstance(result, str)
+    assert VALUE_SECRET not in result
+    assert result == source.replace(VALUE_SECRET, SECRET_REDACTION)
     assert sanitize_diagnostic_trace_view(view) == view

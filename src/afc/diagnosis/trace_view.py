@@ -198,6 +198,7 @@ _URL_USERINFO = re.compile(
     r"(?P<userinfo>[^/@\s]+)@"
 )
 _STRUCTURAL_FIELD_BOUNDARIES = frozenset(";,|")
+_PHYSICAL_LINE_BOUNDARIES = frozenset("\r\n\N{LINE SEPARATOR}\N{PARAGRAPH SEPARATOR}")
 _URL_AUTHORITY_TERMINATORS = frozenset("/?#")
 _URL_LABEL_BOUNDARIES = frozenset("/?#&")
 
@@ -417,7 +418,7 @@ def _normalize_structural_delimiter(character: str) -> str | None:
 
 def _has_structural_equals_ahead(line: str, start: int) -> bool:
     for character in line[start:]:
-        if character in "\r\n":
+        if character in _PHYSICAL_LINE_BOUNDARIES:
             return False
         if _normalize_structural_delimiter(character) == "=":
             return True
@@ -560,8 +561,13 @@ def _structural_assignment_value_end(line: str, value_start: int) -> int:
         return quoted_span[2]
     if _quoted_assignment_wrapper(line, value_start) is not None:
         return len(line)
+    line_end = _physical_line_end(line, value_start)
     next_field_start = _next_structural_field_start(line, value_start)
-    return len(line) if next_field_start is None else next_field_start
+    return (
+        line_end
+        if next_field_start is None
+        else min(line_end, next_field_start)
+    )
 
 
 def _is_cookie_pair_value(value: str) -> bool:
@@ -570,10 +576,10 @@ def _is_cookie_pair_value(value: str) -> bool:
 
 
 def _physical_line_end(value: str, start: int) -> int:
-    line_feed = value.find("\n", start)
-    carriage_return = value.find("\r", start)
     endings = tuple(
-        ending for ending in (line_feed, carriage_return) if ending >= 0
+        ending
+        for boundary in _PHYSICAL_LINE_BOUNDARIES
+        if (ending := value.find(boundary, start)) >= 0
     )
     return min(endings, default=len(value))
 
@@ -634,7 +640,7 @@ def _sanitize_structural_credential_line(
             url_context_index += 1
 
         character = line[index]
-        if character in "\r\n":
+        if character in _PHYSICAL_LINE_BOUNDARIES:
             candidate_start = index + 1
             candidate_starts_with_previous_value = False
             index += 1
