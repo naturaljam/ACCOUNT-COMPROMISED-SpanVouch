@@ -493,6 +493,26 @@ async def test_create_case_atomically_persists_aggregate_and_idempotency(
     }
 
 
+async def test_hydration_preserves_an_extensible_persisted_diagnoser_identifier(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "extensible-diagnoser.sqlite3"
+    repository = SQLiteReviewRepository(database)
+    await repository.initialize()
+    await repository.create_case(_create_command())
+    with connect_database(database) as connection:
+        connection.execute(
+            "UPDATE review_cases SET diagnoser = ? WHERE case_id = ?",
+            ("third-party.diagnoser", "case-review-1"),
+        )
+
+    detail = await repository.get_detail("case-review-1")
+    runtime = await repository.load_runtime("case-review-1")
+
+    assert detail.case.diagnoser == "third-party.diagnoser"
+    assert runtime.case == detail.case
+
+
 async def test_create_case_rejects_unsanitized_canonical_snapshot_before_insert(
     tmp_path: Path,
 ) -> None:

@@ -11,7 +11,6 @@ from typing import TypeVar, cast
 from pydantic import BaseModel, ValidationError
 
 from spanvouch.contracts.diagnosis import (
-    DiagnoserKind,
     DiagnosisProvenance,
     DiagnosisReport,
     EvidenceSelector,
@@ -1372,7 +1371,7 @@ class SQLiteReviewRepository:
                 status=ReviewStatus(str(row["status"])),
                 version=int(row["version"]),
                 verification_mode=VerificationMode(str(row["verification_mode"])),
-                diagnoser=DiagnoserKind(str(row["diagnoser"])),
+                diagnoser=str(row["diagnoser"]),
                 current_revision_number=int(row["current_revision_number"]),
                 evidence_revision_count=int(row["evidence_revision_count"]),
                 deterministic_run_id=row["deterministic_run_id"],
