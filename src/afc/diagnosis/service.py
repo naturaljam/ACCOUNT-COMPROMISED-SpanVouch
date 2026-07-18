@@ -15,6 +15,7 @@ class DiagnosisService:
     def __init__(self, diagnosers: Mapping[DiagnoserKind, Diagnoser]) -> None:
         self._diagnosers = dict(diagnosers)
         self._completed: dict[str, DiagnosisReport] = {}
+        self._inflight: dict[str, asyncio.Task[DiagnosisReport]] = {}
         self._idempotency_fingerprints: dict[str, str] = {}
         self._lock = asyncio.Lock()
 
@@ -40,7 +41,29 @@ class DiagnosisService:
             cached = self._completed.get(fingerprint)
             if cached is not None:
                 return cached
+            task = self._inflight.get(fingerprint)
+            if task is None:
+                task = asyncio.create_task(
+                    self._execute_diagnosis(
+                        trace,
+                        kind,
+                        diagnoser,
+                        fingerprint=fingerprint,
+                    )
+                )
+                task.add_done_callback(self._consume_task_exception)
+                self._inflight[fingerprint] = task
+        return await asyncio.shield(task)
 
+    async def _execute_diagnosis(
+        self,
+        trace: TraceIR,
+        kind: DiagnoserKind,
+        diagnoser: Diagnoser,
+        *,
+        fingerprint: str,
+    ) -> DiagnosisReport:
+        try:
             view = DiagnosticTraceView.from_trace(trace)
             evidence = EvidenceCatalog.from_view(view)
             execution = await diagnoser.diagnose(view, evidence)
@@ -52,8 +75,21 @@ class DiagnosisService:
                 provenance=execution.provenance,
                 usage=execution.usage,
             )
+        except BaseException:
+            async with self._lock:
+                if self._inflight.get(fingerprint) is asyncio.current_task():
+                    self._inflight.pop(fingerprint, None)
+            raise
+        async with self._lock:
             self._completed[fingerprint] = report
+            if self._inflight.get(fingerprint) is asyncio.current_task():
+                self._inflight.pop(fingerprint, None)
             return report
+
+    @staticmethod
+    def _consume_task_exception(task: asyncio.Task[DiagnosisReport]) -> None:
+        if not task.cancelled():
+            task.exception()
 
     @staticmethod
     def _fingerprint(trace: TraceIR, kind: DiagnoserKind, version: str) -> str:
