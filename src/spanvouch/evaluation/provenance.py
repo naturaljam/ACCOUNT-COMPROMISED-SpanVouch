@@ -79,10 +79,20 @@ class ExecutionMetadata(BaseModel):
 
 
 @dataclass(frozen=True)
+class _PublishedEntryIdentity:
+    relative_path: str
+    entry_type: Literal["directory", "file"]
+    volume_serial_number: int
+    file_id: int
+    content_sha256: str | None
+
+
+@dataclass(frozen=True)
 class _PublishedBundleIdentity:
     device: int
     inode: int
     tree_fingerprint: str
+    native_entries: tuple[_PublishedEntryIdentity, ...] = ()
 
 
 @dataclass
@@ -92,6 +102,8 @@ class _WindowsPinnedNode:
     relative_path: str
     device: int
     inode: int
+    volume_serial_number: int
+    file_id: int
     is_directory: bool
     is_reparse: bool
     size: int
@@ -128,8 +140,6 @@ _FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000
 _FILE_ATTRIBUTE_DIRECTORY = 0x00000010
 _FILE_ATTRIBUTE_REPARSE_POINT = 0x00000400
 _FILE_DISPOSITION_INFO_CLASS = 4
-_O_DIRECTORY = cast(int, vars(os).get("O_DIRECTORY", 0))
-_O_NOFOLLOW = cast(int, vars(os).get("O_NOFOLLOW", 0))
 
 
 @dataclass(frozen=True)
@@ -353,12 +363,10 @@ def _publish_staged_pair(
     destination_primary: Path,
     destination_bundle: Path,
 ) -> None:
-    expected_fingerprint = _tree_fingerprint(staged_bundle)
-    expected_device, expected_inode = _directory_identity(staged_bundle)
-    expected_identity = _PublishedBundleIdentity(
-        device=expected_device,
-        inode=expected_inode,
-        tree_fingerprint=expected_fingerprint,
+    expected_identity = (
+        _snapshot_windows_bundle_identity(staged_bundle)
+        if sys.platform == "win32"
+        else _snapshot_portable_bundle_identity(staged_bundle)
     )
     published_identity: _PublishedBundleIdentity | None = None
     try:
@@ -378,18 +386,30 @@ def _publish_staged_pair(
 def _capture_published_bundle_identity(
     destination: Path, expected: _PublishedBundleIdentity
 ) -> _PublishedBundleIdentity:
-    device, inode = _directory_identity(destination)
-    if (
-        device != expected.device
-        or inode != expected.inode
-        or _tree_fingerprint(destination) != expected.tree_fingerprint
-    ):
+    actual = (
+        _snapshot_windows_bundle_identity(destination)
+        if sys.platform == "win32"
+        else _snapshot_portable_bundle_identity(destination)
+    )
+    if actual != expected:
         raise RuntimeError("published artifact ownership verification failed")
     return expected
 
 
+def _snapshot_portable_bundle_identity(path: Path) -> _PublishedBundleIdentity:
+    device, inode = _directory_identity(path)
+    return _PublishedBundleIdentity(
+        device=device,
+        inode=inode,
+        tree_fingerprint=_tree_fingerprint(path),
+    )
+
+
 def _rollback_published_bundle(
-    destination: Path, owner: _PublishedBundleIdentity
+    destination: Path,
+    owner: _PublishedBundleIdentity,
+    *,
+    platform: str | None = None,
 ) -> None:
     quarantine = destination.parent / f".{destination.name}.rollback-{uuid.uuid4().hex}"
     try:
@@ -400,7 +420,7 @@ def _rollback_published_bundle(
         raise RuntimeError("artifact rollback cleanup conflict") from None
 
     try:
-        owned = _delete_owned_quarantine(quarantine, owner)
+        owned = _delete_owned_quarantine(quarantine, owner, platform=platform)
     except Exception:
         raise RuntimeError("artifact rollback cleanup conflict") from None
     if owned:
@@ -415,11 +435,15 @@ def _rollback_published_bundle(
 
 
 def _delete_owned_quarantine(
-    quarantine: Path, owner: _PublishedBundleIdentity
+    quarantine: Path,
+    owner: _PublishedBundleIdentity,
+    *,
+    platform: str | None = None,
 ) -> bool:
-    if sys.platform == "win32":
-        return _delete_windows_owned_quarantine(quarantine, owner)
-    return _delete_posix_owned_quarantine(quarantine, owner)
+    current_platform = sys.platform if platform is None else platform
+    if current_platform != "win32":
+        raise RuntimeError("artifact rollback cleanup conflict")
+    return _delete_windows_owned_quarantine(quarantine, owner)
 
 
 def _delete_windows_owned_quarantine(
@@ -434,6 +458,7 @@ def _delete_windows_owned_quarantine(
             root.device != owner.device
             or root.inode != owner.inode
             or _windows_tree_fingerprint(root) != owner.tree_fingerprint
+            or _windows_native_entries(root) != owner.native_entries
         ):
             return False
         _dispose_windows_tree(root, kernel32)
@@ -519,6 +544,8 @@ def _pin_windows_tree(path: Path, kernel32: Any) -> _WindowsPinnedNode:
                 relative_path=relative,
                 device=metadata.st_dev,
                 inode=metadata.st_ino,
+                volume_serial_number=information.volume_serial_number,
+                file_id=(information.file_index_high << 32) | information.file_index_low,
                 is_directory=is_directory,
                 is_reparse=is_reparse,
                 size=size,
@@ -542,6 +569,20 @@ def _pin_windows_tree(path: Path, kernel32: Any) -> _WindowsPinnedNode:
             raise
 
     return pin(path)
+
+
+def _snapshot_windows_bundle_identity(path: Path) -> _PublishedBundleIdentity:
+    kernel32 = _windows_kernel32()
+    root = _pin_windows_tree(path, kernel32)
+    try:
+        return _PublishedBundleIdentity(
+            device=root.device,
+            inode=root.inode,
+            tree_fingerprint=_windows_tree_fingerprint(root),
+            native_entries=_windows_native_entries(root),
+        )
+    finally:
+        _close_windows_tree(root, kernel32)
 
 
 def _hash_windows_handle(handle: int, kernel32: Any) -> str:
@@ -588,6 +629,32 @@ def _windows_tree_fingerprint(root: _WindowsPinnedNode) -> str:
     return canonical_sha256(cast(JsonValue, entries))
 
 
+def _windows_native_entries(
+    root: _WindowsPinnedNode,
+) -> tuple[_PublishedEntryIdentity, ...]:
+    entries: list[_PublishedEntryIdentity] = []
+
+    def append(node: _WindowsPinnedNode) -> None:
+        if node.is_reparse:
+            raise RuntimeError("rollback artifact contains a reparse point")
+        if not node.is_directory and node.content_sha256 is None:
+            raise RuntimeError("rollback artifact fingerprint is incomplete")
+        entries.append(
+            _PublishedEntryIdentity(
+                relative_path=node.relative_path,
+                entry_type="directory" if node.is_directory else "file",
+                volume_serial_number=node.volume_serial_number,
+                file_id=node.file_id,
+                content_sha256=node.content_sha256,
+            )
+        )
+        for child in node.children:
+            append(child)
+
+    append(root)
+    return tuple(entries)
+
+
 def _dispose_windows_tree(node: _WindowsPinnedNode, kernel32: Any) -> None:
     for child in node.children:
         _dispose_windows_tree(child, kernel32)
@@ -610,129 +677,6 @@ def _close_windows_tree(node: _WindowsPinnedNode, kernel32: Any) -> None:
     if node.handle:
         kernel32.CloseHandle(wintypes.HANDLE(node.handle))
         node.handle = 0
-
-
-def _delete_posix_owned_quarantine(
-    quarantine: Path, owner: _PublishedBundleIdentity
-) -> bool:  # pragma: no cover - exercised on POSIX runners
-    if not _O_DIRECTORY or not _O_NOFOLLOW:
-        raise RuntimeError("stable descriptor deletion is unsupported")
-    root_fd = os.open(
-        quarantine,
-        os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW,
-    )
-    try:
-        root_metadata = os.fstat(root_fd)
-        if (
-            root_metadata.st_dev != owner.device
-            or root_metadata.st_ino != owner.inode
-            or _posix_tree_fingerprint(root_fd) != owner.tree_fingerprint
-        ):
-            return False
-        _delete_posix_children(root_fd)
-        current = quarantine.stat(follow_symlinks=False)
-        if (
-            current.st_dev != root_metadata.st_dev
-            or current.st_ino != root_metadata.st_ino
-            or not stat.S_ISDIR(current.st_mode)
-        ):
-            raise RuntimeError("rollback quarantine identity changed")
-        os.rmdir(quarantine)
-        return True
-    finally:
-        os.close(root_fd)
-
-
-def _posix_tree_fingerprint(
-    root_fd: int,
-) -> str:  # pragma: no cover - exercised on POSIX runners
-    entries: list[dict[str, str | int]] = []
-
-    def visit(directory_fd: int, relative: str) -> None:
-        entries.append({"kind": "directory", "path": relative})
-        for name in sorted(os.listdir(directory_fd)):
-            metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
-            child_relative = name if relative == "." else f"{relative}/{name}"
-            if stat.S_ISLNK(metadata.st_mode):
-                raise RuntimeError("rollback artifact contains a symlink")
-            if stat.S_ISDIR(metadata.st_mode):
-                child_fd = os.open(
-                    name,
-                    os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW,
-                    dir_fd=directory_fd,
-                )
-                try:
-                    visit(child_fd, child_relative)
-                finally:
-                    os.close(child_fd)
-                continue
-            if not stat.S_ISREG(metadata.st_mode):
-                raise RuntimeError("rollback artifact contains a special file")
-            child_fd = os.open(
-                name,
-                os.O_RDONLY | _O_NOFOLLOW,
-                dir_fd=directory_fd,
-            )
-            try:
-                pinned = os.fstat(child_fd)
-                digest = sha256()
-                while data := os.read(child_fd, 64 * 1024):
-                    digest.update(data)
-            finally:
-                os.close(child_fd)
-            if (metadata.st_dev, metadata.st_ino) != (pinned.st_dev, pinned.st_ino):
-                raise RuntimeError("rollback artifact identity changed")
-            entries.append(
-                {
-                    "kind": "file",
-                    "path": child_relative,
-                    "sha256": digest.hexdigest(),
-                    "size": pinned.st_size,
-                }
-            )
-
-    visit(root_fd, ".")
-    return canonical_sha256(cast(JsonValue, entries))
-
-
-def _delete_posix_children(
-    directory_fd: int,
-) -> None:  # pragma: no cover - exercised on POSIX runners
-    for name in sorted(os.listdir(directory_fd)):
-        metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
-        if stat.S_ISLNK(metadata.st_mode):
-            raise RuntimeError("rollback artifact contains a symlink")
-        if stat.S_ISDIR(metadata.st_mode):
-            child_fd = os.open(
-                name,
-                os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW,
-                dir_fd=directory_fd,
-            )
-            try:
-                pinned = os.fstat(child_fd)
-                _delete_posix_children(child_fd)
-                current = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
-                if (current.st_dev, current.st_ino) != (pinned.st_dev, pinned.st_ino):
-                    raise RuntimeError("rollback artifact identity changed")
-                os.rmdir(name, dir_fd=directory_fd)
-            finally:
-                os.close(child_fd)
-            continue
-        if not stat.S_ISREG(metadata.st_mode):
-            raise RuntimeError("rollback artifact contains a special file")
-        child_fd = os.open(
-            name,
-            os.O_RDONLY | _O_NOFOLLOW,
-            dir_fd=directory_fd,
-        )
-        try:
-            pinned = os.fstat(child_fd)
-            current = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
-            if (current.st_dev, current.st_ino) != (pinned.st_dev, pinned.st_ino):
-                raise RuntimeError("rollback artifact identity changed")
-            os.unlink(name, dir_fd=directory_fd)
-        finally:
-            os.close(child_fd)
 
 
 def _directory_identity(path: Path) -> tuple[int, int]:

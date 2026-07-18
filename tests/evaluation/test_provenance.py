@@ -270,9 +270,11 @@ def test_child_mutation_before_pinned_delete_is_restored_not_deleted(
             raise OSError("replace failure")
         real_publish(source, destination)
 
-    def mutate_then_delete(quarantine: Path, owner: object) -> bool:
+    def mutate_then_delete(
+        quarantine: Path, owner: object, *, platform: str | None = None
+    ) -> bool:
         (quarantine / "metrics.json").write_bytes(mutated)
-        return real_delete(quarantine, owner)
+        return real_delete(quarantine, owner, platform=platform)
 
     monkeypatch.setattr("spanvouch.evaluation.provenance._publish_no_replace", fail_primary)
     monkeypatch.setattr(
@@ -292,6 +294,94 @@ def test_child_mutation_before_pinned_delete_is_restored_not_deleted(
 
     assert (bundle / "metrics.json").read_bytes() == mutated
     assert not tuple(tmp_path.glob(".*.rollback-*"))
+
+
+def test_identical_byte_child_replacement_mismatches_native_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "report.json"
+    bundle = manifest_path_for(output).parent
+    replacement = tmp_path / "replacement-config.json"
+    replacement_inode = 0
+    expected_bytes = b""
+    from spanvouch.evaluation.artifacts import _publish_no_replace as real_publish
+    from spanvouch.evaluation.provenance import (
+        _capture_published_bundle_identity as real_capture,
+    )
+
+    def fail_primary(source: Path, destination: Path) -> None:
+        if destination == output:
+            raise OSError("replace failure")
+        real_publish(source, destination)
+
+    def capture_then_replace_child(destination: Path, identity: object) -> object:
+        nonlocal expected_bytes, replacement_inode
+        owner = real_capture(destination, identity)
+        target = bundle / "config.json"
+        expected_bytes = target.read_bytes()
+        replacement.write_bytes(expected_bytes)
+        replacement_inode = replacement.stat().st_ino
+        assert replacement_inode != target.stat().st_ino
+        target.unlink()
+        replacement.rename(target)
+        return owner
+
+    monkeypatch.setattr("spanvouch.evaluation.provenance._publish_no_replace", fail_primary)
+    monkeypatch.setattr(
+        "spanvouch.evaluation.provenance._capture_published_bundle_identity",
+        capture_then_replace_child,
+    )
+
+    with pytest.raises(OSError, match="replace failure"):
+        publish_report_and_bundle(
+            output=output,
+            render_report=lambda path: path.write_bytes(b'{"status":"complete"}\n'),
+            config={"schema_version": "1.0", "seed": 1, "allow_live_api": False},
+            command_name="spanvouch evaluate review",
+            artifact_kind="evaluation_bundle",
+            seed=1,
+            collector=FixedCollector(dirty=False),
+        )
+
+    assert (bundle / "config.json").read_bytes() == expected_bytes
+    assert (bundle / "config.json").stat().st_ino == replacement_inode
+    assert not tuple(tmp_path.glob(".*.rollback-*"))
+
+
+def test_posix_unsupported_rollback_preserves_recovery_evidence_without_delete_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "report.json.bundle"
+    destination.mkdir()
+    evidence = destination / "foreign-evidence.bin"
+    evidence.write_bytes(b"preserve exactly\x00\x01")
+    from spanvouch.evaluation.provenance import (
+        _PublishedBundleIdentity,
+        _rollback_published_bundle,
+        _tree_fingerprint,
+    )
+
+    metadata = destination.stat()
+    owner = _PublishedBundleIdentity(
+        device=metadata.st_dev,
+        inode=metadata.st_ino,
+        tree_fingerprint=_tree_fingerprint(destination),
+    )
+
+    def forbidden(*_: object, **__: object) -> None:
+        raise AssertionError("unsupported POSIX rollback must not delete")
+
+    monkeypatch.setattr("spanvouch.evaluation.provenance.os.unlink", forbidden)
+    monkeypatch.setattr("spanvouch.evaluation.provenance.os.rmdir", forbidden)
+    monkeypatch.setattr("spanvouch.evaluation.provenance.shutil.rmtree", forbidden)
+
+    with pytest.raises(RuntimeError, match="^artifact rollback cleanup conflict$"):
+        _rollback_published_bundle(destination, owner, platform="linux")
+
+    assert not destination.exists()
+    recoveries = tuple(tmp_path.glob(".*.rollback-*"))
+    assert len(recoveries) == 1
+    assert (recoveries[0] / evidence.name).read_bytes() == b"preserve exactly\x00\x01"
 
 
 def test_rollback_restores_foreign_bundle_replacement_byte_exact(
