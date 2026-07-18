@@ -14,15 +14,15 @@ from spanvouch.contracts.verification import (
     VerifierReport,
     VerifierVerdict,
 )
+from spanvouch.contracts.versioning import (
+    canonical_json,
+    canonical_sha256,
+)
 from spanvouch.diagnosis.errors import ProviderError
 from spanvouch.evals.generate_review_dataset import MutationKind, ReviewCandidate
 from spanvouch.evals.review_labels import (
     ReviewGoldLabel,
     validate_review_cohort,
-)
-from spanvouch.review.models import (
-    canonical_json,
-    canonical_sha256,
 )
 from spanvouch.trace.diagnostic_view import TraceProjector
 

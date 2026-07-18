@@ -1,0 +1,1334 @@
+{
+  "$defs": {
+    "AbstainReason": {
+      "enum": [
+        "unsupported_failure_type",
+        "insufficient_evidence",
+        "ambiguous_findings",
+        "invalid_model_output",
+        "invalid_evidence_reference"
+      ],
+      "title": "AbstainReason",
+      "type": "string"
+    },
+    "ClaimStage": {
+      "enum": [
+        "cause",
+        "propagation",
+        "outcome"
+      ],
+      "title": "ClaimStage",
+      "type": "string"
+    },
+    "CorrectionClaim": {
+      "additionalProperties": false,
+      "properties": {
+        "selectors": {
+          "items": {
+            "$ref": "#/$defs/EvidenceSelector"
+          },
+          "minItems": 1,
+          "title": "Selectors",
+          "type": "array"
+        },
+        "stage": {
+          "$ref": "#/$defs/ClaimStage"
+        },
+        "statement": {
+          "minLength": 1,
+          "title": "Statement",
+          "type": "string"
+        }
+      },
+      "required": [
+        "stage",
+        "statement",
+        "selectors"
+      ],
+      "title": "CorrectionClaim",
+      "type": "object"
+    },
+    "DecisionAction": {
+      "enum": [
+        "confirm",
+        "correct",
+        "reject"
+      ],
+      "title": "DecisionAction",
+      "type": "string"
+    },
+    "DiagnosisClaim": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "stage": {
+          "$ref": "#/$defs/ClaimStage"
+        },
+        "statement": {
+          "minLength": 1,
+          "title": "Statement",
+          "type": "string"
+        }
+      },
+      "required": [
+        "stage",
+        "statement",
+        "evidence_ids"
+      ],
+      "title": "DiagnosisClaim",
+      "type": "object"
+    },
+    "DiagnosisCorrectionDraft": {
+      "additionalProperties": false,
+      "properties": {
+        "abstain_reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AbstainReason"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "causal_chain": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/CorrectionClaim"
+          },
+          "maxItems": 3,
+          "title": "Causal Chain",
+          "type": "array"
+        },
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "critical_span_ids": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Critical Span Ids",
+          "type": "array"
+        },
+        "failure_type": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FailureType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "$ref": "#/$defs/DiagnosisStatus"
+        }
+      },
+      "required": [
+        "status",
+        "confidence"
+      ],
+      "title": "DiagnosisCorrectionDraft",
+      "type": "object"
+    },
+    "DiagnosisProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "diagnoser_version": {
+          "minLength": 1,
+          "title": "Diagnoser Version",
+          "type": "string"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        },
+        "prompt_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prompt Sha256"
+        },
+        "prompt_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prompt Version"
+        },
+        "provider": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider"
+        },
+        "ruleset_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ruleset Version"
+        },
+        "taxonomy": {
+          "$ref": "#/$defs/TaxonomyRef"
+        }
+      },
+      "required": [
+        "taxonomy",
+        "diagnoser_version"
+      ],
+      "title": "DiagnosisProvenance",
+      "type": "object"
+    },
+    "DiagnosisReport": {
+      "additionalProperties": false,
+      "properties": {
+        "abstain_reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AbstainReason"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "causal_chain": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/DiagnosisClaim"
+          },
+          "maxItems": 3,
+          "title": "Causal Chain",
+          "type": "array"
+        },
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "critical_span_ids": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Critical Span Ids",
+          "type": "array"
+        },
+        "diagnoser": {
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_.-]*$",
+          "title": "Diagnoser",
+          "type": "string"
+        },
+        "evidence": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/EvidenceRef"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "failure_type": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Failure Type"
+        },
+        "provenance": {
+          "$ref": "#/$defs/DiagnosisProvenance"
+        },
+        "run_id": {
+          "minLength": 1,
+          "title": "Run Id",
+          "type": "string"
+        },
+        "schema_name": {
+          "const": "spanvouch.diagnosis",
+          "default": "spanvouch.diagnosis",
+          "title": "Schema Name",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/DiagnosisStatus"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "title": "Trace Id",
+          "type": "string"
+        },
+        "usage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProviderUsage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "status",
+        "confidence",
+        "trace_id",
+        "run_id",
+        "diagnoser",
+        "provenance"
+      ],
+      "title": "DiagnosisReport",
+      "type": "object"
+    },
+    "DiagnosisReviewCase": {
+      "additionalProperties": false,
+      "properties": {
+        "case_id": {
+          "minLength": 1,
+          "title": "Case Id",
+          "type": "string"
+        },
+        "composite_verdict": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VerifierVerdict"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "current_revision_number": {
+          "minimum": 0,
+          "title": "Current Revision Number",
+          "type": "integer"
+        },
+        "deterministic_run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Deterministic Run Id"
+        },
+        "diagnoser": {
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_.-]*$",
+          "title": "Diagnoser",
+          "type": "string"
+        },
+        "evidence_revision_count": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Evidence Revision Count",
+          "type": "integer"
+        },
+        "run_id": {
+          "minLength": 1,
+          "title": "Run Id",
+          "type": "string"
+        },
+        "semantic_run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Semantic Run Id"
+        },
+        "status": {
+          "$ref": "#/$defs/ReviewStatus"
+        },
+        "terminal_decision_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Terminal Decision Id"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "title": "Trace Id",
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "verification_mode": {
+          "$ref": "#/$defs/VerificationMode"
+        },
+        "version": {
+          "minimum": 0,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "case_id",
+        "trace_id",
+        "run_id",
+        "status",
+        "version",
+        "verification_mode",
+        "diagnoser",
+        "current_revision_number",
+        "evidence_revision_count",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "DiagnosisReviewCase",
+      "type": "object"
+    },
+    "DiagnosisRevision": {
+      "additionalProperties": false,
+      "properties": {
+        "case_id": {
+          "minLength": 1,
+          "title": "Case Id",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/RevisionOrigin"
+        },
+        "previous_report_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Previous Report Sha256"
+        },
+        "provenance": {
+          "$ref": "#/$defs/DiagnosisProvenance"
+        },
+        "report": {
+          "$ref": "#/$defs/DiagnosisReport"
+        },
+        "report_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Report Sha256",
+          "type": "string"
+        },
+        "revision_id": {
+          "minLength": 1,
+          "title": "Revision Id",
+          "type": "string"
+        },
+        "revision_number": {
+          "minimum": 0,
+          "title": "Revision Number",
+          "type": "integer"
+        },
+        "triggering_gap_ids": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Triggering Gap Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "revision_id",
+        "case_id",
+        "revision_number",
+        "origin",
+        "report",
+        "report_sha256",
+        "provenance",
+        "created_at"
+      ],
+      "title": "DiagnosisRevision",
+      "type": "object"
+    },
+    "DiagnosisStatus": {
+      "enum": [
+        "diagnosed",
+        "no_failure",
+        "abstained"
+      ],
+      "title": "DiagnosisStatus",
+      "type": "string"
+    },
+    "EvidenceGap": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_selectors": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowed Selectors",
+          "type": "array"
+        },
+        "claim_index": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Claim Index"
+        },
+        "finding_code": {
+          "$ref": "#/$defs/FindingCode"
+        },
+        "gap_id": {
+          "minLength": 1,
+          "title": "Gap Id",
+          "type": "string"
+        },
+        "instruction": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Instruction",
+          "type": "string"
+        },
+        "related_span_ids": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Related Span Ids",
+          "type": "array"
+        },
+        "required_evidence_kind": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Required Evidence Kind",
+          "type": "string"
+        },
+        "stage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ClaimStage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "gap_id",
+        "finding_code",
+        "required_evidence_kind",
+        "instruction"
+      ],
+      "title": "EvidenceGap",
+      "type": "object"
+    },
+    "EvidenceRef": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "evidence_id": {
+          "minLength": 1,
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "field_path": {
+          "minLength": 1,
+          "title": "Field Path",
+          "type": "string"
+        },
+        "observed_value": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "span_id": {
+          "minLength": 1,
+          "title": "Span Id",
+          "type": "string"
+        },
+        "value_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Value Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "span_id",
+        "field_path",
+        "evidence_id",
+        "observed_value",
+        "value_sha256",
+        "description"
+      ],
+      "title": "EvidenceRef",
+      "type": "object"
+    },
+    "EvidenceSelector": {
+      "additionalProperties": false,
+      "properties": {
+        "field_path": {
+          "minLength": 1,
+          "title": "Field Path",
+          "type": "string"
+        },
+        "span_id": {
+          "minLength": 1,
+          "title": "Span Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "span_id",
+        "field_path"
+      ],
+      "title": "EvidenceSelector",
+      "type": "object"
+    },
+    "FailureType": {
+      "enum": [
+        "no_failure",
+        "wrong_tool",
+        "invalid_argument",
+        "missing_precondition",
+        "ignored_tool_error",
+        "context_corruption",
+        "policy_violation",
+        "loop_or_budget_exhaustion",
+        "invalid_final_state"
+      ],
+      "title": "FailureType",
+      "type": "string"
+    },
+    "FindingCode": {
+      "enum": [
+        "invalid_selector",
+        "evidence_value_mismatch",
+        "evidence_hash_mismatch",
+        "claim_not_grounded",
+        "critical_span_not_grounded",
+        "duplicate_reference",
+        "evidence_budget_exceeded",
+        "clean_trace_conflict",
+        "unsupported_scope",
+        "diagnosis_conflict",
+        "alternative_hypothesis",
+        "semantic_support_missing",
+        "invalid_verifier_output",
+        "provider_operational_error"
+      ],
+      "title": "FindingCode",
+      "type": "string"
+    },
+    "FindingSeverity": {
+      "enum": [
+        "hard",
+        "advisory",
+        "operational"
+      ],
+      "title": "FindingSeverity",
+      "type": "string"
+    },
+    "HumanReviewDecision": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/DecisionAction"
+        },
+        "case_id": {
+          "minLength": 1,
+          "title": "Case Id",
+          "type": "string"
+        },
+        "correction": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiagnosisCorrectionDraft"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "decision_id": {
+          "minLength": 1,
+          "title": "Decision Id",
+          "type": "string"
+        },
+        "expected_version": {
+          "minimum": 0,
+          "title": "Expected Version",
+          "type": "integer"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "resulting_revision_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resulting Revision Id"
+        },
+        "reviewer_label": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Reviewer Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "expected_version",
+        "reviewer_label",
+        "decision_id",
+        "case_id",
+        "created_at"
+      ],
+      "title": "HumanReviewDecision",
+      "type": "object"
+    },
+    "JsonValue": {},
+    "OperationalErrorMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "retryable": {
+          "title": "Retryable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ],
+      "title": "OperationalErrorMetadata",
+      "type": "object"
+    },
+    "ProviderUsage": {
+      "additionalProperties": false,
+      "properties": {
+        "input_tokens": {
+          "minimum": 0,
+          "title": "Input Tokens",
+          "type": "integer"
+        },
+        "latency_ms": {
+          "minimum": 0.0,
+          "title": "Latency Ms",
+          "type": "number"
+        },
+        "output_tokens": {
+          "minimum": 0,
+          "title": "Output Tokens",
+          "type": "integer"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Request Id"
+        },
+        "total_tokens": {
+          "minimum": 0,
+          "title": "Total Tokens",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "latency_ms"
+      ],
+      "title": "ProviderUsage",
+      "type": "object"
+    },
+    "ReviewStatus": {
+      "enum": [
+        "pending_verification",
+        "verifying",
+        "revision_requested",
+        "revising",
+        "awaiting_human_review",
+        "confirmed",
+        "corrected",
+        "rejected"
+      ],
+      "title": "ReviewStatus",
+      "type": "string"
+    },
+    "RevisionOrigin": {
+      "enum": [
+        "initial_diagnosis",
+        "evidence_revision",
+        "human_correction"
+      ],
+      "title": "RevisionOrigin",
+      "type": "string"
+    },
+    "TaxonomyRef": {
+      "additionalProperties": false,
+      "properties": {
+        "taxonomy_id": {
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_.-]*$",
+          "title": "Taxonomy Id",
+          "type": "string"
+        },
+        "taxonomy_version": {
+          "minLength": 1,
+          "title": "Taxonomy Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "taxonomy_id",
+        "taxonomy_version"
+      ],
+      "title": "TaxonomyRef",
+      "type": "object"
+    },
+    "VerificationFinding": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/FindingCode"
+        },
+        "finding_id": {
+          "minLength": 1,
+          "title": "Finding Id",
+          "type": "string"
+        },
+        "message": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "related_selectors": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Related Selectors",
+          "type": "array"
+        },
+        "related_span_ids": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Related Span Ids",
+          "type": "array"
+        },
+        "revisable": {
+          "title": "Revisable",
+          "type": "boolean"
+        },
+        "severity": {
+          "$ref": "#/$defs/FindingSeverity"
+        }
+      },
+      "required": [
+        "finding_id",
+        "code",
+        "severity",
+        "message",
+        "revisable"
+      ],
+      "title": "VerificationFinding",
+      "type": "object"
+    },
+    "VerificationMode": {
+      "enum": [
+        "deterministic",
+        "hybrid"
+      ],
+      "title": "VerificationMode",
+      "type": "string"
+    },
+    "VerifierProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        },
+        "policy_version": {
+          "minLength": 1,
+          "title": "Policy Version",
+          "type": "string"
+        },
+        "prompt_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prompt Sha256"
+        },
+        "prompt_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prompt Version"
+        },
+        "provider": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider"
+        },
+        "verifier_kind": {
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_.-]*$",
+          "title": "Verifier Kind",
+          "type": "string"
+        },
+        "verifier_version": {
+          "minLength": 1,
+          "title": "Verifier Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "verifier_kind",
+        "verifier_version",
+        "policy_version"
+      ],
+      "title": "VerifierProvenance",
+      "type": "object"
+    },
+    "VerifierReport": {
+      "additionalProperties": false,
+      "properties": {
+        "alternative_failure_type": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Alternative Failure Type"
+        },
+        "completed_at": {
+          "format": "date-time",
+          "title": "Completed At",
+          "type": "string"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence"
+        },
+        "evidence_gaps": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/EvidenceGap"
+          },
+          "title": "Evidence Gaps",
+          "type": "array"
+        },
+        "findings": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/VerificationFinding"
+          },
+          "title": "Findings",
+          "type": "array"
+        },
+        "operational_error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OperationalErrorMetadata"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "provenance": {
+          "$ref": "#/$defs/VerifierProvenance"
+        },
+        "report_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Report Sha256",
+          "type": "string"
+        },
+        "revision_number": {
+          "minimum": 0,
+          "title": "Revision Number",
+          "type": "integer"
+        },
+        "schema_name": {
+          "const": "spanvouch.verification",
+          "default": "spanvouch.verification",
+          "title": "Schema Name",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "started_at": {
+          "format": "date-time",
+          "title": "Started At",
+          "type": "string"
+        },
+        "usage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProviderUsage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "verdict": {
+          "$ref": "#/$defs/VerifierVerdict"
+        },
+        "verifier_kind": {
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_.-]*$",
+          "title": "Verifier Kind",
+          "type": "string"
+        },
+        "verifier_run_id": {
+          "minLength": 1,
+          "title": "Verifier Run Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "verifier_run_id",
+        "revision_number",
+        "report_sha256",
+        "verifier_kind",
+        "verdict",
+        "provenance",
+        "started_at",
+        "completed_at"
+      ],
+      "title": "VerifierReport",
+      "type": "object"
+    },
+    "VerifierVerdict": {
+      "enum": [
+        "verified",
+        "needs_evidence",
+        "review_required"
+      ],
+      "title": "VerifierVerdict",
+      "type": "string"
+    },
+    "WorkflowEvent": {
+      "additionalProperties": false,
+      "description": "Sanitized, append-only workflow event exposed by review aggregates.",
+      "properties": {
+        "case_id": {
+          "minLength": 1,
+          "title": "Case Id",
+          "type": "string"
+        },
+        "case_version": {
+          "minimum": 0,
+          "title": "Case Version",
+          "type": "integer"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "event_id": {
+          "minLength": 1,
+          "title": "Event Id",
+          "type": "string"
+        },
+        "event_sequence": {
+          "minimum": 0,
+          "title": "Event Sequence",
+          "type": "integer"
+        },
+        "event_type": {
+          "$ref": "#/$defs/WorkflowEventType"
+        },
+        "from_status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReviewStatus"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "to_status": {
+          "$ref": "#/$defs/ReviewStatus"
+        }
+      },
+      "required": [
+        "event_id",
+        "case_id",
+        "event_sequence",
+        "event_type",
+        "to_status",
+        "case_version",
+        "created_at"
+      ],
+      "title": "WorkflowEvent",
+      "type": "object"
+    },
+    "WorkflowEventType": {
+      "enum": [
+        "case_created",
+        "verification_started",
+        "verification_completed",
+        "revision_requested",
+        "revision_started",
+        "revision_completed",
+        "awaiting_human_review",
+        "human_confirmed",
+        "human_corrected",
+        "human_rejected",
+        "provider_failed",
+        "revision_provider_failed"
+      ],
+      "title": "WorkflowEventType",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "case": {
+      "$ref": "#/$defs/DiagnosisReviewCase"
+    },
+    "decision": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/HumanReviewDecision"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "events": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/WorkflowEvent"
+      },
+      "title": "Events",
+      "type": "array"
+    },
+    "revisions": {
+      "items": {
+        "$ref": "#/$defs/DiagnosisRevision"
+      },
+      "title": "Revisions",
+      "type": "array"
+    },
+    "schema_name": {
+      "const": "spanvouch.review",
+      "default": "spanvouch.review",
+      "title": "Schema Name",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "verifier_reports": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/VerifierReport"
+      },
+      "title": "Verifier Reports",
+      "type": "array"
+    }
+  },
+  "required": [
+    "case",
+    "revisions"
+  ],
+  "title": "DiagnosisReviewDetail",
+  "type": "object"
+}

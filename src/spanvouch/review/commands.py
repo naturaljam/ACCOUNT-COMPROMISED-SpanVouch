@@ -5,6 +5,14 @@ from typing import Any, Self
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from spanvouch.contracts.diagnosis import DiagnoserKind
+from spanvouch.contracts.review import (
+    DecisionAction,
+    DiagnosisRevision,
+    HumanReviewDecision,
+    ReviewStatus,
+    RevisionOrigin,
+)
+from spanvouch.contracts.review import WorkflowEventType as WorkflowEventType
 from spanvouch.contracts.verification import (
     ReviewInputSnapshot,
     VerificationMode,
@@ -12,15 +20,7 @@ from spanvouch.contracts.verification import (
     VerifierReport,
     VerifierVerdict,
 )
-from spanvouch.review.models import (
-    DecisionAction,
-    DiagnosisRevision,
-    HumanReviewDecision,
-    ReviewStatus,
-    RevisionOrigin,
-    canonical_json,
-)
-from spanvouch.review.models import WorkflowEventType as WorkflowEventType
+from spanvouch.contracts.versioning import canonical_json
 
 SHA256_PATTERN = r"^[0-9a-f]{64}$"
 

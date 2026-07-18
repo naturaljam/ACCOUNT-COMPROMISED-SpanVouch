@@ -6,6 +6,9 @@ from pathlib import Path
 import pytest
 
 from spanvouch.contracts.diagnosis import DiagnoserKind
+from spanvouch.contracts.review import (
+    ReviewStatus,
+)
 from spanvouch.contracts.verification import (
     VerificationMode,
     VerifierKind,
@@ -20,9 +23,6 @@ from spanvouch.diagnosis.errors import (
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
 from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.review.errors import ReviewConflictError
-from spanvouch.review.models import (
-    ReviewStatus,
-)
 from spanvouch.review.service import ReviewService
 from spanvouch.review.sqlite_repository import SQLiteReviewRepository
 from spanvouch.review.workflow import ReviewWorkflow, ReviewWorkflowProviderError

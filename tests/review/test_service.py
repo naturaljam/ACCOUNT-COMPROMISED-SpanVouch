@@ -22,27 +22,26 @@ from spanvouch.contracts.diagnosis import (
     EvidenceSelector,
     TaxonomyRef,
 )
-from spanvouch.contracts.verification import (
-    VerificationMode,
-    VerifierKind,
-    VerifierVerdict,
-)
-from spanvouch.diagnosis.engine import DiagnosisEngine
-from spanvouch.failure_types import FailureType
-from spanvouch.review.commands import ApplyHumanDecision, CreateReviewCase
-from spanvouch.review.errors import ReviewConflictError, ReviewValidationError
-from spanvouch.review.models import (
+from spanvouch.contracts.review import (
     CorrectionClaim,
     DecisionAction,
     DiagnosisCorrectionDraft,
     DiagnosisReviewCase,
     DiagnosisReviewDetail,
     HumanDecisionDraft,
-    ReviewRuntimeBundle,
     ReviewStatus,
-    canonical_json,
-    canonical_sha256,
 )
+from spanvouch.contracts.verification import (
+    VerificationMode,
+    VerifierKind,
+    VerifierVerdict,
+)
+from spanvouch.contracts.versioning import canonical_json, canonical_sha256
+from spanvouch.diagnosis.engine import DiagnosisEngine
+from spanvouch.failure_types import FailureType
+from spanvouch.review.commands import ApplyHumanDecision, CreateReviewCase
+from spanvouch.review.errors import ReviewConflictError, ReviewValidationError
+from spanvouch.review.runtime import ReviewRuntimeBundle
 from spanvouch.review.service import ReviewService
 from spanvouch.review.sqlite_repository import SQLiteReviewRepository
 from tests.review.factories import NOW, make_verifier_report

@@ -10,6 +10,10 @@ from spanvouch.contracts.diagnosis import (
     ProviderUsage,
     TaxonomyRef,
 )
+from spanvouch.contracts.review import (
+    DiagnosisRevision,
+    RevisionOrigin,
+)
 from spanvouch.contracts.trace import DiagnosticContext
 from spanvouch.contracts.verification import (
     EvidenceGap,
@@ -18,6 +22,7 @@ from spanvouch.contracts.verification import (
     VerificationFinding,
     VerifierVerdict,
 )
+from spanvouch.contracts.versioning import canonical_sha256
 from spanvouch.diagnosis.llm_diagnoser import LlmDiagnoser
 from spanvouch.diagnosis.protocols import (
     ChatMessage,
@@ -28,13 +33,8 @@ from spanvouch.diagnosis.protocols import (
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
 from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.review.errors import ReviewConflictError
-from spanvouch.review.models import (
-    DiagnosisRevision,
-    ReviewRuntimeBundle,
-    RevisionOrigin,
-    canonical_sha256,
-)
 from spanvouch.review.reviser import DiagnosisReviser
+from spanvouch.review.runtime import ReviewRuntimeBundle
 from spanvouch.trace.diagnostic_view import SECRET_REDACTION
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
 from tests.review.factories import (

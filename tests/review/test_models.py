@@ -3,13 +3,13 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from spanvouch.contracts.verification import ReviewInputSnapshot
-from spanvouch.review.models import (
+from spanvouch.contracts.review import (
     DiagnosisCorrectionDraft,
     DiagnosisRevision,
     RevisionOrigin,
-    canonical_sha256,
 )
+from spanvouch.contracts.verification import ReviewInputSnapshot
+from spanvouch.contracts.versioning import canonical_sha256
 from tests.review.factories import (
     make_correction_draft,
     make_review_snapshot,

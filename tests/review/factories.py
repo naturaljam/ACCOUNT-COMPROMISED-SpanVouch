@@ -10,6 +10,15 @@ from spanvouch.contracts.diagnosis import (
     EvidenceSelector,
     TaxonomyRef,
 )
+from spanvouch.contracts.review import (
+    CorrectionClaim,
+    DiagnosisCorrectionDraft,
+    DiagnosisReviewCase,
+    DiagnosisReviewDetail,
+    DiagnosisRevision,
+    ReviewStatus,
+    RevisionOrigin,
+)
 from spanvouch.contracts.trace import DiagnosticSpan, DiagnosticTraceView, SpanKind, SpanStatus
 from spanvouch.contracts.verification import (
     FindingCode,
@@ -23,17 +32,8 @@ from spanvouch.contracts.verification import (
     VerifierReport,
     VerifierVerdict,
 )
+from spanvouch.contracts.versioning import canonical_json, canonical_sha256
 from spanvouch.failure_types import FailureType
-from spanvouch.review.models import (
-    CorrectionClaim,
-    DiagnosisCorrectionDraft,
-    DiagnosisReviewCase,
-    DiagnosisRevision,
-    ReviewStatus,
-    RevisionOrigin,
-    canonical_json,
-    canonical_sha256,
-)
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
 
 NOW = datetime(2026, 7, 17, 8, 0, tzinfo=UTC)
@@ -202,6 +202,14 @@ def make_awaiting_human_case() -> DiagnosisReviewCase:
         composite_verdict=VerifierVerdict.VERIFIED,
         created_at=NOW,
         updated_at=NOW,
+    )
+
+
+def make_review_detail() -> DiagnosisReviewDetail:
+    return DiagnosisReviewDetail(
+        case=make_awaiting_human_case(),
+        revisions=(make_revision(),),
+        verifier_reports=(make_verifier_report(),),
     )
 
 

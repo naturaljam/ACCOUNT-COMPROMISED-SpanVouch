@@ -1,7 +1,11 @@
 from datetime import datetime
 from typing import Protocol
 
-from spanvouch.contracts.diagnosis import DiagnoserKind, DiagnosisReport
+from spanvouch.contracts.diagnosis import DiagnosisReport
+from spanvouch.contracts.review import (
+    DiagnosisReviewCase,
+    DiagnosisReviewDetail,
+)
 from spanvouch.contracts.verification import (
     EvidenceGap,
 )
@@ -16,11 +20,7 @@ from spanvouch.review.commands import (
     RouteRevisionFailureToHuman,
     RouteToHumanReview,
 )
-from spanvouch.review.models import (
-    DiagnosisReviewCase,
-    DiagnosisReviewDetail,
-    ReviewRuntimeBundle,
-)
+from spanvouch.review.runtime import ReviewRuntimeBundle
 
 
 class ReviewWorkflowRunner(Protocol):
@@ -32,7 +32,7 @@ class ReviewWorkflowRunner(Protocol):
 
 
 class ReviewReviser(Protocol):
-    def supports(self, diagnoser_kind: DiagnoserKind) -> bool:
+    def supports(self, diagnoser_kind: str) -> bool:
         raise NotImplementedError
 
     async def revise(

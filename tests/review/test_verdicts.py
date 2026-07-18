@@ -1,14 +1,14 @@
 import pytest
 
+from spanvouch.contracts.review import (
+    ReviewStatus,
+)
 from spanvouch.contracts.verification import (
     FindingCode,
     FindingSeverity,
     OperationalErrorMetadata,
     VerifierKind,
     VerifierVerdict,
-)
-from spanvouch.review.models import (
-    ReviewStatus,
 )
 from spanvouch.review.verdicts import (
     assert_revision_request_allowed,

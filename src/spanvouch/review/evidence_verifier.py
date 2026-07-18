@@ -24,13 +24,13 @@ from spanvouch.contracts.verification import (
     VerifierReport,
     VerifierVerdict,
 )
-from spanvouch.failure_types import FailureType
-from spanvouch.invariants.engine import InvariantEngine
-from spanvouch.invariants.models import InvariantResult, InvariantStatus, RuleContext, RuleScope
-from spanvouch.review.models import (
+from spanvouch.contracts.versioning import (
     canonical_json,
     canonical_sha256,
 )
+from spanvouch.failure_types import FailureType
+from spanvouch.invariants.engine import InvariantEngine
+from spanvouch.invariants.models import InvariantResult, InvariantStatus, RuleContext, RuleScope
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
 from spanvouch.trace.evidence_catalog import canonical_json as evidence_json
 

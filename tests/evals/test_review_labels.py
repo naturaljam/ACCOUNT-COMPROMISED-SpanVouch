@@ -12,6 +12,10 @@ from spanvouch.contracts.verification import (
     ReviewInputSnapshot,
     VerificationInput,
 )
+from spanvouch.contracts.versioning import (
+    canonical_json,
+    canonical_sha256,
+)
 from spanvouch.evals.generate_review_dataset import generate_review_dataset
 from spanvouch.evals.review_labels import (
     load_review_candidates,
@@ -23,10 +27,6 @@ from spanvouch.evals.review_labels import (
 from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.invariants.supportlab import supportlab_rules
 from spanvouch.review.evidence_verifier import EvidenceVerifier
-from spanvouch.review.models import (
-    canonical_json,
-    canonical_sha256,
-)
 from tests.trace.test_diagnostic_view import project_trace
 
 DATASET = Path("evals/datasets/supportlab-review-v1")

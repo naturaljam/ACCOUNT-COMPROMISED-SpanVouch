@@ -11,14 +11,14 @@ from spanvouch.contracts.verification import (
     VerifierReport,
     VerifierVerdict,
 )
+from spanvouch.contracts.versioning import (
+    canonical_json,
+)
 from spanvouch.diagnosis.errors import ProviderRequestError
 from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig, ProviderResponse
 from spanvouch.evals.review_labels import load_review_candidates
 from spanvouch.evals.review_metrics import ReviewEvaluationReport
 from spanvouch.evals.run_review_eval import _run, main, write_report
-from spanvouch.review.models import (
-    canonical_json,
-)
 from spanvouch.review.semantic_verifier import SemanticVerifier
 
 

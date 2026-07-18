@@ -27,15 +27,15 @@ from spanvouch.contracts.verification import (
     VerificationInput,
     VerifierVerdict,
 )
+from spanvouch.contracts.versioning import (
+    canonical_json,
+    canonical_sha256,
+)
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
 from spanvouch.failure_types import FailureType
 from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.invariants.supportlab import supportlab_rules
 from spanvouch.review.evidence_verifier import EvidenceVerifier
-from spanvouch.review.models import (
-    canonical_json,
-    canonical_sha256,
-)
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
 from tests.trace.test_diagnostic_view import load_trace, project_trace
 

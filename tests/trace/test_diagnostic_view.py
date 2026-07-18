@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from spanvouch.contracts.trace import DiagnosticTraceView, TraceIR
-from spanvouch.review.models import canonical_json
+from spanvouch.contracts.versioning import canonical_json
 from spanvouch.trace import diagnostic_view as trace_view_module
 from spanvouch.trace.diagnostic_view import (
     ALLOWED_ATTRIBUTES,

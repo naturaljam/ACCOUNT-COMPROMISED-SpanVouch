@@ -1,5 +1,8 @@
 from dataclasses import dataclass
 
+from spanvouch.contracts.review import (
+    ReviewStatus,
+)
 from spanvouch.contracts.verification import (
     EvidenceGap,
     FindingCode,
@@ -8,9 +11,6 @@ from spanvouch.contracts.verification import (
     VerifierKind,
     VerifierReport,
     VerifierVerdict,
-)
-from spanvouch.review.models import (
-    ReviewStatus,
 )
 
 _ALLOWED_TRANSITIONS = frozenset(

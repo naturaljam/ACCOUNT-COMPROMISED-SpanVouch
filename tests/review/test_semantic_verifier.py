@@ -11,16 +11,16 @@ from spanvouch.contracts.verification import (
     VerifierKind,
     VerifierVerdict,
 )
+from spanvouch.contracts.versioning import (
+    canonical_json,
+    canonical_sha256,
+)
 from spanvouch.diagnosis.errors import (
     ProviderConfigurationError,
     ProviderProtocolError,
     ProviderRequestError,
 )
 from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig, ProviderResponse
-from spanvouch.review.models import (
-    canonical_json,
-    canonical_sha256,
-)
 from spanvouch.review.semantic_verifier import SemanticVerifier
 from spanvouch.trace.diagnostic_view import (
     SECRET_REDACTION,

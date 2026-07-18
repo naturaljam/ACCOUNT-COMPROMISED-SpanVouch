@@ -7,7 +7,7 @@ from spanvouch.contracts.trace import DiagnosticContext
 from spanvouch.contracts.verification import EvidenceGap
 from spanvouch.diagnosis.protocols import Diagnoser, RevisionCapableDiagnoser
 from spanvouch.review.errors import ReviewConflictError
-from spanvouch.review.models import ReviewRuntimeBundle
+from spanvouch.review.runtime import ReviewRuntimeBundle
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
 
 
@@ -15,9 +15,9 @@ class DiagnosisReviser:
     """Adapt optional diagnoser revision to the persisted review runtime."""
 
     def __init__(self, diagnosers: Mapping[DiagnoserKind, Diagnoser]) -> None:
-        self._diagnosers = dict(diagnosers)
+        self._diagnosers = {kind.value: diagnoser for kind, diagnoser in diagnosers.items()}
 
-    def supports(self, diagnoser_kind: DiagnoserKind) -> bool:
+    def supports(self, diagnoser_kind: str) -> bool:
         diagnoser = self._diagnosers.get(diagnoser_kind)
         return isinstance(diagnoser, RevisionCapableDiagnoser)
 

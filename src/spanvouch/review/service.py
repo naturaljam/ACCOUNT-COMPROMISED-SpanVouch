@@ -12,6 +12,17 @@ from spanvouch.contracts.diagnosis import (
     DiagnosisReport,
     EvidenceRef,
 )
+from spanvouch.contracts.review import (
+    DecisionAction,
+    DiagnosisCorrectionDraft,
+    DiagnosisReviewDetail,
+    DiagnosisRevision,
+    HumanDecisionDraft,
+    HumanReviewDecision,
+    ReviewStatus,
+    RevisionOrigin,
+    resume_requires_live_api,
+)
 from spanvouch.contracts.trace import DiagnosticContext, TraceIR
 from spanvouch.contracts.verification import (
     ReviewInputSnapshot,
@@ -21,6 +32,7 @@ from spanvouch.contracts.verification import (
     VerifierReport,
     VerifierVerdict,
 )
+from spanvouch.contracts.versioning import canonical_json, canonical_sha256
 from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.review.commands import (
     ApplyHumanDecision,
@@ -29,19 +41,6 @@ from spanvouch.review.commands import (
     human_decision_transition,
 )
 from spanvouch.review.errors import ReviewConflictError, ReviewValidationError
-from spanvouch.review.models import (
-    DecisionAction,
-    DiagnosisCorrectionDraft,
-    DiagnosisReviewDetail,
-    DiagnosisRevision,
-    HumanDecisionDraft,
-    HumanReviewDecision,
-    ReviewStatus,
-    RevisionOrigin,
-    canonical_json,
-    canonical_sha256,
-    resume_requires_live_api,
-)
 from spanvouch.review.protocols import ReviewRepository, ReviewWorkflowRunner
 from spanvouch.trace.diagnostic_view import TraceProjector
 from spanvouch.trace.evidence_catalog import EvidenceCatalog

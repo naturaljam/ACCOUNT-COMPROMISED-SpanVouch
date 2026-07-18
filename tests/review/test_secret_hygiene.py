@@ -448,8 +448,8 @@ def test_allowed_trace_value_secrets_never_reach_sqlite_or_public_aggregate(
 async def test_invalid_semantic_provider_body_is_not_copied_into_verifier_report() -> None:
     from spanvouch.contracts.diagnosis import ProviderUsage
     from spanvouch.contracts.verification import VerificationInput
+    from spanvouch.contracts.versioning import canonical_sha256
     from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig, ProviderResponse
-    from spanvouch.review.models import canonical_sha256
     from tests.review.factories import make_diagnosis_report, make_review_snapshot
 
     class InvalidBodyProvider:

@@ -25,12 +25,12 @@ from spanvouch.contracts.verification import (
     VerifierReport,
     VerifierVerdict,
 )
-from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig, ModelProvider
-from spanvouch.failure_types import FailureType
-from spanvouch.review.models import (
+from spanvouch.contracts.versioning import (
     canonical_json,
     canonical_sha256,
 )
+from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig, ModelProvider
+from spanvouch.failure_types import FailureType
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
 
 _SEMANTIC_POLICY_VERSION = "semantic-policy-v1"

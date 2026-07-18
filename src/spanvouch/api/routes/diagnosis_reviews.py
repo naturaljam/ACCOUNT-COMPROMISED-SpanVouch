@@ -5,6 +5,10 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from spanvouch.contracts.diagnosis import DiagnoserKind
+from spanvouch.contracts.review import (
+    DiagnosisReviewDetail,
+    HumanDecisionDraft,
+)
 from spanvouch.contracts.verification import (
     VerificationMode,
 )
@@ -20,10 +24,6 @@ from spanvouch.review.errors import (
     ReviewPersistenceError,
     ReviewSchemaError,
     ReviewValidationError,
-)
-from spanvouch.review.models import (
-    DiagnosisReviewDetail,
-    HumanDecisionDraft,
 )
 from spanvouch.review.service import ReviewService
 from spanvouch.review.workflow import ReviewWorkflowProviderError

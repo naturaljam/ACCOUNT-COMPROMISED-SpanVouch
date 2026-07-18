@@ -9,11 +9,18 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from spanvouch.contracts.diagnosis import DiagnoserKind
+from spanvouch.contracts.review import (
+    DecisionAction,
+    HumanReviewDecision,
+    ReviewStatus,
+    RevisionOrigin,
+)
 from spanvouch.contracts.verification import (
     VerificationMode,
     VerifierKind,
     VerifierVerdict,
 )
+from spanvouch.contracts.versioning import canonical_json, canonical_sha256
 from spanvouch.review import commands as review_commands
 from spanvouch.review.commands import (
     AppendDiagnosisRevision,
@@ -29,14 +36,6 @@ from spanvouch.review.errors import (
     ReviewConflictError,
     ReviewNotFoundError,
     ReviewPersistenceError,
-)
-from spanvouch.review.models import (
-    DecisionAction,
-    HumanReviewDecision,
-    ReviewStatus,
-    RevisionOrigin,
-    canonical_json,
-    canonical_sha256,
 )
 from spanvouch.review.schema import connect_database
 from spanvouch.review.sqlite_repository import SQLiteReviewRepository

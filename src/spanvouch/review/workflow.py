@@ -11,6 +11,12 @@ from uuid import uuid4
 from langgraph.graph import END, START, StateGraph
 
 from spanvouch.contracts.diagnosis import DiagnosisReport
+from spanvouch.contracts.review import (
+    DiagnosisReviewDetail,
+    DiagnosisRevision,
+    ReviewStatus,
+    RevisionOrigin,
+)
 from spanvouch.contracts.verification import (
     EvidenceGap,
     FindingCode,
@@ -24,6 +30,7 @@ from spanvouch.contracts.verification import (
     VerifierReport,
     VerifierVerdict,
 )
+from spanvouch.contracts.versioning import canonical_json, canonical_sha256
 from spanvouch.diagnosis.errors import (
     ProviderConfigurationError,
     ProviderError,
@@ -42,16 +49,8 @@ from spanvouch.review.commands import (
     WorkflowEventType,
 )
 from spanvouch.review.errors import ReviewConflictError, ReviewError
-from spanvouch.review.models import (
-    DiagnosisReviewDetail,
-    DiagnosisRevision,
-    ReviewRuntimeBundle,
-    ReviewStatus,
-    RevisionOrigin,
-    canonical_json,
-    canonical_sha256,
-)
 from spanvouch.review.protocols import ReviewRepository, ReviewReviser
+from spanvouch.review.runtime import ReviewRuntimeBundle
 from spanvouch.review.verdicts import MergedVerifierReports, merge_verifier_reports
 from spanvouch.verification.protocols import Verifier
 

@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from spanvouch.contracts.trace import TraceIR
+from spanvouch.contracts.versioning import canonical_json
 from spanvouch.diagnosis.deepseek import DeepSeekConfig, DeepSeekProvider
 from spanvouch.diagnosis.errors import ProviderConfigurationError
 from spanvouch.evals.generate_review_dataset import DEFAULT_OUTPUT_DATASET, DEFAULT_SOURCE_DATASET
@@ -12,7 +13,6 @@ from spanvouch.evals.review_metrics import ReviewEvaluationReport, evaluate_revi
 from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.invariants.supportlab import supportlab_rules
 from spanvouch.review.evidence_verifier import EvidenceVerifier
-from spanvouch.review.models import canonical_json
 from spanvouch.review.policy import DEFAULT_REVIEW_POLICY_VERSION as DEFAULT_POLICY_VERSION
 from spanvouch.review.semantic_verifier import SemanticVerifier
 from spanvouch.verification.protocols import Verifier

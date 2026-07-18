@@ -16,6 +16,19 @@ from spanvouch.contracts.diagnosis import (
     DiagnosisReport,
     EvidenceSelector,
 )
+from spanvouch.contracts.review import (
+    CorrectionClaim,
+    DecisionAction,
+    DiagnosisCorrectionDraft,
+    DiagnosisReviewCase,
+    DiagnosisReviewDetail,
+    DiagnosisRevision,
+    HumanReviewDecision,
+    ReviewStatus,
+    RevisionOrigin,
+    WorkflowEvent,
+    WorkflowEventType,
+)
 from spanvouch.contracts.verification import (
     ReviewInputSnapshot,
     VerificationMode,
@@ -23,6 +36,7 @@ from spanvouch.contracts.verification import (
     VerifierReport,
     VerifierVerdict,
 )
+from spanvouch.contracts.versioning import canonical_json
 from spanvouch.failure_types import FailureType
 from spanvouch.review.commands import (
     AppendDiagnosisRevision,
@@ -44,21 +58,7 @@ from spanvouch.review.errors import (
     ReviewPersistenceError,
     ReviewSchemaError,
 )
-from spanvouch.review.models import (
-    CorrectionClaim,
-    DecisionAction,
-    DiagnosisCorrectionDraft,
-    DiagnosisReviewCase,
-    DiagnosisReviewDetail,
-    DiagnosisRevision,
-    HumanReviewDecision,
-    ReviewRuntimeBundle,
-    ReviewStatus,
-    RevisionOrigin,
-    WorkflowEvent,
-    WorkflowEventType,
-    canonical_json,
-)
+from spanvouch.review.runtime import ReviewRuntimeBundle
 from spanvouch.review.schema import connect_database, initialize_database
 
 FailureInjector = Callable[[str], None]
