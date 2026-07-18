@@ -32,7 +32,7 @@ from spanvouch.review.sqlite_repository import SQLiteReviewRepository
 from spanvouch.review.workflow import ReviewWorkflow
 from spanvouch.trace_ir.repository import InMemoryTraceRepository, TraceRepository
 
-DEFAULT_REVIEW_DATABASE = Path(".data/afc.db")
+DEFAULT_REVIEW_DATABASE = Path(".data/spanvouch.db")
 
 
 def _default_runtime() -> tuple[
@@ -118,7 +118,7 @@ def create_app(
     review_database: str | Path | None = None,
 ) -> FastAPI:
     trace_store = trace_repository or InMemoryTraceRepository()
-    database = review_database or os.environ.get("AFC_DB_PATH") or DEFAULT_REVIEW_DATABASE
+    database = review_database or os.environ.get("SPANVOUCH_DB_PATH") or DEFAULT_REVIEW_DATABASE
     review_store: ReviewRepository | None
     managed_database: str | Path | None = None
     if review_repository is not None:
@@ -159,8 +159,8 @@ def create_app(
         yield
 
     application = FastAPI(
-        title="Agent Failure Clinic",
-        version="0.1.0",
+        title="SpanVouch",
+        version="0.2.0",
         lifespan=lifespan,
     )
     application.include_router(health_router)

@@ -24,11 +24,7 @@ dev = [
 ]
 
 [project.scripts]
-afc-generate-dataset = "spanvouch.evals.generate_dataset:main"
-afc-evaluate-diagnosis = "spanvouch.evals.run_diagnosis_eval:main"
-afc-generate-review-dataset = "spanvouch.evals.generate_review_dataset:main"
-afc-evaluate-review = "spanvouch.evals.run_review_eval:main"
-afc-review = "spanvouch.cli.review:main"
+spanvouch = "spanvouch.cli.main:main"
 
 [build-system]
 requires = ["hatchling==1.27.0"]

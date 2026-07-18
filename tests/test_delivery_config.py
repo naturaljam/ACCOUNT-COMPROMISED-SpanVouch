@@ -77,7 +77,7 @@ def test_phase_2_delivery_is_safe_and_reproducible() -> None:
     assert "evals/reports/generated/" in gitignore
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "afc-evaluate-diagnosis" in readme
+    assert "spanvouch evaluate diagnosis" in readme
     assert "--allow-live-api" in readme
     assert "POST /v1/traces/{trace_id}/diagnoses" in readme
     assert "rules" in readme and "DEEPSEEK_API_KEY" in readme
@@ -132,12 +132,12 @@ def test_phase_3_sqlite_data_directory_is_owned_and_persisted() -> None:
 
     compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
     api_block, _, volumes_block = compose.partition("  phoenix:")
-    assert re.search(r"(?m)^\s+AFC_DB_PATH:\s*/data/afc\.db$", api_block)
-    assert re.search(r"(?m)^\s+- afc_data:/data$", api_block)
-    assert re.search(r"(?m)^\s{2}afc_data:\s*$", volumes_block)
+    assert re.search(r"(?m)^\s+SPANVOUCH_DB_PATH:\s*/data/spanvouch\.db$", api_block)
+    assert re.search(r"(?m)^\s+- spanvouch_data:/data$", api_block)
+    assert re.search(r"(?m)^\s{2}spanvouch_data:\s*$", volumes_block)
 
     environment = (ROOT / ".env.example").read_text(encoding="utf-8")
-    assert re.search(r"(?m)^AFC_DB_PATH=\.data/afc\.db$", environment)
+    assert re.search(r"(?m)^SPANVOUCH_DB_PATH=\.data/spanvouch\.db$", environment)
 
     gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
     assert re.search(r"(?m)^\.data/$", gitignore)
@@ -162,14 +162,14 @@ def test_phase_3_ci_regenerates_reviews_and_proves_restart_recovery() -> None:
     )
 
     required_fragments = (
-        "afc-generate-review-dataset",
+        "spanvouch dataset generate-review",
         "Verify frozen review dataset hashes",
-        "afc-evaluate-review --output .cache/ci-review-a.json",
-        "afc-evaluate-review --output .cache/ci-review-b.json",
+        "spanvouch evaluate review --output .cache/ci-review-a.json",
+        "spanvouch evaluate review --output .cache/ci-review-b.json",
         "cmp --silent .cache/ci-review-a.json .cache/ci-review-b.json",
         "docker compose restart api",
-        "afc-review show",
-        "afc-review decide",
+        "spanvouch review show",
+        "spanvouch review decide",
         'id -u):$(id -g)" = "10001:10001',
         "stat -c %u:%g /data",
         "docker compose down --volumes --remove-orphans",
@@ -212,11 +212,11 @@ def test_readme_offline_review_walkthrough_uses_a_frozen_trace_end_to_end() -> N
         "evals/datasets/supportlab-v1/traces.jsonl",
         "POST /v1/traces",
         'trace_id="$(',
-        "--data-binary @.cache/afc-demo-trace.json",
-        'created="$(uv run afc-review create',
+        "--data-binary @.cache/spanvouch-demo-trace.json",
+        'created="$(uv run spanvouch review create',
         'case_id="$(python',
         'version="$(python',
-        'uv run afc-review show --case-id "$case_id"',
+        'uv run spanvouch review show --case-id "$case_id"',
         '--expected-version "$version"',
     )
     missing = [fragment for fragment in required_fragments if fragment not in readme]
@@ -318,3 +318,32 @@ def test_ci_builds_and_installs_the_hash_constrained_wheel_before_checks() -> No
     assert project_commands
     assert protected_indices[-1] < min(run_commands.index(command) for command in project_commands)
     assert all(command.startswith("uv run --no-sync ") for command in project_commands)
+
+
+def test_active_delivery_configuration_has_only_spanvouch_public_names() -> None:
+    active_paths = (
+        ROOT / "src",
+        ROOT / ".github" / "workflows",
+        ROOT / "pyproject.toml",
+        ROOT / "Dockerfile",
+        ROOT / "compose.yaml",
+        ROOT / ".env.example",
+        ROOT / "README.md",
+    )
+    files = sorted(
+        path
+        for active_path in active_paths
+        for path in ([active_path] if active_path.is_file() else active_path.rglob("*"))
+        if path.is_file()
+        and path.suffix
+        in {"", ".example", ".md", ".py", ".toml", ".yaml", ".yml"}
+    )
+    active_text = "\n".join(path.read_text(encoding="utf-8") for path in files)
+
+    for old_name in ("AFC_DB_PATH", "AFC_API_URL", "afc_data", "afc-"):
+        assert old_name not in active_text
+
+    metadata = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert metadata["project"]["scripts"] == {
+        "spanvouch": "spanvouch.cli.main:main"
+    }

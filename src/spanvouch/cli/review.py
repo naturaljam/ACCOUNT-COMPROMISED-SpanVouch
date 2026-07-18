@@ -63,7 +63,7 @@ def _add_runtime_options(parser: argparse.ArgumentParser, *, command: bool) -> N
         "--api-url",
         dest=f"{suffix}_api_url",
         metavar="URL",
-        help="review API base URL (default: AFC_API_URL or http://127.0.0.1:8000)",
+        help="review API base URL (default: SPANVOUCH_API_URL or http://127.0.0.1:8000)",
     )
     parser.add_argument(
         "--allow-live-api",
@@ -75,7 +75,7 @@ def _add_runtime_options(parser: argparse.ArgumentParser, *, command: bool) -> N
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="afc-review",
+        prog="spanvouch review",
         description="HTTP-only client for diagnosis review workflows.",
     )
     _add_runtime_options(parser, command=False)
@@ -171,7 +171,7 @@ def _effective_api_url(args: argparse.Namespace, environ: Mapping[str, str]) -> 
     candidate = (
         args.command_api_url
         or args.global_api_url
-        or environ.get("AFC_API_URL")
+        or environ.get("SPANVOUCH_API_URL")
         or _DEFAULT_API_URL
     ).rstrip("/")
     try:
@@ -250,19 +250,19 @@ def main(
     if args.command == "create":
         can_call_live = args.diagnoser == "deepseek" or args.verifier == "hybrid"
         if can_call_live and not _allows_live(args):
-            print("afc-review: live API use requires --allow-live-api", file=errors)
+            print("spanvouch review: live API use requires --allow-live-api", file=errors)
             return 2
 
     try:
         method, path, payload = _command_request(args)
     except ValueError:
-        print("afc-review: correction file must contain one JSON object", file=errors)
+        print("spanvouch review: correction file must contain one JSON object", file=errors)
         return 2
 
     try:
         base_url = _effective_api_url(args, environment)
     except ValueError:
-        print("afc-review: invalid API URL", file=errors)
+        print("spanvouch review: invalid API URL", file=errors)
         return 2
     try:
         with httpx.Client(
@@ -275,34 +275,34 @@ def main(
                 case_payload = _request(client, "GET", show_path)
                 if _resume_can_call_live(case_payload):
                     print(
-                        "afc-review: live API use requires --allow-live-api",
+                        "spanvouch review: live API use requires --allow-live-api",
                         file=errors,
                     )
                     return 2
             response_payload = _request(client, method, path.lstrip("/"), payload)
     except httpx.InvalidURL:
-        print("afc-review: invalid API URL", file=errors)
+        print("spanvouch review: invalid API URL", file=errors)
         return 2
     except _ApiError as error:
         if error.case_id is not None and error.retryable is not None:
             print(
-                "afc-review: API request failed "
+                "spanvouch review: API request failed "
                 f"(code={error.code}, case_id={error.case_id}, "
                 f"retryable={str(error.retryable).lower()})",
                 file=errors,
             )
         else:
             print(
-                "afc-review: API request failed "
+                "spanvouch review: API request failed "
                 f"(status={error.status_code}, code={error.code})",
                 file=errors,
             )
         return 3 if 400 <= error.status_code < 500 else 4
     except _TransportError:
-        print("afc-review: API transport failed", file=errors)
+        print("spanvouch review: API transport failed", file=errors)
         return 4
     except _InvalidResponseError:
-        print("afc-review: API returned an invalid JSON response", file=errors)
+        print("spanvouch review: API returned an invalid JSON response", file=errors)
         return 4
 
     print(_canonical_json(response_payload), file=output)

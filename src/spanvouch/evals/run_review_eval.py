@@ -53,7 +53,9 @@ async def _run(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Evaluate AFC diagnosis review verification.")
+    parser = argparse.ArgumentParser(
+        description="Evaluate SpanVouch diagnosis review verification."
+    )
     parser.add_argument("--dataset-dir", type=Path, default=DEFAULT_OUTPUT_DATASET)
     parser.add_argument("--source-dataset-dir", type=Path, default=DEFAULT_SOURCE_DATASET)
     parser.add_argument("--output", type=Path, required=True)

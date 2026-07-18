@@ -98,7 +98,7 @@ async def _run(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Evaluate AFC evidence diagnosis.")
+    parser = argparse.ArgumentParser(description="Evaluate SpanVouch evidence diagnosis.")
     parser.add_argument("--dataset-dir", type=Path, default=DEFAULT_DATASET)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(

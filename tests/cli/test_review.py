@@ -172,7 +172,7 @@ def test_authoritative_resume_requirement_blocks_status_mode_false_negative(
         ("GET", "/v1/diagnosis-reviews/case-1")
     ]
     assert capsys.readouterr().err == (
-        "afc-review: live API use requires --allow-live-api\n"
+        "spanvouch review: live API use requires --allow-live-api\n"
     )
 
 
@@ -218,7 +218,7 @@ def test_paid_capable_resume_without_flag_stops_after_safe_get(
         ("GET", "/v1/diagnosis-reviews/case-1")
     ]
     assert capsys.readouterr().err == (
-        "afc-review: live API use requires --allow-live-api\n"
+        "spanvouch review: live API use requires --allow-live-api\n"
     )
 
 
@@ -260,7 +260,7 @@ def test_api_url_flag_overrides_environment(capsys: pytest.CaptureFixture[str]) 
             "key-1",
         ],
         transport=_transport(handler),
-        environ={"AFC_API_URL": "https://ignored.example"},
+        environ={"SPANVOUCH_API_URL": "https://ignored.example"},
     )
 
     assert exit_code == 0
@@ -283,11 +283,34 @@ def test_api_url_uses_environment_when_flag_is_absent(
         main(
             ["show", "--case-id", "case-1"],
             transport=_transport(handler),
-            environ={"AFC_API_URL": "https://clinic.example"},
+            environ={"SPANVOUCH_API_URL": "https://clinic.example"},
         )
         == 0
     )
     assert seen[0].url == httpx.URL("https://clinic.example/v1/diagnosis-reviews/case-1")
+    assert capsys.readouterr().err == ""
+
+
+def test_old_api_environment_variable_does_not_override_new_default(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"ok": True}, request=request)
+
+    assert (
+        main(
+            ["show", "--case-id", "case-1"],
+            transport=_transport(handler),
+            environ={"AFC_API_URL": "https://ignored.example"},
+        )
+        == 0
+    )
+    assert seen[0].url == httpx.URL(
+        "http://127.0.0.1:8000/v1/diagnosis-reviews/case-1"
+    )
     assert capsys.readouterr().err == ""
 
 
@@ -306,11 +329,11 @@ def test_api_url_uses_environment_when_flag_is_absent(
         ),
         (
             ["show", "--case-id", "case-1"],
-            {"AFC_API_URL": "ftp://private-user:private-password@secret.example"},
+            {"SPANVOUCH_API_URL": "ftp://private-user:private-password@secret.example"},
         ),
         (
             ["show", "--case-id", "case-1"],
-            {"AFC_API_URL": "https://private-user:private-password@[]/secret"},
+            {"SPANVOUCH_API_URL": "https://private-user:private-password@[]/secret"},
         ),
     ],
 )
@@ -330,7 +353,7 @@ def test_invalid_api_url_is_redacted_before_client_construction(
     captured = capsys.readouterr()
     assert exit_code == 2
     assert captured.out == ""
-    assert captured.err == "afc-review: invalid API URL\n"
+    assert captured.err == "spanvouch review: invalid API URL\n"
     assert all(private not in captured.err for private in ("private", "secret", "example"))
 
 
@@ -350,7 +373,7 @@ def test_client_invalid_url_exception_is_translated_without_details(
     captured = capsys.readouterr()
     assert exit_code == 2
     assert captured.out == ""
-    assert captured.err == "afc-review: invalid API URL\n"
+    assert captured.err == "spanvouch review: invalid API URL\n"
     assert secret not in captured.err
 
 
@@ -456,7 +479,7 @@ def test_invalid_correction_stops_before_http_without_echoing_file(
     assert exit_code == 2
     assert calls == 0
     assert captured.out == ""
-    assert captured.err == "afc-review: correction file must contain one JSON object\n"
+    assert captured.err == "spanvouch review: correction file must contain one JSON object\n"
     assert contents not in captured.err
     assert str(correction_path) not in captured.err
 
@@ -496,7 +519,7 @@ def test_live_create_requires_explicit_flag_before_http(
     assert exit_code == 2
     assert calls == 0
     assert captured.out == ""
-    assert captured.err == "afc-review: live API use requires --allow-live-api\n"
+    assert captured.err == "spanvouch review: live API use requires --allow-live-api\n"
     assert "must-never-be-read" not in captured.err
 
 
@@ -602,7 +625,7 @@ def test_api_4xx_has_stable_exit_and_redacted_diagnostic(
     assert exit_code == 3
     assert captured.out == ""
     assert captured.err == (
-        f"afc-review: API request failed (status={status}, code=review_invalid)\n"
+        f"spanvouch review: API request failed (status={status}, code=review_invalid)\n"
     )
     assert secret not in captured.err
 
@@ -630,7 +653,9 @@ def test_api_5xx_has_stable_exit_and_never_echoes_provider_body(
     captured = capsys.readouterr()
     assert exit_code == 4
     assert captured.out == ""
-    assert captured.err == f"afc-review: API request failed (status={status}, code=api_error)\n"
+    assert captured.err == (
+        f"spanvouch review: API request failed (status={status}, code=api_error)\n"
+    )
     assert secret not in captured.err
 
 
@@ -663,7 +688,7 @@ def test_operational_api_error_retains_only_recovery_handle_fields(
     assert exit_code == 4
     assert captured.out == ""
     assert captured.err == (
-        "afc-review: API request failed "
+        "spanvouch review: API request failed "
         "(code=revision_provider_failed, case_id=case-durable-7, retryable=true)\n"
     )
     assert secret not in captured.err
@@ -689,7 +714,9 @@ def test_unrecognized_error_code_is_redacted(
 
     captured = capsys.readouterr()
     assert exit_code == 4
-    assert captured.err == "afc-review: API request failed (status=503, code=api_error)\n"
+    assert captured.err == (
+        "spanvouch review: API request failed (status=503, code=api_error)\n"
+    )
     assert secret not in captured.err
 
 
@@ -716,7 +743,7 @@ def test_transport_and_timeout_failures_are_redacted(
     captured = capsys.readouterr()
     assert exit_code == 4
     assert captured.out == ""
-    assert captured.err == "afc-review: API transport failed\n"
+    assert captured.err == "spanvouch review: API transport failed\n"
     assert str(error) not in captured.err
 
 
@@ -737,7 +764,7 @@ def test_non_json_success_is_rejected_without_echoing_body(
     captured = capsys.readouterr()
     assert exit_code == 4
     assert captured.out == ""
-    assert captured.err == "afc-review: API returned an invalid JSON response\n"
+    assert captured.err == "spanvouch review: API returned an invalid JSON response\n"
     assert secret not in captured.err
 
 

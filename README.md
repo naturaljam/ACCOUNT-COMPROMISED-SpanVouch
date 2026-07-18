@@ -1,6 +1,6 @@
-# Agent Failure Clinic
+# SpanVouch
 
-Agent Failure Clinic turns failed tool-agent traces into evidence-backed, independently verified diagnoses. Phase 1 provides the reproducible SupportLab target agent, TraceIR v1, and 20 frozen traces. Phase 2 adds deterministic and explicitly enabled DeepSeek diagnosis. Phase 3 adds deterministic and optional semantic verification, a one-revision bound, SQLite recovery, and mandatory human `confirm`, `correct`, or `reject` decisions through API and CLI.
+SpanVouch is a production-oriented agent diagnosis and review system. IVAD is its research method for independently verified agent diagnosis. Phase 1 provides the reproducible SupportLab target agent, TraceIR v1, and 20 frozen traces. Phase 2 adds deterministic and explicitly enabled DeepSeek diagnosis. Phase 3 adds deterministic and optional semantic verification, a one-revision bound, SQLite recovery, and mandatory human `confirm`, `correct`, or `reject` decisions through API and CLI.
 
 ## Requirements
 
@@ -15,10 +15,10 @@ uv sync --frozen --group dev
 uv run ruff check src tests
 uv run mypy
 uv run pytest -v
-uv run afc-generate-dataset --output .cache/readme-check --seed 20260715
-uv run afc-evaluate-diagnosis --output evals/reports/generated/rules.json
-uv run afc-generate-review-dataset --output .cache/review-check --seed 20260717
-uv run afc-evaluate-review --output evals/reports/generated/review-rules.json
+uv run spanvouch dataset generate --output .cache/readme-check --seed 20260715
+uv run spanvouch evaluate diagnosis --output evals/reports/generated/rules.json
+uv run spanvouch dataset generate-review --output .cache/review-check --seed 20260717
+uv run spanvouch evaluate review --output evals/reports/generated/review-rules.json
 docker compose config --quiet
 ```
 
@@ -39,7 +39,7 @@ An empty JSON body selects the offline `rules` diagnoser. To request the optiona
 Use `.env.example` as a local configuration reference, export `DEEPSEEK_API_KEY` in your shell, and start with two allowlisted samples. `DEEPSEEK_MODEL` is optional and defaults to `deepseek-v4-flash`. Never commit or paste the key into logs or chat.
 
 ```bash
-uv run afc-evaluate-diagnosis \
+uv run spanvouch evaluate diagnosis \
   --diagnoser deepseek \
   --allow-live-api \
   --run-id invalid_argument-01 \
@@ -54,25 +54,25 @@ uv run afc-evaluate-diagnosis \
 The default workflow is `rules + deterministic`: it performs no external model call. Start the API with a local SQLite database in one terminal:
 
 ```bash
-export AFC_DB_PATH=.data/afc.db
-uv run uvicorn afc.api.app:app --host 127.0.0.1 --port 8000
+export SPANVOUCH_DB_PATH=.data/spanvouch.db
+uv run uvicorn spanvouch.api.app:app --host 127.0.0.1 --port 8000
 ```
 
 In another terminal, extract the first checked-in frozen trace, ingest it through `POST /v1/traces`, and capture the returned `trace_id`. The review create response supplies the `case_id` and optimistic-lock `version` consumed by show and confirm:
 
 ```bash
 mkdir -p .cache
-python -c 'from pathlib import Path; source=Path("evals/datasets/supportlab-v1/traces.jsonl"); Path(".cache/afc-demo-trace.json").write_text(source.read_text(encoding="utf-8").splitlines()[0] + "\n", encoding="utf-8")'
+python -c 'from pathlib import Path; source=Path("evals/datasets/supportlab-v1/traces.jsonl"); Path(".cache/spanvouch-demo-trace.json").write_text(source.read_text(encoding="utf-8").splitlines()[0] + "\n", encoding="utf-8")'
 
 trace_id="$(
   curl --fail --silent --show-error \
     -H 'content-type: application/json' \
-    --data-binary @.cache/afc-demo-trace.json \
+    --data-binary @.cache/spanvouch-demo-trace.json \
     http://127.0.0.1:8000/v1/traces \
   | python -c 'import json,sys; print(json.load(sys.stdin)["trace_id"])'
 )"
 
-created="$(uv run afc-review create \
+created="$(uv run spanvouch review create \
   --trace-id "$trace_id" \
   --diagnoser rules \
   --verifier deterministic \
@@ -81,9 +81,9 @@ created="$(uv run afc-review create \
 case_id="$(python -c 'import json,sys; print(json.loads(sys.argv[1])["case"]["case_id"])' "$created")"
 version="$(python -c 'import json,sys; print(json.loads(sys.argv[1])["case"]["version"])' "$created")"
 
-uv run afc-review show --case-id "$case_id"
+uv run spanvouch review show --case-id "$case_id"
 
-uv run afc-review decide \
+uv run spanvouch review decide \
   --case-id "$case_id" \
   --action confirm \
   --expected-version "$version" \
@@ -104,7 +104,7 @@ Every verification result reaches human review; a verifier never grants release 
 
 ## Persistence and recovery
 
-Local runs default to `AFC_DB_PATH=.data/afc.db`. Compose sets `AFC_DB_PATH=/data/afc.db` and mounts the named `afc_data` volume at `/data`:
+Local runs default to `SPANVOUCH_DB_PATH=.data/spanvouch.db`. Compose sets `SPANVOUCH_DB_PATH=/data/spanvouch.db` and mounts the named `spanvouch_data` volume at `/data`:
 
 ```bash
 docker compose up --build --detach --wait api
@@ -116,21 +116,21 @@ docker compose down
 
 SQLite is authoritative. LangGraph coordinates one bounded invocation but is not the durable recovery record. A process crash after a provider request starts can require `resume` after the persisted lease expires. External model work is therefore at-least-once and may be billed more than once, while CAS and immutable IDs prevent duplicated revisions, verifier runs, events, and human decisions.
 
-`afc-review resume` first performs a safe case lookup when no live flag is present. It resumes offline work normally, but refuses to POST a hybrid verification resume or a DeepSeek revision resume without `--allow-live-api`. Direct API callers use `{"allow_live_api": false}` for offline resume and must send `{"allow_live_api": true}` when the recoverable next step can call DeepSeek; omission is treated as false.
+`spanvouch review resume` first performs a safe case lookup when no live flag is present. It resumes offline work normally, but refuses to POST a hybrid verification resume or a DeepSeek revision resume without `--allow-live-api`. Direct API callers use `{"allow_live_api": false}` for offline resume and must send `{"allow_live_api": true}` when the recoverable next step can call DeepSeek; omission is treated as false.
 
 ## Controlled semantic verification
 
 Hybrid verification is a manual, paid experiment and is never run in CI. Configure `DEEPSEEK_API_KEY` only in the local environment and require the explicit live flag:
 
 ```bash
-uv run afc-evaluate-review \
+uv run spanvouch evaluate review \
   --verifier hybrid \
   --allow-live-api \
   --candidate-id CANDIDATE_ID \
   --output evals/reports/generated/review-semantic-smoke.json
 ```
 
-The `afc-review create` command likewise refuses `deepseek` diagnosis or `hybrid` verification unless `--allow-live-api` is present, and the same flag is required for paid-capable resume. Generated reports are ignored; never paste or commit a key or raw provider response.
+The `spanvouch review create` command likewise refuses `deepseek` diagnosis or `hybrid` verification unless `--allow-live-api` is present, and the same flag is required for paid-capable resume. Generated reports are ignored; never paste or commit a key or raw provider response.
 
 ## Security and data boundary
 
@@ -144,12 +144,12 @@ Phase 3 initializes review databases at schema v2, including create-idempotency 
 docker compose up --build api phoenix
 ```
 
-- AFC API: http://localhost:8000
+- SpanVouch API: http://localhost:8000
 - OpenAPI: http://localhost:8000/docs
 - Phoenix: http://localhost:6006
 
-Phase 1 provisions and health-checks Phoenix, but AFC does not yet export its traces to
-Phoenix. OTLP exporter wiring and a visible AFC-to-Phoenix trace path belong to a later phase.
+Phase 1 provisions and health-checks Phoenix, but SpanVouch does not yet export its traces to
+Phoenix. OTLP exporter wiring and a visible SpanVouch-to-Phoenix trace path belong to a later phase.
 
 ## Frozen dataset and labels
 

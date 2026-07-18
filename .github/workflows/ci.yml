@@ -22,8 +22,8 @@ jobs:
       - run: uv pip install --python .venv/bin/python --no-deps --no-cache dist/*.whl
       - run: uv run --no-sync ruff check src tests
       - run: uv run --no-sync mypy
-      - run: uv run --no-sync pytest --cov=afc --cov-report=term-missing
-      - run: uv run --no-sync afc-generate-dataset --output .cache/ci-dataset --seed 20260715
+      - run: uv run --no-sync pytest --cov=spanvouch --cov-report=term-missing
+      - run: uv run --no-sync spanvouch dataset generate --output .cache/ci-dataset --seed 20260715
       - name: Verify frozen dataset hashes
         shell: python
         run: |
@@ -32,11 +32,11 @@ jobs:
           expected = json.loads(Path("evals/datasets/supportlab-v1/manifest.json").read_text())
           actual = json.loads(Path(".cache/ci-dataset/manifest.json").read_text())
           assert expected == actual, (expected, actual)
-      - run: uv run --no-sync afc-evaluate-diagnosis --output .cache/ci-rules-a.json
-      - run: uv run --no-sync afc-evaluate-diagnosis --output .cache/ci-rules-b.json
+      - run: uv run --no-sync spanvouch evaluate diagnosis --output .cache/ci-rules-a.json
+      - run: uv run --no-sync spanvouch evaluate diagnosis --output .cache/ci-rules-b.json
       - name: Verify byte-exact deterministic diagnosis reports
         run: cmp --silent .cache/ci-rules-a.json .cache/ci-rules-b.json
-      - run: uv run --no-sync afc-generate-review-dataset --output .cache/ci-review-dataset --seed 20260717
+      - run: uv run --no-sync spanvouch dataset generate-review --output .cache/ci-review-dataset --seed 20260717
       - name: Verify frozen review dataset hashes
         shell: python
         run: |
@@ -47,8 +47,8 @@ jobs:
           assert expected == actual, (expected, actual)
           for field in ("candidates_sha256", "labels_sha256", "source_manifest_sha256"):
               assert actual[field] == expected[field], field
-      - run: uv run --no-sync afc-evaluate-review --output .cache/ci-review-a.json
-      - run: uv run --no-sync afc-evaluate-review --output .cache/ci-review-b.json
+      - run: uv run --no-sync spanvouch evaluate review --output .cache/ci-review-a.json
+      - run: uv run --no-sync spanvouch evaluate review --output .cache/ci-review-b.json
       - name: Verify byte-exact deterministic review reports
         run: cmp --silent .cache/ci-review-a.json .cache/ci-review-b.json
       - run: docker compose config --quiet
@@ -83,14 +83,14 @@ jobs:
             --data "$trace_payload" \
             http://127.0.0.1:8000/v1/traces \
             | python -c 'import json,sys; print(json.load(sys.stdin)["trace_id"])')"
-          created="$(uv run --no-sync afc-review create \
+          created="$(uv run --no-sync spanvouch review create \
             --trace-id "$trace_id" \
             --idempotency-key ci-persistence-create)"
           case_id="$(python -c 'import json,sys; print(json.loads(sys.argv[1])["case"]["case_id"])' "$created")"
           version="$(python -c 'import json,sys; print(json.loads(sys.argv[1])["case"]["version"])' "$created")"
 
-          uv run --no-sync afc-review show --case-id "$case_id" > .cache/ci-review-before-decision.json
-          uv run --no-sync afc-review decide \
+          uv run --no-sync spanvouch review show --case-id "$case_id" > .cache/ci-review-before-decision.json
+          uv run --no-sync spanvouch review decide \
             --case-id "$case_id" \
             --action confirm \
             --expected-version "$version" \
@@ -109,7 +109,7 @@ jobs:
             sleep 1
           done
 
-          uv run --no-sync afc-review show --case-id "$case_id" > .cache/ci-review-after-restart.json
+          uv run --no-sync spanvouch review show --case-id "$case_id" > .cache/ci-review-after-restart.json
           cmp --silent .cache/ci-review-before-restart.json .cache/ci-review-after-restart.json
           python - <<'PY'
           import json

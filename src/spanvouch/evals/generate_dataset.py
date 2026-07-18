@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -158,13 +159,14 @@ async def generate_dataset(output_dir: Path, seed: int = 20260715) -> DatasetMan
     return manifest
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, default=Path("evals/datasets/supportlab-v1"))
     parser.add_argument("--seed", type=int, default=20260715)
-    arguments = parser.parse_args()
+    arguments = parser.parse_args(argv)
     asyncio.run(generate_dataset(arguments.output, arguments.seed))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

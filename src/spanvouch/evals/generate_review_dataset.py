@@ -2,7 +2,7 @@ import argparse
 import hashlib
 import json
 from collections import Counter
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
@@ -423,7 +423,7 @@ async def generate_review_dataset(
     return manifest
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_DATASET)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)

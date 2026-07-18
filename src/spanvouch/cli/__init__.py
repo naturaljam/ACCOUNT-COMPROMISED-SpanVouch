@@ -1,1 +1,1 @@
-"""Command-line adapters for Agent Failure Clinic."""
+"""Command-line adapters for SpanVouch."""
