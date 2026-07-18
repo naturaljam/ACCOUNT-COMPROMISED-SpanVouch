@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from afc.diagnosis.models import (
+from spanvouch.diagnosis.models import (
     ClaimStage,
     DiagnoserKind,
     DiagnosisClaim,
@@ -21,11 +21,11 @@ from afc.diagnosis.models import (
     DiagnosisStatus,
     EvidenceSelector,
 )
-from afc.diagnosis.service import DiagnosisService
-from afc.failure_types import FailureType
-from afc.review.commands import ApplyHumanDecision, CreateReviewCase
-from afc.review.errors import ReviewConflictError, ReviewValidationError
-from afc.review.models import (
+from spanvouch.diagnosis.service import DiagnosisService
+from spanvouch.failure_types import FailureType
+from spanvouch.review.commands import ApplyHumanDecision, CreateReviewCase
+from spanvouch.review.errors import ReviewConflictError, ReviewValidationError
+from spanvouch.review.models import (
     CorrectionClaim,
     DecisionAction,
     DiagnosisCorrectionDraft,
@@ -40,8 +40,8 @@ from afc.review.models import (
     canonical_json,
     canonical_sha256,
 )
-from afc.review.service import ReviewService
-from afc.review.sqlite_repository import SQLiteReviewRepository
+from spanvouch.review.service import ReviewService
+from spanvouch.review.sqlite_repository import SQLiteReviewRepository
 from tests.diagnosis.test_trace_view import load_trace
 from tests.review.factories import NOW, make_verifier_report
 from tests.review.test_sqlite_repository import (

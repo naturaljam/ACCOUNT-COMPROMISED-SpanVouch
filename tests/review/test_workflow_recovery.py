@@ -5,25 +5,25 @@ from pathlib import Path
 
 import pytest
 
-from afc.diagnosis.errors import (
+from spanvouch.diagnosis.errors import (
     ProviderConfigurationError,
     ProviderProtocolError,
     ProviderRequestError,
 )
-from afc.diagnosis.models import DiagnoserKind
-from afc.diagnosis.rule_diagnoser import RuleDiagnoser
-from afc.diagnosis.service import DiagnosisService
-from afc.invariants.engine import InvariantEngine
-from afc.review.errors import ReviewConflictError
-from afc.review.models import (
+from spanvouch.diagnosis.models import DiagnoserKind
+from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
+from spanvouch.diagnosis.service import DiagnosisService
+from spanvouch.invariants.engine import InvariantEngine
+from spanvouch.review.errors import ReviewConflictError
+from spanvouch.review.models import (
     ReviewStatus,
     VerificationMode,
     VerifierKind,
     VerifierVerdict,
 )
-from afc.review.service import ReviewService
-from afc.review.sqlite_repository import SQLiteReviewRepository
-from afc.review.workflow import ReviewWorkflow, ReviewWorkflowProviderError
+from spanvouch.review.service import ReviewService
+from spanvouch.review.sqlite_repository import SQLiteReviewRepository
+from spanvouch.review.workflow import ReviewWorkflow, ReviewWorkflowProviderError
 from tests.review.test_workflow import (
     FakeReviser,
     FakeVerifier,

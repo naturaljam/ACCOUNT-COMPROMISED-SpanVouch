@@ -5,10 +5,10 @@ import asyncio
 import json
 from pathlib import Path
 
-from afc.diagnosis.models import DiagnoserKind
-from afc.review.commands import CreateReviewCase, WorkflowEventType
-from afc.review.models import ReviewStatus, VerificationMode, canonical_json
-from afc.review.sqlite_repository import SQLiteReviewRepository
+from spanvouch.diagnosis.models import DiagnoserKind
+from spanvouch.review.commands import CreateReviewCase, WorkflowEventType
+from spanvouch.review.models import ReviewStatus, VerificationMode, canonical_json
+from spanvouch.review.sqlite_repository import SQLiteReviewRepository
 from tests.review.factories import NOW, make_review_snapshot, make_revision
 
 

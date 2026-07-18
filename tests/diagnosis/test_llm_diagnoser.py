@@ -2,16 +2,16 @@ import json
 
 import pytest
 
-from afc.diagnosis.evidence import EvidenceCatalog
-from afc.diagnosis.llm_diagnoser import LlmDiagnoser
-from afc.diagnosis.models import AbstainReason, DiagnosisStatus, ProviderUsage
-from afc.diagnosis.protocols import (
+from spanvouch.diagnosis.evidence import EvidenceCatalog
+from spanvouch.diagnosis.llm_diagnoser import LlmDiagnoser
+from spanvouch.diagnosis.models import AbstainReason, DiagnosisStatus, ProviderUsage
+from spanvouch.diagnosis.protocols import (
     ChatMessage,
     GenerationConfig,
     ProviderResponse,
 )
-from afc.diagnosis.trace_view import DiagnosticTraceView
-from afc.failure_types import FailureType
+from spanvouch.diagnosis.trace_view import DiagnosticTraceView
+from spanvouch.failure_types import FailureType
 from tests.diagnosis.test_trace_view import load_trace
 
 

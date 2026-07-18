@@ -3,21 +3,21 @@ from pathlib import Path
 
 import pytest
 
-import afc.evals.run_review_eval as review_eval_module
-from afc.diagnosis.errors import ProviderRequestError
-from afc.diagnosis.models import ProviderUsage
-from afc.diagnosis.protocols import ChatMessage, GenerationConfig, ProviderResponse
-from afc.evals.review_labels import load_review_candidates
-from afc.evals.review_metrics import ReviewEvaluationReport
-from afc.evals.run_review_eval import _run, main, write_report
-from afc.review.models import (
+import spanvouch.evals.run_review_eval as review_eval_module
+from spanvouch.diagnosis.errors import ProviderRequestError
+from spanvouch.diagnosis.models import ProviderUsage
+from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig, ProviderResponse
+from spanvouch.evals.review_labels import load_review_candidates
+from spanvouch.evals.review_metrics import ReviewEvaluationReport
+from spanvouch.evals.run_review_eval import _run, main, write_report
+from spanvouch.review.models import (
     VerificationInput,
     VerifierKind,
     VerifierReport,
     VerifierVerdict,
     canonical_json,
 )
-from afc.review.semantic_verifier import SemanticVerifier
+from spanvouch.review.semantic_verifier import SemanticVerifier
 
 
 def test_default_offline_cli_writes_byte_exact_canonical_one_line_json(
@@ -78,7 +78,7 @@ def test_hybrid_cli_requires_live_opt_in_before_credentials_or_provider(
         touched = True
         raise AssertionError("credentials must not be read")
 
-    monkeypatch.setattr("afc.evals.run_review_eval.DeepSeekConfig.from_env", forbidden_config)
+    monkeypatch.setattr("spanvouch.evals.run_review_eval.DeepSeekConfig.from_env", forbidden_config)
 
     with pytest.raises(SystemExit) as raised:
         main(
@@ -101,7 +101,7 @@ def test_default_deterministic_cli_does_not_construct_live_provider(
         del config
         raise AssertionError("default evaluation must stay offline")
 
-    monkeypatch.setattr("afc.evals.run_review_eval.DeepSeekProvider", forbidden_provider)
+    monkeypatch.setattr("spanvouch.evals.run_review_eval.DeepSeekProvider", forbidden_provider)
 
     assert main(["--output", str(tmp_path / "report.json")]) == 0
 
@@ -176,8 +176,8 @@ def test_hybrid_cli_runs_only_allowlisted_candidates_and_reports_semantic_metric
         provider = FakeProvider(config)
         return provider
 
-    monkeypatch.setattr("afc.evals.run_review_eval.DeepSeekConfig.from_env", lambda: object())
-    monkeypatch.setattr("afc.evals.run_review_eval.DeepSeekProvider", make_provider)
+    monkeypatch.setattr("spanvouch.evals.run_review_eval.DeepSeekConfig.from_env", lambda: object())
+    monkeypatch.setattr("spanvouch.evals.run_review_eval.DeepSeekProvider", make_provider)
     output = tmp_path / "hybrid.json"
 
     result = main(

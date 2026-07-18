@@ -2,9 +2,9 @@ from hashlib import sha256
 
 import pytest
 
-from afc.diagnosis.evidence import EvidenceCatalog, canonical_json
-from afc.diagnosis.models import EvidenceSelector
-from afc.diagnosis.trace_view import DiagnosticTraceView
+from spanvouch.diagnosis.evidence import EvidenceCatalog, canonical_json
+from spanvouch.diagnosis.models import EvidenceSelector
+from spanvouch.diagnosis.trace_view import DiagnosticTraceView
 from tests.diagnosis.test_trace_view import load_trace
 
 

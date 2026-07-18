@@ -2,12 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from afc.diagnosis.evidence import EvidenceCatalog
-from afc.diagnosis.models import DiagnosisStatus
-from afc.diagnosis.trace_view import DiagnosticTraceView
-from afc.evals.diagnosis_labels import load_diagnosis_labels
-from afc.invariants.models import InvariantStatus, RuleContext, RuleScope
-from afc.invariants.supportlab import unsupported_guards
+from spanvouch.diagnosis.evidence import EvidenceCatalog
+from spanvouch.diagnosis.models import DiagnosisStatus
+from spanvouch.diagnosis.trace_view import DiagnosticTraceView
+from spanvouch.evals.diagnosis_labels import load_diagnosis_labels
+from spanvouch.invariants.models import InvariantStatus, RuleContext, RuleScope
+from spanvouch.invariants.supportlab import unsupported_guards
 from tests.diagnosis.test_trace_view import load_trace
 
 LABELS = Path("evals/datasets/supportlab-v1/diagnosis-labels-v1.jsonl")

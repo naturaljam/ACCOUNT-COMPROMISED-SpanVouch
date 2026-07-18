@@ -2,10 +2,10 @@ from dataclasses import dataclass
 
 import pytest
 
-from afc.diagnosis.evidence import EvidenceCatalog
-from afc.diagnosis.trace_view import DiagnosticTraceView
-from afc.invariants.engine import InvariantEngine
-from afc.invariants.models import (
+from spanvouch.diagnosis.evidence import EvidenceCatalog
+from spanvouch.diagnosis.trace_view import DiagnosticTraceView
+from spanvouch.invariants.engine import InvariantEngine
+from spanvouch.invariants.models import (
     InvariantResult,
     InvariantStatus,
     RuleContext,

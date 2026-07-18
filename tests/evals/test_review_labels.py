@@ -6,26 +6,26 @@ from pathlib import Path
 
 import pytest
 
-from afc.diagnosis.models import DiagnosisReport
-from afc.diagnosis.trace_view import DiagnosticTraceView
-from afc.evals.generate_review_dataset import generate_review_dataset
-from afc.evals.review_labels import (
+from spanvouch.diagnosis.models import DiagnosisReport
+from spanvouch.diagnosis.trace_view import DiagnosticTraceView
+from spanvouch.evals.generate_review_dataset import generate_review_dataset
+from spanvouch.evals.review_labels import (
     load_review_candidates,
     load_review_labels,
     validate_review_dataset,
     validate_review_join,
     validate_source_run_ids,
 )
-from afc.invariants.engine import InvariantEngine
-from afc.invariants.supportlab import supportlab_rules
-from afc.review.evidence_verifier import EvidenceVerifier
-from afc.review.models import (
+from spanvouch.invariants.engine import InvariantEngine
+from spanvouch.invariants.supportlab import supportlab_rules
+from spanvouch.review.evidence_verifier import EvidenceVerifier
+from spanvouch.review.models import (
     ReviewInputSnapshot,
     VerificationInput,
     canonical_json,
     canonical_sha256,
 )
-from afc.trace_ir.models import TraceIR
+from spanvouch.trace_ir.models import TraceIR
 
 DATASET = Path("evals/datasets/supportlab-review-v1")
 SOURCE_DATASET = Path("evals/datasets/supportlab-v1")
@@ -257,7 +257,7 @@ def test_manifest_validation_rejects_crlf_even_with_matching_hash(tmp_path: Path
 async def test_generation_and_verification_do_not_load_gold_labels(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import afc.evals.review_labels as review_labels
+    import spanvouch.evals.review_labels as review_labels
 
     def fail_if_loaded(path: Path) -> object:
         raise AssertionError(f"gold labels leaked from {path}")

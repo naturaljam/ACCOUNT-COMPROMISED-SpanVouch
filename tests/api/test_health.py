@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from afc.api.app import create_app
+from spanvouch.api.app import create_app
 
 
 def test_health_returns_service_identity() -> None:

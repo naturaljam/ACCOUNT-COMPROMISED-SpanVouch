@@ -3,8 +3,8 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from afc.diagnosis.evidence import EvidenceCatalog
-from afc.diagnosis.models import (
+from spanvouch.diagnosis.evidence import EvidenceCatalog
+from spanvouch.diagnosis.models import (
     ClaimStage,
     DiagnoserKind,
     DiagnosisClaim,
@@ -12,10 +12,10 @@ from afc.diagnosis.models import (
     DiagnosisReport,
     EvidenceSelector,
 )
-from afc.invariants.engine import InvariantEngine
-from afc.review.commands import CreateReviewCase, WorkflowEventType
-from afc.review.evidence_verifier import EvidenceVerifier
-from afc.review.models import (
+from spanvouch.invariants.engine import InvariantEngine
+from spanvouch.review.commands import CreateReviewCase, WorkflowEventType
+from spanvouch.review.evidence_verifier import EvidenceVerifier
+from spanvouch.review.models import (
     DiagnosisRevision,
     EvidenceGap,
     FindingCode,
@@ -31,8 +31,8 @@ from afc.review.models import (
     canonical_json,
     canonical_sha256,
 )
-from afc.review.sqlite_repository import SQLiteReviewRepository
-from afc.review.workflow import ReviewWorkflow
+from spanvouch.review.sqlite_repository import SQLiteReviewRepository
+from spanvouch.review.workflow import ReviewWorkflow
 from tests.review.factories import (
     NOW,
     make_diagnosis_report,

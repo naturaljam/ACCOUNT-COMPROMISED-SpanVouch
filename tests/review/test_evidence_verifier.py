@@ -2,8 +2,8 @@ from collections.abc import Callable
 
 import pytest
 
-from afc.diagnosis.evidence import EvidenceCatalog
-from afc.diagnosis.models import (
+from spanvouch.diagnosis.evidence import EvidenceCatalog
+from spanvouch.diagnosis.models import (
     AbstainReason,
     ClaimStage,
     DiagnoserKind,
@@ -14,11 +14,11 @@ from afc.diagnosis.models import (
     EvidenceRef,
     EvidenceSelector,
 )
-from afc.diagnosis.trace_view import DiagnosticTraceView
-from afc.invariants.engine import InvariantEngine
-from afc.invariants.supportlab import supportlab_rules
-from afc.review.evidence_verifier import EvidenceVerifier
-from afc.review.models import (
+from spanvouch.diagnosis.trace_view import DiagnosticTraceView
+from spanvouch.invariants.engine import InvariantEngine
+from spanvouch.invariants.supportlab import supportlab_rules
+from spanvouch.review.evidence_verifier import EvidenceVerifier
+from spanvouch.review.models import (
     FindingCode,
     ReviewInputSnapshot,
     VerificationInput,
@@ -27,7 +27,7 @@ from afc.review.models import (
     canonical_json,
     canonical_sha256,
 )
-from afc.trace_ir.models import SpanStatus
+from spanvouch.trace_ir.models import SpanStatus
 from tests.review.factories import (
     make_diagnosis_report,
     make_review_snapshot,

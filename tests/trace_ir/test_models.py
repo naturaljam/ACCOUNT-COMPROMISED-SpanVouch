@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from pydantic import ValidationError
 
-from afc.trace_ir.models import SpanKind, SpanStatus, TraceIR, TraceSpan
+from spanvouch.trace_ir.models import SpanKind, SpanStatus, TraceIR, TraceSpan
 
 NOW = datetime(2026, 7, 15, tzinfo=UTC)
 

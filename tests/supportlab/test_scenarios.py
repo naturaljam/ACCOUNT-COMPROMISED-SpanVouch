@@ -1,6 +1,6 @@
 from collections import Counter
 
-from afc.supportlab.scenarios import FailureType, Scenario, build_scenarios
+from spanvouch.supportlab.scenarios import FailureType, Scenario, build_scenarios
 
 
 def test_scenario_matrix_has_stable_size_and_distribution() -> None:

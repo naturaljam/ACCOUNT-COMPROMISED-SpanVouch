@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from afc.review.models import (
+from spanvouch.review.models import (
     DiagnosisCorrectionDraft,
     DiagnosisRevision,
     RevisionOrigin,

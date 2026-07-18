@@ -7,7 +7,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from afc.cli.review import main
+from spanvouch.cli.review import main
 
 
 def _transport(
@@ -742,12 +742,12 @@ def test_non_json_success_is_rejected_without_echoing_body(
 
 
 def test_cli_source_is_http_only_and_never_names_provider_key() -> None:
-    source = Path("src/afc/cli/review.py").read_text(encoding="utf-8")
+    source = Path("src/spanvouch/cli/review.py").read_text(encoding="utf-8")
     forbidden = (
-        "afc.api",
-        "afc.review",
-        "afc.diagnosis",
-        "afc.trace_ir",
+        "spanvouch.api",
+        "spanvouch.review",
+        "spanvouch.diagnosis",
+        "spanvouch.trace_ir",
         "sqlite",
         "DEEPSEEK_API_KEY",
     )

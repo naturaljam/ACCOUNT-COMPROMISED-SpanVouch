@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from afc.diagnosis.evidence import EvidenceCatalog
-from afc.diagnosis.models import (
+from spanvouch.diagnosis.evidence import EvidenceCatalog
+from spanvouch.diagnosis.models import (
     AbstainReason,
     DiagnoserKind,
     DiagnosisDecision,
@@ -10,14 +10,14 @@ from afc.diagnosis.models import (
     DiagnosisStatus,
     ProviderUsage,
 )
-from afc.diagnosis.rule_diagnoser import RuleDiagnoser
-from afc.diagnosis.service import DiagnosisService
-from afc.diagnosis.trace_view import DiagnosticTraceView
-from afc.evals.diagnosis_labels import load_diagnosis_labels
-from afc.evals.diagnosis_metrics import evaluate_diagnoser
-from afc.invariants.engine import InvariantEngine
-from afc.invariants.supportlab import supportlab_rules
-from afc.trace_ir.models import TraceIR
+from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
+from spanvouch.diagnosis.service import DiagnosisService
+from spanvouch.diagnosis.trace_view import DiagnosticTraceView
+from spanvouch.evals.diagnosis_labels import load_diagnosis_labels
+from spanvouch.evals.diagnosis_metrics import evaluate_diagnoser
+from spanvouch.invariants.engine import InvariantEngine
+from spanvouch.invariants.supportlab import supportlab_rules
+from spanvouch.trace_ir.models import TraceIR
 
 DATASET = Path("evals/datasets/supportlab-v1")
 

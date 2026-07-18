@@ -1,11 +1,11 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from afc.api.app import create_app
-from afc.diagnosis.errors import ProviderRequestError
-from afc.diagnosis.models import DiagnoserKind
-from afc.diagnosis.service import DiagnosisService
-from afc.trace_ir.repository import InMemoryTraceRepository
+from spanvouch.api.app import create_app
+from spanvouch.diagnosis.errors import ProviderRequestError
+from spanvouch.diagnosis.models import DiagnoserKind
+from spanvouch.diagnosis.service import DiagnosisService
+from spanvouch.trace_ir.repository import InMemoryTraceRepository
 from tests.diagnosis.test_trace_view import load_trace
 
 

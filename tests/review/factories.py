@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
-from afc.diagnosis.evidence import EvidenceCatalog
-from afc.diagnosis.models import (
+from spanvouch.diagnosis.evidence import EvidenceCatalog
+from spanvouch.diagnosis.models import (
     ClaimStage,
     DiagnoserKind,
     DiagnosisClaim,
@@ -10,9 +10,9 @@ from afc.diagnosis.models import (
     DiagnosisStatus,
     EvidenceSelector,
 )
-from afc.diagnosis.trace_view import DiagnosticSpan, DiagnosticTraceView
-from afc.failure_types import FailureType
-from afc.review.models import (
+from spanvouch.diagnosis.trace_view import DiagnosticSpan, DiagnosticTraceView
+from spanvouch.failure_types import FailureType
+from spanvouch.review.models import (
     CorrectionClaim,
     DiagnosisCorrectionDraft,
     DiagnosisReviewCase,
@@ -32,7 +32,7 @@ from afc.review.models import (
     canonical_json,
     canonical_sha256,
 )
-from afc.trace_ir.models import SpanKind, SpanStatus
+from spanvouch.trace_ir.models import SpanKind, SpanStatus
 
 NOW = datetime(2026, 7, 17, 8, 0, tzinfo=UTC)
 

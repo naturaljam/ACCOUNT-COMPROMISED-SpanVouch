@@ -1,10 +1,10 @@
 import pytest
 
-from afc.diagnosis.evidence import EvidenceCatalog
-from afc.diagnosis.trace_view import DiagnosticTraceView
-from afc.failure_types import FailureType
-from afc.invariants.models import InvariantRule, InvariantStatus, RuleContext
-from afc.invariants.supportlab import (
+from spanvouch.diagnosis.evidence import EvidenceCatalog
+from spanvouch.diagnosis.trace_view import DiagnosticTraceView
+from spanvouch.failure_types import FailureType
+from spanvouch.invariants.models import InvariantRule, InvariantStatus, RuleContext
+from spanvouch.invariants.supportlab import (
     FinalStateRule,
     KnownToolRule,
     StepBudgetRule,

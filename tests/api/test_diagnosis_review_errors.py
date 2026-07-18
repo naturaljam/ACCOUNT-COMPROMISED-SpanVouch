@@ -3,20 +3,20 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from afc.api.app import create_app
-from afc.diagnosis.errors import (
+from spanvouch.api.app import create_app
+from spanvouch.diagnosis.errors import (
     DiagnosisUnavailableError,
     ProviderProtocolError,
     ProviderRequestError,
 )
-from afc.review.errors import (
+from spanvouch.review.errors import (
     ReviewConflictError,
     ReviewNotFoundError,
     ReviewPersistenceError,
     ReviewValidationError,
 )
-from afc.review.workflow import ReviewWorkflowProviderError
-from afc.trace_ir.repository import InMemoryTraceRepository
+from spanvouch.review.workflow import ReviewWorkflowProviderError
+from spanvouch.trace_ir.repository import InMemoryTraceRepository
 from tests.diagnosis.test_trace_view import load_trace
 
 

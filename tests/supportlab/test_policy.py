@@ -1,8 +1,8 @@
 from decimal import Decimal
 
-from afc.supportlab.models import OrderStatus
-from afc.supportlab.policy import Approval, PolicyViolation, evaluate_refund
-from afc.supportlab.repository import build_seed_repository
+from spanvouch.supportlab.models import OrderStatus
+from spanvouch.supportlab.policy import Approval, PolicyViolation, evaluate_refund
+from spanvouch.supportlab.repository import build_seed_repository
 
 
 async def test_refund_requires_all_preconditions() -> None:

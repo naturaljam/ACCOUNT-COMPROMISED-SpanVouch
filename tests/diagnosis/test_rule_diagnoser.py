@@ -2,20 +2,20 @@ from dataclasses import dataclass
 
 import pytest
 
-from afc.diagnosis.evidence import EvidenceCatalog
-from afc.diagnosis.models import AbstainReason, DiagnosisStatus, EvidenceSelector
-from afc.diagnosis.rule_diagnoser import RuleDiagnoser
-from afc.diagnosis.trace_view import DiagnosticTraceView
-from afc.failure_types import FailureType
-from afc.invariants.engine import InvariantEngine
-from afc.invariants.models import (
+from spanvouch.diagnosis.evidence import EvidenceCatalog
+from spanvouch.diagnosis.models import AbstainReason, DiagnosisStatus, EvidenceSelector
+from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
+from spanvouch.diagnosis.trace_view import DiagnosticTraceView
+from spanvouch.failure_types import FailureType
+from spanvouch.invariants.engine import InvariantEngine
+from spanvouch.invariants.models import (
     InvariantResult,
     InvariantStatus,
     RuleContext,
     RuleScope,
     Severity,
 )
-from afc.invariants.supportlab import supportlab_rules
+from spanvouch.invariants.supportlab import supportlab_rules
 from tests.diagnosis.test_trace_view import load_trace
 
 

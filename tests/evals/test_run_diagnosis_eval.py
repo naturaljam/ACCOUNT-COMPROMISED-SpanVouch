@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from afc.evals.diagnosis_labels import load_diagnosis_labels
-from afc.evals.run_diagnosis_eval import (
+from spanvouch.evals.diagnosis_labels import load_diagnosis_labels
+from spanvouch.evals.run_diagnosis_eval import (
     DEFAULT_DATASET,
     _load_traces,
     _select_run_ids,

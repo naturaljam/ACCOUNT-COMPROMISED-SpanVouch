@@ -2,9 +2,9 @@ from decimal import Decimal
 
 import pytest
 
-from afc.supportlab.policy import Approval, PolicyViolation
-from afc.supportlab.repository import InMemorySupportRepository, build_seed_repository
-from afc.supportlab.tools import RefundRejected, SupportTools
+from spanvouch.supportlab.policy import Approval, PolicyViolation
+from spanvouch.supportlab.repository import InMemorySupportRepository, build_seed_repository
+from spanvouch.supportlab.tools import RefundRejected, SupportTools
 
 
 @pytest.mark.asyncio

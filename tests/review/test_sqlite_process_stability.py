@@ -7,7 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from afc.review.sqlite_repository import SQLiteReviewRepository
+from spanvouch.review.sqlite_repository import SQLiteReviewRepository
 
 ROOT = Path(__file__).resolve().parents[2]
 PROCESS_COUNT = 20

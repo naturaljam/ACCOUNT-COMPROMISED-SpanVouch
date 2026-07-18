@@ -3,18 +3,18 @@ from typing import Any
 
 import pytest
 
-from afc.diagnosis.errors import (
+from spanvouch.diagnosis.errors import (
     ProviderConfigurationError,
     ProviderProtocolError,
     ProviderRequestError,
 )
-from afc.diagnosis.models import DiagnosisReport, ProviderUsage
-from afc.diagnosis.protocols import ChatMessage, GenerationConfig, ProviderResponse
-from afc.diagnosis.trace_view import (
+from spanvouch.diagnosis.models import DiagnosisReport, ProviderUsage
+from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig, ProviderResponse
+from spanvouch.diagnosis.trace_view import (
     SECRET_REDACTION,
     sanitize_diagnostic_trace_view,
 )
-from afc.review.models import (
+from spanvouch.review.models import (
     FindingCode,
     ReviewInputSnapshot,
     VerificationInput,
@@ -23,7 +23,7 @@ from afc.review.models import (
     canonical_json,
     canonical_sha256,
 )
-from afc.review.semantic_verifier import SemanticVerifier
+from spanvouch.review.semantic_verifier import SemanticVerifier
 from tests.review.factories import (
     make_diagnosis_report,
     make_review_snapshot,

@@ -4,16 +4,16 @@ from pathlib import Path
 
 import pytest
 
-from afc.diagnosis import trace_view as trace_view_module
-from afc.diagnosis.trace_view import (
+from spanvouch.diagnosis import trace_view as trace_view_module
+from spanvouch.diagnosis.trace_view import (
     ALLOWED_ATTRIBUTES,
     SECRET_REDACTION,
     DiagnosticTraceView,
     sanitize_diagnostic_trace_view,
     sanitize_diagnostic_value,
 )
-from afc.review.models import canonical_json
-from afc.trace_ir.models import TraceIR
+from spanvouch.review.models import canonical_json
+from spanvouch.trace_ir.models import TraceIR
 
 DATASET = Path("evals/datasets/supportlab-v1/traces.jsonl")
 FORBIDDEN_PARTS = (

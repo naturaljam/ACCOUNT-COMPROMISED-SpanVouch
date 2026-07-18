@@ -1,5 +1,5 @@
-from afc.evals.baselines import final_state_baseline, rule_only_baseline
-from afc.supportlab.scenarios import FailureType
+from spanvouch.evals.baselines import final_state_baseline, rule_only_baseline
+from spanvouch.supportlab.scenarios import FailureType
 
 
 def test_final_state_baseline_only_detects_explicit_failures() -> None:

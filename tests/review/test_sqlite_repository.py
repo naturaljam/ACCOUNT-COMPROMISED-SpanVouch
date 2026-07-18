@@ -8,9 +8,9 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from afc.diagnosis.models import DiagnoserKind
-from afc.review import commands as review_commands
-from afc.review.commands import (
+from spanvouch.diagnosis.models import DiagnoserKind
+from spanvouch.review import commands as review_commands
+from spanvouch.review.commands import (
     AppendDiagnosisRevision,
     AppendVerifierRun,
     ApplyHumanDecision,
@@ -20,12 +20,12 @@ from afc.review.commands import (
     RouteToHumanReview,
     WorkflowEventType,
 )
-from afc.review.errors import (
+from spanvouch.review.errors import (
     ReviewConflictError,
     ReviewNotFoundError,
     ReviewPersistenceError,
 )
-from afc.review.models import (
+from spanvouch.review.models import (
     DecisionAction,
     HumanReviewDecision,
     ReviewStatus,
@@ -36,8 +36,8 @@ from afc.review.models import (
     canonical_json,
     canonical_sha256,
 )
-from afc.review.schema import connect_database
-from afc.review.sqlite_repository import SQLiteReviewRepository
+from spanvouch.review.schema import connect_database
+from spanvouch.review.sqlite_repository import SQLiteReviewRepository
 from tests.review.factories import (
     NOW,
     make_correction_draft,

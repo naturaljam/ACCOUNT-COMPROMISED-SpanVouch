@@ -2,26 +2,26 @@ import json
 
 import pytest
 
-from afc.diagnosis.evidence import EvidenceCatalog
-from afc.diagnosis.llm_diagnoser import LlmDiagnoser
-from afc.diagnosis.models import (
+from spanvouch.diagnosis.evidence import EvidenceCatalog
+from spanvouch.diagnosis.llm_diagnoser import LlmDiagnoser
+from spanvouch.diagnosis.models import (
     AbstainReason,
     DiagnoserKind,
     DiagnosisProvenance,
     DiagnosisStatus,
     ProviderUsage,
 )
-from afc.diagnosis.protocols import (
+from spanvouch.diagnosis.protocols import (
     ChatMessage,
     GenerationConfig,
     ProviderResponse,
     RevisionCapableDiagnoser,
 )
-from afc.diagnosis.rule_diagnoser import RuleDiagnoser
-from afc.diagnosis.trace_view import SECRET_REDACTION
-from afc.invariants.engine import InvariantEngine
-from afc.review.errors import ReviewConflictError
-from afc.review.models import (
+from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
+from spanvouch.diagnosis.trace_view import SECRET_REDACTION
+from spanvouch.invariants.engine import InvariantEngine
+from spanvouch.review.errors import ReviewConflictError
+from spanvouch.review.models import (
     DiagnosisRevision,
     EvidenceGap,
     FindingCode,
@@ -32,7 +32,7 @@ from afc.review.models import (
     VerifierVerdict,
     canonical_sha256,
 )
-from afc.review.reviser import DiagnosisReviser
+from spanvouch.review.reviser import DiagnosisReviser
 from tests.review.factories import (
     NOW,
     make_awaiting_human_case,

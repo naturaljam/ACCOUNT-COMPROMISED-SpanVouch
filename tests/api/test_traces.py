@@ -3,9 +3,9 @@ from datetime import UTC, datetime
 import pytest
 from fastapi.testclient import TestClient
 
-from afc.api.app import create_app
-from afc.trace_ir.models import TraceIR
-from afc.trace_ir.repository import InMemoryTraceRepository
+from spanvouch.api.app import create_app
+from spanvouch.trace_ir.models import TraceIR
+from spanvouch.trace_ir.repository import InMemoryTraceRepository
 
 
 class ValueErrorTraceRepository:

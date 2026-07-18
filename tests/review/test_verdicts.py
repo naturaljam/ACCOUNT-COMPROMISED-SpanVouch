@@ -1,6 +1,6 @@
 import pytest
 
-from afc.review.models import (
+from spanvouch.review.models import (
     FindingCode,
     FindingSeverity,
     OperationalErrorMetadata,
@@ -8,7 +8,7 @@ from afc.review.models import (
     VerifierKind,
     VerifierVerdict,
 )
-from afc.review.verdicts import (
+from spanvouch.review.verdicts import (
     assert_revision_request_allowed,
     assert_transition,
     merge_verifier_reports,

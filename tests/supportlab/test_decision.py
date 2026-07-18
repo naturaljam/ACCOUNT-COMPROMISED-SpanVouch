@@ -1,7 +1,7 @@
 import pytest
 
-from afc.supportlab.decision import DecisionContext, DecisionKind, ScriptedDecisionModel
-from afc.supportlab.scenarios import FailureType, Scenario, build_scenarios
+from spanvouch.supportlab.decision import DecisionContext, DecisionKind, ScriptedDecisionModel
+from spanvouch.supportlab.scenarios import FailureType, Scenario, build_scenarios
 
 
 def scenario_for(failure_type: FailureType) -> Scenario:

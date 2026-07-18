@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from afc.review.errors import ReviewSchemaError
-from afc.review.schema import SCHEMA_VERSION, connect_database, initialize_database
+from spanvouch.review.errors import ReviewSchemaError
+from spanvouch.review.schema import SCHEMA_VERSION, connect_database, initialize_database
 
 REQUIRED_TABLES = {
     "schema_metadata",

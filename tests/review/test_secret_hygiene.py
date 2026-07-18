@@ -14,25 +14,30 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from afc.api.app import create_app
-from afc.cli import review as review_cli
-from afc.diagnosis.errors import ProviderProtocolError
-from afc.diagnosis.evidence import EvidenceCatalog
-from afc.diagnosis.models import DiagnoserKind, EvidenceSelector
-from afc.diagnosis.rule_diagnoser import RuleDiagnoser
-from afc.diagnosis.service import DiagnosisService
-from afc.diagnosis.trace_view import SECRET_REDACTION, DiagnosticTraceView
-from afc.invariants.engine import InvariantEngine
-from afc.invariants.supportlab import supportlab_rules
-from afc.review.evidence_verifier import EvidenceVerifier
-from afc.review.models import VerificationInput, VerificationMode, VerifierKind, VerifierReport
-from afc.review.reviser import DiagnosisReviser
-from afc.review.semantic_verifier import SemanticVerifier
-from afc.review.service import ReviewService
-from afc.review.sqlite_repository import SQLiteReviewRepository
-from afc.review.workflow import ReviewWorkflow, ReviewWorkflowProviderError
-from afc.trace_ir.models import TraceIR
-from afc.trace_ir.repository import InMemoryTraceRepository
+from spanvouch.api.app import create_app
+from spanvouch.cli import review as review_cli
+from spanvouch.diagnosis.errors import ProviderProtocolError
+from spanvouch.diagnosis.evidence import EvidenceCatalog
+from spanvouch.diagnosis.models import DiagnoserKind, EvidenceSelector
+from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
+from spanvouch.diagnosis.service import DiagnosisService
+from spanvouch.diagnosis.trace_view import SECRET_REDACTION, DiagnosticTraceView
+from spanvouch.invariants.engine import InvariantEngine
+from spanvouch.invariants.supportlab import supportlab_rules
+from spanvouch.review.evidence_verifier import EvidenceVerifier
+from spanvouch.review.models import (
+    VerificationInput,
+    VerificationMode,
+    VerifierKind,
+    VerifierReport,
+)
+from spanvouch.review.reviser import DiagnosisReviser
+from spanvouch.review.semantic_verifier import SemanticVerifier
+from spanvouch.review.service import ReviewService
+from spanvouch.review.sqlite_repository import SQLiteReviewRepository
+from spanvouch.review.workflow import ReviewWorkflow, ReviewWorkflowProviderError
+from spanvouch.trace_ir.models import TraceIR
+from spanvouch.trace_ir.repository import InMemoryTraceRepository
 
 ROOT = Path(__file__).resolve().parents[2]
 SENTINEL_KEY = "sentinel" + "-private-deepseek-key"
@@ -440,9 +445,9 @@ def test_allowed_trace_value_secrets_never_reach_sqlite_or_public_aggregate(
 
 @pytest.mark.asyncio
 async def test_invalid_semantic_provider_body_is_not_copied_into_verifier_report() -> None:
-    from afc.diagnosis.models import ProviderUsage
-    from afc.diagnosis.protocols import ChatMessage, GenerationConfig, ProviderResponse
-    from afc.review.models import VerificationInput, canonical_sha256
+    from spanvouch.diagnosis.models import ProviderUsage
+    from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig, ProviderResponse
+    from spanvouch.review.models import VerificationInput, canonical_sha256
     from tests.review.factories import make_diagnosis_report, make_review_snapshot
 
     class InvalidBodyProvider:

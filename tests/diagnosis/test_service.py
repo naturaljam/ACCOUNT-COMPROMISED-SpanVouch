@@ -2,15 +2,15 @@ import asyncio
 
 import pytest
 
-from afc.diagnosis.models import (
+from spanvouch.diagnosis.models import (
     DiagnoserKind,
     DiagnosisDecision,
     DiagnosisExecution,
     DiagnosisProvenance,
     DiagnosisStatus,
 )
-from afc.diagnosis.service import DiagnosisConflictError, DiagnosisService
-from afc.failure_types import FailureType
+from spanvouch.diagnosis.service import DiagnosisConflictError, DiagnosisService
+from spanvouch.failure_types import FailureType
 from tests.diagnosis.test_trace_view import load_trace
 
 

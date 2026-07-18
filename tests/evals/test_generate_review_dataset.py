@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from afc.diagnosis.models import DiagnosisReport
-from afc.evals.generate_review_dataset import (
+from spanvouch.diagnosis.models import DiagnosisReport
+from spanvouch.evals.generate_review_dataset import (
     CANDIDATES_FILENAME,
     LABELS_FILENAME,
     MANIFEST_FILENAME,

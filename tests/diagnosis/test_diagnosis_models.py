@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from afc.diagnosis.models import (
+from spanvouch.diagnosis.models import (
     AbstainReason,
     ClaimStage,
     DiagnoserKind,
@@ -12,7 +12,7 @@ from afc.diagnosis.models import (
     DiagnosisStatus,
     EvidenceRef,
 )
-from afc.failure_types import FailureType
+from spanvouch.failure_types import FailureType
 
 EVIDENCE = EvidenceRef(
     evidence_id="ev-1",

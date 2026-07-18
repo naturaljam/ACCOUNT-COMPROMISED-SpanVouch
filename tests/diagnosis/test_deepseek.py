@@ -3,13 +3,13 @@ import json
 import httpx
 import pytest
 
-from afc.diagnosis.deepseek import DeepSeekConfig, DeepSeekProvider
-from afc.diagnosis.errors import (
+from spanvouch.diagnosis.deepseek import DeepSeekConfig, DeepSeekProvider
+from spanvouch.diagnosis.errors import (
     ProviderConfigurationError,
     ProviderProtocolError,
     ProviderRequestError,
 )
-from afc.diagnosis.protocols import ChatMessage, GenerationConfig
+from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig
 
 
 def success_response() -> httpx.Response:

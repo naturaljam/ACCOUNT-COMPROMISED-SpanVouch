@@ -29,4 +29,4 @@ COPY --from=builder --chown=10001:10001 /opt/venv /opt/venv
 
 USER 10001:10001
 EXPOSE 8000
-CMD ["/opt/venv/bin/uvicorn", "afc.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["/opt/venv/bin/uvicorn", "spanvouch.api.app:app", "--host", "0.0.0.0", "--port", "8000"]

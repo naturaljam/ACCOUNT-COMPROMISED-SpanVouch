@@ -2,8 +2,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from afc.diagnosis.evidence import EvidenceCatalog
-from afc.diagnosis.models import (
+from spanvouch.diagnosis.evidence import EvidenceCatalog
+from spanvouch.diagnosis.models import (
     AbstainReason,
     ClaimStage,
     DiagnoserKind,
@@ -14,13 +14,13 @@ from afc.diagnosis.models import (
     EvidenceRef,
     EvidenceSelector,
 )
-from afc.diagnosis.rule_diagnoser import RuleDiagnoser
-from afc.diagnosis.trace_view import DiagnosticSpan, DiagnosticTraceView
-from afc.failure_types import FailureType
-from afc.invariants.engine import InvariantEngine
-from afc.invariants.supportlab import supportlab_rules
-from afc.review.evidence_verifier import EvidenceVerifier
-from afc.review.models import (
+from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
+from spanvouch.diagnosis.trace_view import DiagnosticSpan, DiagnosticTraceView
+from spanvouch.failure_types import FailureType
+from spanvouch.invariants.engine import InvariantEngine
+from spanvouch.invariants.supportlab import supportlab_rules
+from spanvouch.review.evidence_verifier import EvidenceVerifier
+from spanvouch.review.models import (
     FindingCode,
     ReviewInputSnapshot,
     VerificationInput,
@@ -28,7 +28,7 @@ from afc.review.models import (
     canonical_json,
     canonical_sha256,
 )
-from afc.trace_ir.models import SpanKind, SpanStatus
+from spanvouch.trace_ir.models import SpanKind, SpanStatus
 from tests.diagnosis.test_trace_view import load_trace
 
 NOW = datetime(2026, 7, 17, 8, 0, tzinfo=UTC)

@@ -7,16 +7,16 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from afc.api.app import create_app
-from afc.diagnosis.errors import ProviderProtocolError, ProviderRequestError
-from afc.diagnosis.models import DiagnoserKind
-from afc.diagnosis.rule_diagnoser import RuleDiagnoser
-from afc.diagnosis.service import DiagnosisService
-from afc.invariants.engine import InvariantEngine
-from afc.invariants.supportlab import supportlab_rules
-from afc.review.commands import ClaimReviewWork, CreateReviewCase
-from afc.review.evidence_verifier import EvidenceVerifier
-from afc.review.models import (
+from spanvouch.api.app import create_app
+from spanvouch.diagnosis.errors import ProviderProtocolError, ProviderRequestError
+from spanvouch.diagnosis.models import DiagnoserKind
+from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
+from spanvouch.diagnosis.service import DiagnosisService
+from spanvouch.invariants.engine import InvariantEngine
+from spanvouch.invariants.supportlab import supportlab_rules
+from spanvouch.review.commands import ClaimReviewWork, CreateReviewCase
+from spanvouch.review.evidence_verifier import EvidenceVerifier
+from spanvouch.review.models import (
     ReviewStatus,
     VerificationInput,
     VerificationMode,
@@ -26,11 +26,11 @@ from afc.review.models import (
     WorkflowEventType,
     canonical_json,
 )
-from afc.review.reviser import DiagnosisReviser
-from afc.review.service import ReviewService
-from afc.review.sqlite_repository import SQLiteReviewRepository
-from afc.review.workflow import ReviewWorkflow
-from afc.trace_ir.repository import InMemoryTraceRepository
+from spanvouch.review.reviser import DiagnosisReviser
+from spanvouch.review.service import ReviewService
+from spanvouch.review.sqlite_repository import SQLiteReviewRepository
+from spanvouch.review.workflow import ReviewWorkflow
+from spanvouch.trace_ir.repository import InMemoryTraceRepository
 from tests.diagnosis.test_trace_view import load_trace
 from tests.review.factories import NOW, make_review_snapshot, make_revision
 from tests.review.test_workflow import (

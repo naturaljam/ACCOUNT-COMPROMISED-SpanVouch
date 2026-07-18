@@ -3,20 +3,20 @@ from unittest.mock import patch
 import pytest
 from opentelemetry.trace import StatusCode
 
-from afc.observability.tracing import build_test_tracer
-from afc.supportlab.decision import (
+from spanvouch.observability.tracing import build_test_tracer
+from spanvouch.supportlab.decision import (
     AgentDecision,
     DecisionContext,
     DecisionKind,
     ScriptedDecisionModel,
 )
-from afc.supportlab.graph import RunOutcome, run_support_scenario
-from afc.supportlab.models import Order
-from afc.supportlab.repository import build_seed_repository
-from afc.supportlab.scenarios import FailureType, Scenario, build_scenarios
-from afc.supportlab.tools import SupportTools
-from afc.trace_ir.mapper import map_spans
-from afc.trace_ir.models import SpanStatus
+from spanvouch.supportlab.graph import RunOutcome, run_support_scenario
+from spanvouch.supportlab.models import Order
+from spanvouch.supportlab.repository import build_seed_repository
+from spanvouch.supportlab.scenarios import FailureType, Scenario, build_scenarios
+from spanvouch.supportlab.tools import SupportTools
+from spanvouch.trace_ir.mapper import map_spans
+from spanvouch.trace_ir.models import SpanStatus
 
 
 def scenario_for(failure_type: FailureType) -> Scenario:

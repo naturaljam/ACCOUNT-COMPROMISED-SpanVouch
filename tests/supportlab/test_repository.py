@@ -3,8 +3,8 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from afc.supportlab.models import Order, OrderItem, OrderStatus, RefundRecord
-from afc.supportlab.repository import build_seed_repository
+from spanvouch.supportlab.models import Order, OrderItem, OrderStatus, RefundRecord
+from spanvouch.supportlab.repository import build_seed_repository
 
 
 def test_order_rejects_duplicate_item_skus() -> None:

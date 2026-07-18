@@ -2,13 +2,13 @@ from pathlib import Path
 
 import pytest
 
-from afc.evals.generate_review_dataset import MutationKind
-from afc.evals.review_labels import validate_review_dataset
-from afc.evals.review_metrics import evaluate_review_candidates
-from afc.invariants.engine import InvariantEngine
-from afc.invariants.supportlab import supportlab_rules
-from afc.review.evidence_verifier import EvidenceVerifier
-from afc.trace_ir.models import TraceIR
+from spanvouch.evals.generate_review_dataset import MutationKind
+from spanvouch.evals.review_labels import validate_review_dataset
+from spanvouch.evals.review_metrics import evaluate_review_candidates
+from spanvouch.invariants.engine import InvariantEngine
+from spanvouch.invariants.supportlab import supportlab_rules
+from spanvouch.review.evidence_verifier import EvidenceVerifier
+from spanvouch.trace_ir.models import TraceIR
 
 DATASET = Path("evals/datasets/supportlab-review-v1")
 SOURCE_DATASET = Path("evals/datasets/supportlab-v1")

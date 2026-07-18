@@ -3,14 +3,14 @@ from pathlib import Path
 
 import pytest
 
-from afc.diagnosis.models import DiagnosisStatus
-from afc.evals.diagnosis_labels import (
+from spanvouch.diagnosis.models import DiagnosisStatus
+from spanvouch.evals.diagnosis_labels import (
     DiagnosisDatasetManifest,
     build_diagnosis_manifest,
     load_diagnosis_labels,
     validate_dataset_join,
 )
-from afc.trace_ir.models import TraceIR
+from spanvouch.trace_ir.models import TraceIR
 
 DATASET_DIR = Path("evals/datasets/supportlab-v1")
 
