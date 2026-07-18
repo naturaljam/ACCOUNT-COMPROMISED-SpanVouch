@@ -13,6 +13,7 @@ CONTRACT_FORBIDDEN_PREFIXES = (
     "fastapi",
     "langgraph",
     "spanvouch.adapters",
+    "spanvouch.api",
     "spanvouch.diagnosis",
     "spanvouch.evaluation",
     "spanvouch.labs",
@@ -90,6 +91,32 @@ def test_contracts_never_import_higher_or_infrastructure_modules() -> None:
     assert _forbidden_imports(
         (SOURCE_ROOT / "contracts",), SOURCE_ROOT, CONTRACT_FORBIDDEN_PREFIXES
     ) == {}
+
+
+def test_contract_sanitizer_does_not_own_trace_projection() -> None:
+    sanitizer = SOURCE_ROOT / "contracts" / "sanitization.py"
+    tree = ast.parse(sanitizer.read_text(encoding="utf-8"), filename=str(sanitizer))
+
+    assert not {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name in {"TraceProjector", "TraceProjectorPort"}
+    }
+
+
+def test_contract_scanner_captures_aliased_api_outer_adapter(tmp_path: Path) -> None:
+    source_root = tmp_path / "spanvouch"
+    contracts = source_root / "contracts"
+    contracts.mkdir(parents=True)
+    (contracts / "probe.py").write_text(
+        "import spanvouch.api.app as web\nfrom spanvouch import api as api_member\n",
+        encoding="utf-8",
+    )
+
+    assert _forbidden_imports(
+        (contracts,), source_root, CONTRACT_FORBIDDEN_PREFIXES
+    ) == {"contracts/probe.py": ("spanvouch.api", "spanvouch.api.app")}
 
 
 def test_dependency_scanner_recurses_and_ignores_strings_and_comments(tmp_path: Path) -> None:

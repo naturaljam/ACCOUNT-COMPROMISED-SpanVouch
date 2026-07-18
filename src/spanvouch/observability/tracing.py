@@ -9,4 +9,4 @@ def build_test_tracer() -> tuple[Tracer, InMemorySpanExporter]:
     exporter = InMemorySpanExporter()
     provider = TracerProvider(resource=Resource.create({"service.name": "supportlab"}))
     provider.add_span_processor(SimpleSpanProcessor(exporter))
-    return provider.get_tracer("spanvouch.supportlab"), exporter
+    return provider.get_tracer("spanvouch.labs.supportlab"), exporter

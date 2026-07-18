@@ -2,22 +2,15 @@ import json
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from typing import Protocol, cast
+from typing import cast
 
 from pydantic import JsonValue
 
-from spanvouch.contracts.trace import (
-    DiagnosticContext,
-    DiagnosticSpan,
-    DiagnosticTraceView,
-    TraceIR,
-)
+from spanvouch.contracts.trace import DiagnosticSpan, DiagnosticTraceView
 
 __all__ = [
     "ALLOWED_ATTRIBUTES",
     "SECRET_REDACTION",
-    "TraceProjector",
-    "TraceProjectorPort",
     "sanitize_diagnostic_trace_view",
     "sanitize_diagnostic_value",
 ]
@@ -997,39 +990,3 @@ def sanitize_diagnostic_trace_view(view: DiagnosticTraceView) -> DiagnosticTrace
     """Return a fully revalidated view after applying the runtime sanitizer."""
 
     return DiagnosticTraceView(spans=tuple(_sanitize_span(span) for span in view.spans))
-
-
-class TraceProjectorPort(Protocol):
-    def project(self, trace: TraceIR) -> DiagnosticContext:
-        raise NotImplementedError
-
-
-class TraceProjector:
-    def project(self, trace: TraceIR) -> DiagnosticContext:
-        raw_view = DiagnosticTraceView(
-            spans=tuple(
-                DiagnosticSpan(
-                    span_id=span.span_id,
-                    parent_span_id=span.parent_span_id,
-                    name=span.name,
-                    kind=span.kind,
-                    status=span.status,
-                    started_at=span.started_at,
-                    ended_at=span.ended_at,
-                    attributes={
-                        key: value
-                        for key, value in span.attributes.items()
-                        if key in ALLOWED_ATTRIBUTES
-                    },
-                )
-                for span in sorted(
-                    trace.spans,
-                    key=lambda item: (item.started_at, item.ended_at, item.span_id),
-                )
-            )
-        )
-        return DiagnosticContext(
-            trace_id=trace.trace_id,
-            run_id=trace.run_id,
-            view=sanitize_diagnostic_trace_view(raw_view),
-        )
