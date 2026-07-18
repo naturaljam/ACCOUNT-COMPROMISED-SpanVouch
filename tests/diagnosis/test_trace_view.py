@@ -736,6 +736,27 @@ _METADATA_QUALIFIED_CREDENTIAL_LABELS = (
     "client secret length material",
     "cookie count payload",
 )
+_STRUCTURAL_CREDENTIAL_CORE_LABELS = (
+    "auth",
+    "authorization",
+    "password",
+    "passwd",
+    "pwd",
+    "secret",
+    "token",
+    "credential",
+    "cookie",
+    "cookies",
+    "api key",
+    "access key",
+    "private key",
+    "client secret",
+)
+_EMBEDDED_STRUCTURAL_CREDENTIAL_LABELS = (
+    *_STRUCTURAL_CREDENTIAL_CORE_LABELS,
+    *_METADATA_QUALIFIED_CREDENTIAL_LABELS,
+)
+_QUOTED_STRUCTURAL_WRAPPERS = ('"', "'", '\\"', "\\'")
 
 
 def _assert_sanitizer_fixed_point(source: str, expected: str) -> None:
@@ -1395,6 +1416,107 @@ def test_previous_values_keep_compact_alias_fallback_for_the_next_label() -> Non
         )
 
 
+def test_quoted_safe_assignment_values_sanitize_embedded_credentials() -> None:
+    separators = (*_UNICODE_ZS_SPACES, "\t")
+    for wrapper, separator, label, later_token in product(
+        _QUOTED_STRUCTURAL_WRAPPERS,
+        separators,
+        _EMBEDDED_STRUCTURAL_CREDENTIAL_LABELS,
+        (False, True),
+    ):
+        spaced_label = separator.join(label.split())
+        prefix = f"note{separator}" if later_token else ""
+        interior = f"{prefix}{spaced_label}=secret-one"
+        expected_interior = f"{prefix}{spaced_label}={SECRET_REDACTION}"
+        source = f"message={wrapper}{interior}{wrapper} field=ok"
+        expected = f"message={wrapper}{expected_interior}{wrapper} field=ok"
+
+        assert sanitize_diagnostic_value({label: "secret-one"}) == {
+            label: SECRET_REDACTION
+        }
+        sanitized = sanitize_diagnostic_value(source)
+        assert sanitized == expected
+        assert sanitize_diagnostic_value(sanitized) == expected
+
+
+def test_quoted_safe_prose_preserves_closers_and_following_field_boundaries() -> None:
+    boundaries = (
+        *_UNICODE_ZS_SPACES,
+        "\t",
+        ";",
+        "; ",
+        "|",
+        " | ",
+        "\N{FULLWIDTH SEMICOLON}",
+        "\N{IDEOGRAPHIC COMMA}",
+    )
+    for wrapper, boundary, safe_interior in product(
+        _QUOTED_STRUCTURAL_WRAPPERS,
+        boundaries,
+        ("custom token count", "custom password policy", "ordinary prose"),
+    ):
+        safe_source = (
+            f"message={wrapper}{safe_interior}{wrapper}{boundary}field=ok"
+        )
+        _assert_sanitizer_fixed_point(safe_source, safe_source)
+
+        credential_source = (
+            f"message={wrapper}{safe_interior}{wrapper}{boundary}"
+            "api key=secret-one"
+        )
+        credential_expected = (
+            f"message={wrapper}{safe_interior}{wrapper}{boundary}"
+            f"api key={SECRET_REDACTION}"
+        )
+        _assert_sanitizer_fixed_point(
+            credential_source,
+            credential_expected,
+        )
+
+
+def test_unquoted_safe_assignment_values_keep_credential_first_tokens() -> None:
+    separators = (*_UNICODE_ZS_SPACES, "\t")
+    for separator, label, later_token in product(
+        separators,
+        _EMBEDDED_STRUCTURAL_CREDENTIAL_LABELS,
+        (False, True),
+    ):
+        spaced_label = separator.join(label.split())
+        prefix = f"note{separator}" if later_token else ""
+        source = f"message={prefix}{spaced_label}=secret-one"
+        expected = f"message={prefix}{spaced_label}={SECRET_REDACTION}"
+        _assert_sanitizer_fixed_point(source, expected)
+
+
+def test_quoted_embedded_exact_markers_are_byte_idempotent() -> None:
+    for wrapper, label in product(
+        _QUOTED_STRUCTURAL_WRAPPERS,
+        _EMBEDDED_STRUCTURAL_CREDENTIAL_LABELS,
+    ):
+        source = (
+            f"message={wrapper}{label}={SECRET_REDACTION}{wrapper} field=ok"
+        )
+        _assert_sanitizer_fixed_point(source, source)
+
+
+def test_many_quoted_assignments_are_sanitized_without_recursive_depth() -> None:
+    sources: list[str] = []
+    expected: list[str] = []
+    for index in range(2_000):
+        wrapper = _QUOTED_STRUCTURAL_WRAPPERS[index % len(_QUOTED_STRUCTURAL_WRAPPERS)]
+        label = _EMBEDDED_STRUCTURAL_CREDENTIAL_LABELS[
+            index % len(_EMBEDDED_STRUCTURAL_CREDENTIAL_LABELS)
+        ]
+        sources.append(f"message={wrapper}{label}=secret-{index}{wrapper}")
+        expected.append(f"message={wrapper}{label}={SECRET_REDACTION}{wrapper}")
+
+    source = " ".join(sources)
+    sanitized = sanitize_diagnostic_value(source)
+
+    assert sanitized == " ".join(expected)
+    assert sanitize_diagnostic_value(sanitized) == sanitized
+
+
 def test_mapping_and_structural_label_matrix_share_full_candidate_semantics() -> None:
     credential_cores = (
         ("token",),
@@ -1632,7 +1754,12 @@ def test_trace_view_preserves_safe_urls_and_redacts_punctuation_labels() -> None
                     f"safe=custom_token_count\N{EM SPACE}authorization"
                     f"\N{EM SPACE}status\N{EM SPACE}header={VALUE_SECRET}\n"
                     "safe=custom_password_policy\N{NO-BREAK SPACE}field=ok "
-                    "previous-value-safe"
+                    "previous-value-safe\n"
+                    f'message="api key={VALUE_SECRET}"\n'
+                    rf'message=\"token count payload={VALUE_SECRET}\" field=ok'
+                    "\n"
+                    f"message=private key={VALUE_SECRET}\n"
+                    'message="custom token count" field=ok quoted-value-safe'
                 ),
             }
         }
@@ -1661,4 +1788,5 @@ def test_trace_view_preserves_safe_urls_and_redacts_punctuation_labels() -> None
     assert "compatible-colon-url-safe" in message
     assert "full-label-parity-safe" in message
     assert "previous-value-safe" in message
+    assert "quoted-value-safe" in message
     assert sanitize_diagnostic_trace_view(view) == view

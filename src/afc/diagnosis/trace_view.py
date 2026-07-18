@@ -134,6 +134,9 @@ _CREDENTIAL_PART_CORES = frozenset(
 _CREDENTIAL_PAIR_CORES = frozenset(
     {("access", "key"), ("api", "key"), ("private", "key")}
 )
+_MULTIPART_CREDENTIAL_FIRST_PARTS = frozenset(
+    {"access", "api", "client", "private"}
+)
 _COMPACT_CREDENTIAL_LABELS = frozenset(
     f"{prefix}{core}{suffix}"
     for prefix in _COMPACT_SENSITIVE_PREFIXES
@@ -454,12 +457,56 @@ def _extract_structural_label(
     return line[label_start:delimiter_index].strip()
 
 
-def _sanitize_structural_credential_line(line: str) -> str:
+def _quoted_assignment_value_span(
+    line: str,
+    value_start: int,
+) -> tuple[int, int, int] | None:
+    for wrapper in ('\\"', "\\'", '"', "'"):
+        if not line.startswith(wrapper, value_start):
+            continue
+        inner_start = value_start + len(wrapper)
+        closer_start = line.find(wrapper, inner_start)
+        if closer_start >= 0:
+            return inner_start, closer_start, closer_start + len(wrapper)
+    return None
+
+
+def _apply_structural_replacements(
+    line: str,
+    replacements: list[tuple[int, int, str]],
+    end: int,
+) -> str:
+    if not replacements:
+        return line[:end]
+    parts: list[str] = []
+    cursor = 0
+    for start, stop, replacement in replacements:
+        if start >= end:
+            break
+        parts.extend((line[cursor:start], replacement))
+        cursor = stop
+    parts.append(line[cursor:end])
+    return "".join(parts)
+
+
+def _unquoted_value_starts_credential_label(value: str) -> bool:
+    parts = _normalize_credential_label(value)
+    return _is_credential_label_parts(parts) or bool(
+        parts and parts[-1] in _MULTIPART_CREDENTIAL_FIRST_PARTS
+    )
+
+
+def _sanitize_structural_credential_line(
+    line: str,
+    *,
+    sanitize_quoted_values: bool = True,
+) -> str:
     url_contexts = _structural_url_contexts(line)
     url_context_index = 0
     url_context: tuple[int, int, int] | None = None
     candidate_start = 0
     candidate_starts_with_previous_value = False
+    replacements: list[tuple[int, int, str]] = []
     index = 0
     while index < len(line):
         if url_context is not None and index >= url_context[2]:
@@ -478,6 +525,11 @@ def _sanitize_structural_credential_line(line: str) -> str:
         character = line[index]
         if candidate_starts_with_previous_value:
             if _is_structural_label_whitespace(character):
+                previous_value = line[candidate_start:index]
+                if _unquoted_value_starts_credential_label(previous_value):
+                    candidate_starts_with_previous_value = False
+                    index += 1
+                    continue
                 while (
                     index < len(line)
                     and _is_structural_label_whitespace(line[index])
@@ -518,12 +570,38 @@ def _sanitize_structural_credential_line(line: str) -> str:
                 part in {"cookie", "cookies"} for part in label_parts
             )
             if not is_cookie_label or _is_credential_shaped_cookie_value(value):
-                return _redact_structural_value(line[:value_start], value)
+                prefix = _apply_structural_replacements(
+                    line,
+                    replacements,
+                    value_start,
+                )
+                return _redact_structural_value(prefix, value)
+
+        quoted_span = (
+            _quoted_assignment_value_span(line, value_start)
+            if sanitize_quoted_values
+            else None
+        )
+        if quoted_span is not None:
+            inner_start, closer_start, closer_end = quoted_span
+            interior = line[inner_start:closer_start]
+            sanitized_interior = _sanitize_structural_credential_line(
+                interior,
+                sanitize_quoted_values=False,
+            )
+            if sanitized_interior != interior:
+                replacements.append(
+                    (inner_start, closer_start, sanitized_interior)
+                )
+            candidate_start = closer_end
+            candidate_starts_with_previous_value = True
+            index = closer_end
+            continue
 
         candidate_start = value_start
         candidate_starts_with_previous_value = True
         index = value_start
-    return line
+    return _apply_structural_replacements(line, replacements, len(line))
 
 
 def _sanitize_structural_credential_lines(value: str) -> str:

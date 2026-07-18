@@ -392,6 +392,12 @@ async def test_revision_prompt_is_a_canonical_sanitized_boundary() -> None:
                     f"\N{EM SPACE}status\N{EM SPACE}header={VALUE_SECRET}\n"
                     "safe=custom_password_policy\N{NO-BREAK SPACE}field=ok "
                     "previous-value-safe\n"
+                    f'message="api key={VALUE_SECRET}"\n'
+                    rf'message=\"token count payload={VALUE_SECRET}\" field=ok'
+                    "\n"
+                    f"message=private key={VALUE_SECRET}\n"
+                    'message="custom token count" field=ok '
+                    "quoted-value-safe\n"
                     "cookie: recipe; instructions remain safe\n"
                     "Browser cookie: recipe; instructions remain safe\n"
                     "Cookie=recipe; instructions remain safe\n"
@@ -483,6 +489,7 @@ async def test_revision_prompt_is_a_canonical_sanitized_boundary() -> None:
     assert "compatible-colon-url-safe" in prompt
     assert "full-label-parity-safe" in prompt
     assert "previous-value-safe" in prompt
+    assert "quoted-value-safe" in prompt
     for forbidden in (
         "semantic-trace-id-secret",
         "semantic-run-id-secret",
