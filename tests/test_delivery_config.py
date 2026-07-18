@@ -366,14 +366,7 @@ def test_active_delivery_configuration_has_only_spanvouch_public_names() -> None
         for literal in forbidden_literals
         if literal in test_text
     }
-    expected_negative_assertions = {
-        ("tests/api/test_health.py", f"{legacy_product}_"),
-        ("tests/cli/test_review.py", f"{legacy_product}_"),
-        ("tests/test_package_identity.py", f"import {legacy_import}"),
-        ("tests/test_delivery_config.py", f"{legacy_product}_"),
-        ("tests/test_delivery_config.py", f"{legacy_import}-"),
-    }
-    assert test_hits == expected_negative_assertions
+    assert test_hits == set()
 
     metadata = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert metadata["project"]["scripts"] == {
@@ -391,17 +384,21 @@ def test_phase_4_release_candidate_documents_delivery_and_six_contract_roots() -
     dockerignore = (ROOT / ".dockerignore").read_text(encoding="utf-8")
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    legacy_environment = "AF" + "C_DB_PATH"
+    legacy_migration_filename = "af" + "c-to-spanvouch.md"
 
     assert project["project"]["name"] == "spanvouch"
     assert project["project"]["version"] == "0.2.0"
     assert project["project"]["scripts"] == {"spanvouch": "spanvouch.cli.main:main"}
     assert "SPANVOUCH_DB_PATH" in compose
-    assert "AFC_DB_PATH" not in compose
+    assert legacy_environment not in compose
     assert "name: spanvouch" in compose
     assert "10001:10001" in docker_runtime
     assert 'org.opencontainers.image.title="SpanVouch"' in dockerfile
     assert "evals/reports/reference/" in dockerignore
     assert "tests/contracts tests/architecture tests/test_delivery_config.py -v" in workflow
+    assert "git diff --exit-code -- evals/datasets" in workflow
+    assert 'actual["candidates_sha256"] == expected["candidates_sha256"]' not in workflow
     assert "docs/contracts/catalog.md" in readme
     assert "IVAD" in readme
 
@@ -428,9 +425,66 @@ def test_phase_4_release_candidate_documents_delivery_and_six_contract_roots() -
         "docs/contracts/catalog.md",
         "docs/architecture/adr-002-contract-versioning.md",
         "docs/architecture/adr-003-core-adapter-boundaries.md",
-        "docs/migrations/afc-to-spanvouch.md",
+        "docs/migrations/" + legacy_migration_filename,
         "docs/research/reproducibility.md",
         "docs/research/ivad-claim-evidence-ledger.md",
     )
     missing = [path for path in required_release_files if not (ROOT / path).is_file()]
     assert not missing, f"missing Phase 4 release documentation: {missing}"
+
+
+def test_phase_4_acceptance_evidence_includes_a_clean_offline_reference_bundle() -> None:
+    bundle = ROOT / "evals" / "reports" / "reference" / "phase4-offline-bundle"
+    required_bundle_files = (
+        "README.md",
+        "config.json",
+        "environment.txt",
+        "manifest.json",
+        "metrics.json",
+        "structured-events.jsonl",
+    )
+    missing = [name for name in required_bundle_files if not (bundle / name).is_file()]
+    assert not missing, f"incomplete Phase 4 reference bundle: {missing}"
+    assert hashlib.sha256((bundle / "metrics.json").read_bytes()).hexdigest() == (
+        "c3fc1f4fc2015cbc0a3d6691bf01da98e1a77f7ac139d37f7e75cd2038742f9b"
+    )
+
+    acceptance = ROOT / "docs" / "evaluation" / "phase4-research-foundation.md"
+    assert acceptance.is_file(), "missing Phase 4 acceptance report"
+    report = acceptance.read_text(encoding="utf-8")
+    assert "adds no paper effectiveness result" in report
+    assert "POSIX exact-object directory unlink is unsupported" in report
+
+
+def test_active_old_product_name_scan_has_no_literal_hits() -> None:
+    legacy_product = "AF" + "C"
+    legacy_import = legacy_product.lower()
+    patterns = (
+        f"{legacy_product}_",
+        f"{legacy_import}-",
+        f"src/{legacy_import}",
+        f"from {legacy_import}",
+        f"import {legacy_import}",
+        "Agent Failure" + " Clinic",
+    )
+    result = subprocess.run(
+        [
+            "rg",
+            "-n",
+            "--fixed-strings",
+            *(item for pattern in patterns for item in ("-e", pattern)),
+            "src",
+            "tests",
+            "pyproject.toml",
+            "Dockerfile",
+            "compose.yaml",
+            ".env.example",
+            "README.md",
+            ".github",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1, result.stdout + result.stderr

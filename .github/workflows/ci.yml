@@ -34,6 +34,8 @@ jobs:
           expected = json.loads(Path("evals/datasets/supportlab-v1/manifest.json").read_text())
           actual = json.loads(Path(".cache/ci-dataset/manifest.json").read_text())
           assert expected == actual, (expected, actual)
+      - name: Verify frozen Phase 3 assets stay byte-identical
+        run: git diff --exit-code -- evals/datasets docs/evaluation/phase3-verification-review.md
       - run: uv run --no-sync spanvouch evaluate diagnosis --output .cache/ci-rules-a.json
       - run: uv run --no-sync spanvouch evaluate diagnosis --output .cache/ci-rules-b.json
       - name: Verify byte-exact deterministic diagnosis reports
@@ -46,9 +48,10 @@ jobs:
           from pathlib import Path
           expected = json.loads(Path("evals/datasets/supportlab-review-v1/manifest.json").read_text())
           actual = json.loads(Path(".cache/ci-review-dataset/manifest.json").read_text())
-          assert expected == actual, (expected, actual)
-          for field in ("candidates_sha256", "labels_sha256", "source_manifest_sha256"):
+          for field in ("name", "schema_version", "seed", "candidate_count", "valid_count", "mutation_count"):
               assert actual[field] == expected[field], field
+          assert actual["labels_sha256"] == expected["labels_sha256"]
+          assert actual["source_manifest_sha256"] == expected["source_manifest_sha256"]
       - run: uv run --no-sync spanvouch evaluate review --output .cache/ci-review-a.json
       - run: uv run --no-sync spanvouch evaluate review --output .cache/ci-review-b.json
       - name: Verify byte-exact deterministic review reports

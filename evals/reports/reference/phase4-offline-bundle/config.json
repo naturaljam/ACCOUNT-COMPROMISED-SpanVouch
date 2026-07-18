@@ -1,0 +1,1 @@
+{"allow_live_api":false,"dataset":"evals/datasets/supportlab-review-v1","policy_version":"supportlab-review-policy-v1","schema_version":"1.0","seed":20260717,"source_dataset":"evals/datasets/supportlab-v1","verifier":"deterministic"}

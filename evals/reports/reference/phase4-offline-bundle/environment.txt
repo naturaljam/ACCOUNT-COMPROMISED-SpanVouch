@@ -1,0 +1,9 @@
+architecture=amd64
+dependency_lock_sha256=3fba9a279730bfec5eb3e6b5e522ec161aaa5dc06f829f121c85b321e25ec12a
+git_commit=6f78f8205122262261ebf752bbbece79ef864f28
+implementation=CPython
+os=windows
+package=spanvouch
+package_version=0.2.0
+python=3.12.7
+repository_identity=local:phase4-integration

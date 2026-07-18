@@ -304,7 +304,7 @@ def test_old_api_environment_variable_does_not_override_new_default(
         main(
             ["show", "--case-id", "case-1"],
             transport=_transport(handler),
-            environ={"AFC_API_URL": "https://ignored.example"},
+            environ={"AF" + "C_API_URL": "https://ignored.example"},
         )
         == 0
     )

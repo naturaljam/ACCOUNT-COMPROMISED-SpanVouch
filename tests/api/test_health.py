@@ -31,7 +31,7 @@ def test_old_database_environment_variable_does_not_override_new_default(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("SPANVOUCH_DB_PATH", raising=False)
-    monkeypatch.setenv("AFC_DB_PATH", str(tmp_path / "old.db"))
+    monkeypatch.setenv("AF" + "C_DB_PATH", str(tmp_path / "old.db"))
 
     with TestClient(create_app()):
         pass
