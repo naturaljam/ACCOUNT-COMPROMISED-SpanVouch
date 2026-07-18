@@ -9,12 +9,12 @@ from uuid import uuid4
 
 from fastapi import FastAPI
 
+from spanvouch.adapters.models.deepseek import DeepSeekConfig, DeepSeekProvider
 from spanvouch.api.routes.diagnoses import build_diagnosis_router
 from spanvouch.api.routes.diagnosis_reviews import build_diagnosis_review_router
 from spanvouch.api.routes.health import router as health_router
 from spanvouch.api.routes.traces import build_trace_router
 from spanvouch.contracts.diagnosis import DiagnoserKind
-from spanvouch.diagnosis.deepseek import DeepSeekConfig, DeepSeekProvider
 from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.diagnosis.errors import ProviderConfigurationError
 from spanvouch.diagnosis.llm_diagnoser import LlmDiagnoser
@@ -24,7 +24,6 @@ from spanvouch.invariants.supportlab import supportlab_rules
 from spanvouch.review.policy import DEFAULT_REVIEW_POLICY_VERSION
 from spanvouch.review.protocols import ReviewRepository
 from spanvouch.review.reviser import DiagnosisReviser
-from spanvouch.review.semantic_verifier import SemanticVerifier
 from spanvouch.review.service import ReviewService
 from spanvouch.review.sqlite_repository import SQLiteReviewRepository
 from spanvouch.review.workflow import ReviewWorkflow
@@ -32,6 +31,7 @@ from spanvouch.trace.repository import InMemoryTraceRepository, TraceRepository
 from spanvouch.verification.deterministic import DeterministicVerifier
 from spanvouch.verification.invariant_engine import InvariantEngine
 from spanvouch.verification.protocols import Verifier
+from spanvouch.verification.semantic import SemanticVerifier
 
 DEFAULT_REVIEW_DATABASE = Path(".data/spanvouch.db")
 

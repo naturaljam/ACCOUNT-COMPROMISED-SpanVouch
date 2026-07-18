@@ -19,7 +19,7 @@ from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig, Provide
 from spanvouch.evals.review_labels import load_review_candidates
 from spanvouch.evals.review_metrics import ReviewEvaluationReport
 from spanvouch.evals.run_review_eval import _run, main, write_report
-from spanvouch.review.semantic_verifier import SemanticVerifier
+from spanvouch.verification.semantic import SemanticVerifier
 
 
 def test_default_offline_cli_writes_byte_exact_canonical_one_line_json(

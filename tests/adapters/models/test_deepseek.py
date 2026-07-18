@@ -3,7 +3,7 @@ import json
 import httpx
 import pytest
 
-from spanvouch.diagnosis.deepseek import DeepSeekConfig, DeepSeekProvider
+from spanvouch.adapters.models.deepseek import DeepSeekConfig, DeepSeekProvider
 from spanvouch.diagnosis.errors import (
     ProviderConfigurationError,
     ProviderProtocolError,

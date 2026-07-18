@@ -29,7 +29,6 @@ from spanvouch.diagnosis.errors import ProviderProtocolError
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
 from spanvouch.invariants.supportlab import supportlab_rules
 from spanvouch.review.reviser import DiagnosisReviser
-from spanvouch.review.semantic_verifier import SemanticVerifier
 from spanvouch.review.service import ReviewService
 from spanvouch.review.sqlite_repository import SQLiteReviewRepository
 from spanvouch.review.workflow import ReviewWorkflow, ReviewWorkflowProviderError
@@ -38,6 +37,7 @@ from spanvouch.trace.evidence_catalog import EvidenceCatalog
 from spanvouch.trace.repository import InMemoryTraceRepository
 from spanvouch.verification.deterministic import DeterministicVerifier
 from spanvouch.verification.invariant_engine import InvariantEngine
+from spanvouch.verification.semantic import SemanticVerifier
 
 ROOT = Path(__file__).resolve().parents[2]
 SENTINEL_KEY = "sentinel" + "-private-deepseek-key"

@@ -21,11 +21,11 @@ from spanvouch.diagnosis.errors import (
     ProviderRequestError,
 )
 from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig, ProviderResponse
-from spanvouch.review.semantic_verifier import SemanticVerifier
 from spanvouch.trace.diagnostic_view import (
     SECRET_REDACTION,
     sanitize_diagnostic_trace_view,
 )
+from spanvouch.verification.semantic import SemanticVerifier
 from tests.review.factories import (
     make_diagnosis_report,
     make_review_snapshot,

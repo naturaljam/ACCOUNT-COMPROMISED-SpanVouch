@@ -5,9 +5,9 @@ import os
 from collections.abc import Sequence
 from pathlib import Path
 
+from spanvouch.adapters.models.deepseek import DeepSeekConfig, DeepSeekProvider
 from spanvouch.contracts.diagnosis import DiagnoserKind
 from spanvouch.contracts.trace import TraceIR
-from spanvouch.diagnosis.deepseek import DeepSeekConfig, DeepSeekProvider
 from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.diagnosis.errors import ProviderConfigurationError
 from spanvouch.diagnosis.llm_diagnoser import LlmDiagnoser

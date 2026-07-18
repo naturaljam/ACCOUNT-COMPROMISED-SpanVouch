@@ -3,19 +3,19 @@ import asyncio
 from collections.abc import Sequence
 from pathlib import Path
 
+from spanvouch.adapters.models.deepseek import DeepSeekConfig, DeepSeekProvider
 from spanvouch.contracts.trace import TraceIR
 from spanvouch.contracts.versioning import canonical_json
-from spanvouch.diagnosis.deepseek import DeepSeekConfig, DeepSeekProvider
 from spanvouch.diagnosis.errors import ProviderConfigurationError
 from spanvouch.evals.generate_review_dataset import DEFAULT_OUTPUT_DATASET, DEFAULT_SOURCE_DATASET
 from spanvouch.evals.review_labels import validate_review_dataset
 from spanvouch.evals.review_metrics import ReviewEvaluationReport, evaluate_review_candidates
 from spanvouch.invariants.supportlab import supportlab_rules
 from spanvouch.review.policy import DEFAULT_REVIEW_POLICY_VERSION as DEFAULT_POLICY_VERSION
-from spanvouch.review.semantic_verifier import SemanticVerifier
 from spanvouch.verification.deterministic import DeterministicVerifier
 from spanvouch.verification.invariant_engine import InvariantEngine
 from spanvouch.verification.protocols import Verifier
+from spanvouch.verification.semantic import SemanticVerifier
 
 
 def _load_traces(path: Path) -> tuple[TraceIR, ...]:
