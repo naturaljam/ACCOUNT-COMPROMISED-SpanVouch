@@ -87,6 +87,8 @@ class _UsageDiagnoser:
             provenance=DiagnosisProvenance(
                 taxonomy=TaxonomyRef(taxonomy_id="supportlab", taxonomy_version="1.0"),
                 diagnoser_version="usage-test-v1",
+                prompt_version="usage-prompt-v1",
+                prompt_sha256="a" * 64,
                 model="test-model",
                 provider="test-provider",
             ),
@@ -121,6 +123,15 @@ async def test_evaluation_aggregates_provider_usage_and_latency_percentiles() ->
     assert report.usage.latency_p50_ms == 20.0
     assert report.usage.latency_p95_ms == 29.0
     assert report.usage.estimated_cost_usd is None
+    execution = report.execution_metadata()
+    assert execution.provider_status == "used"
+    assert execution.usage is not None
+    assert execution.usage.requests == 2
+    assert execution.usage.total_tokens == 36
+    assert tuple((model.provider, model.model) for model in execution.models) == (
+        ("test-provider", "test-model"),
+    )
+    assert execution.cost is None
 
 
 class _InvalidOutputDiagnoser:
@@ -163,3 +174,4 @@ async def test_invalid_model_output_is_not_counted_as_structured_success() -> No
 
     assert report.metrics.structured_output_success_rate == 0.0
     assert report.metrics.semantic_abstain_rate == 1.0
+    assert report.execution_metadata().provider_status == "not_used"

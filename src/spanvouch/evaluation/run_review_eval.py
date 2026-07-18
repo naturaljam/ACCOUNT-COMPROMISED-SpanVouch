@@ -143,6 +143,7 @@ def main(argv: Sequence[str] | None = None, *, collector: ProvenanceCollector | 
             artifact_id=arguments.artifact_id,
             allow_dirty=arguments.allow_dirty_artifact,
             collector=provenance,
+            execution=report.execution_metadata(),
         )
     except ValueError as exc:
         parser.error(str(exc))

@@ -77,6 +77,12 @@ _GIT_COMMIT = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _EVALUATION_IDENTIFIER = re.compile(r"^(?:verifier|finding|gap)-[0-9a-f]{64}$")
 _EVALUATION_CANDIDATE = re.compile(r"^[a-z0-9_-]+(?:--[a-z0-9_-]+)?$")
+_SANITIZED_REFUND_VALUE = re.compile(
+    r"^refund_id='[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}' "
+    r"order_id='[a-z0-9-]+' amount=Decimal\('[0-9]+(?:\.[0-9]+)?'\) "
+    r"reason='[a-z0-9 -]+' idempotency_key='[a-z0-9_-]+' "
+    r"approved_by='[a-z0-9._-]+@example\.test'$"
+)
 _HASH_FIELDS = frozenset(
     {
         "dependencylocksha256",
@@ -92,6 +98,67 @@ _HASH_FIELDS = frozenset(
         "candidatessha256",
         "sourcemanifestsha256",
         "sha256",
+    }
+)
+_HASH_PATHS = frozenset(
+    {
+        ("manifest", "configuration", "sha256"),
+        ("manifest", "datasets", "manifest_sha256"),
+        ("manifest", "datasets", "payloads", "sha256"),
+        ("manifest", "inputs", "sha256"),
+        ("manifest", "models", "generation_config_sha256"),
+        ("manifest", "models", "prompt_sha256"),
+        ("manifest", "outputs", "sha256"),
+        ("manifest", "runtime", "dependency_lock_sha256"),
+        ("environment", "dependency_lock_sha256"),
+        ("metrics", "candidates_sha256"),
+        ("metrics", "labels_sha256"),
+        ("metrics", "policy_sha256"),
+        ("metrics", "source_manifest_sha256"),
+        ("metrics", "traces_sha256"),
+        ("metrics", "samples", "report", "evidence", "value_sha256"),
+        ("metrics", "samples", "report", "provenance", "prompt_sha256"),
+        ("metrics", "samples", "report", "provenance", "ruleset_version"),
+        ("metrics", "samples", "verifier_report", "report_sha256"),
+        ("metrics", "samples", "verifier_report", "provenance", "prompt_sha256"),
+        ("metrics", "samples", "semantic_verifier_report", "report_sha256"),
+        (
+            "metrics",
+            "samples",
+            "semantic_verifier_report",
+            "provenance",
+            "prompt_sha256",
+        ),
+    }
+)
+_CANDIDATE_ID_PATHS = frozenset(
+    {
+        ("metrics", "samples", "candidate_id"),
+        ("metrics", "samples", "source_run_id"),
+        ("metrics", "samples", "run_id"),
+        ("metrics", "samples", "report", "run_id"),
+    }
+)
+_EVALUATION_ID_PATHS = frozenset(
+    {
+        ("metrics", "samples", "verifier_report", "verifier_run_id"),
+        ("metrics", "samples", "verifier_report", "findings", "finding_id"),
+        ("metrics", "samples", "verifier_report", "evidence_gaps", "gap_id"),
+        ("metrics", "samples", "semantic_verifier_report", "verifier_run_id"),
+        (
+            "metrics",
+            "samples",
+            "semantic_verifier_report",
+            "findings",
+            "finding_id",
+        ),
+        (
+            "metrics",
+            "samples",
+            "semantic_verifier_report",
+            "evidence_gaps",
+            "gap_id",
+        ),
     }
 )
 
@@ -384,24 +451,27 @@ class ArtifactSecretClassifier:
         """Permit only verifier provenance metadata in the metrics payload."""
         return (
             key in {"prompt_version", "prompt_sha256"}
-            and path[-2:]
+            and path
             in {
-                ("verifier_report", "provenance"),
-                ("semantic_verifier_report", "provenance"),
-                ("report", "provenance"),
+                ("metrics", "samples", "verifier_report", "provenance"),
+                ("metrics", "samples", "semantic_verifier_report", "provenance"),
+                ("metrics", "samples", "report", "provenance"),
             }
-            and "metrics" in path
         )
 
     def _is_sensitive_string(self, value: str, *, path: tuple[str, ...]) -> bool:
         """Run non-bypassable credential and opaque-atom scans before field shapes."""
         if self._has_credential_signature(value):
             return True
-        if path[-2:] == ("evidence", "observed_value") and "metrics" in path:
-            # This field is a typed, sanitized EvidenceRef value emitted by the
-            # diagnostic contract; UUID-like business values are not secrets.
-            return False
         if self._is_cryptographic_bypass(value, path=path):
+            return False
+        if path == (
+            "metrics",
+            "samples",
+            "report",
+            "evidence",
+            "observed_value",
+        ) and _SANITIZED_REFUND_VALUE.fullmatch(value):
             return False
         return any(self._is_high_entropy(atom) for atom in _LEXICAL_ATOM.findall(value))
 
@@ -434,15 +504,32 @@ class ArtifactSecretClassifier:
             return False
         field = path[-1]
         normalized = "".join(ArtifactSecretClassifier._key_tokens(field))
-        if normalized in _HASH_FIELDS and _SHA256.fullmatch(value):
+        if path in _HASH_PATHS and normalized in _HASH_FIELDS and _SHA256.fullmatch(value):
             return True
-        if field == "git_commit" and _GIT_COMMIT.fullmatch(value) is not None:
+        if (
+            path in {
+                ("manifest", "code", "git_commit"),
+                ("environment", "git_commit"),
+                ("metrics", "git_commit"),
+            }
+            and _GIT_COMMIT.fullmatch(value) is not None
+        ):
             return True
-        if field in {"verifier_run_id", "finding_id", "gap_id"}:
+        if path in _EVALUATION_ID_PATHS:
             return _EVALUATION_IDENTIFIER.fullmatch(value) is not None
-        if field == "verifier_version":
+        if path in {
+            ("metrics", "verifier_version"),
+            ("metrics", "samples", "verifier_report", "provenance", "verifier_version"),
+            (
+                "metrics",
+                "samples",
+                "semantic_verifier_report",
+                "provenance",
+                "verifier_version",
+            ),
+        }:
             return _SHA256.fullmatch(value) is not None
-        return field in {"candidate_id", "source_run_id", "run_id"} and (
+        return path in _CANDIDATE_ID_PATHS and (
             _EVALUATION_CANDIDATE.fullmatch(value) is not None
         )
 

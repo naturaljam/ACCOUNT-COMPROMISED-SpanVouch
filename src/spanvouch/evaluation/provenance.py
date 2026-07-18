@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-import os
 import platform
+import shutil
 import sys
 import tempfile
 from collections.abc import Callable, Mapping
@@ -14,19 +14,26 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
-from pydantic import JsonValue
+from pydantic import BaseModel, ConfigDict, JsonValue, model_validator
 
 from spanvouch.contracts.artifacts import (
     ArtifactManifest,
     ArtifactRef,
     CodeProvenance,
+    CostProvenance,
     DatasetProvenance,
+    ModelProvenance,
     PackageProvenance,
     RandomnessProvenance,
     RuntimeProvenance,
+    UsageProvenance,
 )
 from spanvouch.contracts.versioning import canonical_sha256
-from spanvouch.evaluation.artifacts import ArtifactBundleWriter, collect_git_provenance
+from spanvouch.evaluation.artifacts import (
+    ArtifactBundleWriter,
+    _publish_no_replace,
+    collect_git_provenance,
+)
 
 _CREATED_AT = datetime(2026, 7, 18, tzinfo=UTC)
 _CONTRACTS = {
@@ -43,6 +50,27 @@ class ProvenanceCollector(Protocol):
     def code(self) -> CodeProvenance: ...
 
     def runtime(self) -> RuntimeProvenance: ...
+
+
+class ExecutionMetadata(BaseModel):
+    """Actual provider execution observed by an evaluation command."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    provider_status: Literal["not_used", "used", "failed"] = "not_used"
+    models: tuple[ModelProvenance, ...] = ()
+    usage: UsageProvenance | None = None
+    cost: CostProvenance | None = None
+
+    @model_validator(mode="after")
+    def validate_status(self) -> ExecutionMetadata:
+        if self.provider_status == "not_used" and (
+            self.models or self.usage is not None or self.cost is not None
+        ):
+            raise ValueError("not_used execution forbids provider metadata")
+        if self.provider_status == "used" and (not self.models or self.usage is None):
+            raise ValueError("used execution requires models and usage")
+        return self
 
 
 @dataclass(frozen=True)
@@ -89,9 +117,11 @@ def write_bound_bundle(
     artifact_id: str | None = None,
     allow_dirty: bool = False,
     collector: ProvenanceCollector | None = None,
+    execution: ExecutionMetadata | None = None,
 ) -> Path:
     """Bind the already-written output to a fail-closed Task 14 bundle."""
     source = collector or default_collector()
+    actual_execution = execution or ExecutionMetadata()
     code = source.code()
     if code.dirty_worktree and not allow_dirty:
         raise ValueError("release artifact requires a clean worktree")
@@ -139,7 +169,10 @@ def write_bound_bundle(
         runtime=source.runtime(),
         inputs=(config_ref,),
         outputs=outputs,
-        provider_status="not_used",
+        models=actual_execution.models,
+        usage=actual_execution.usage,
+        cost=actual_execution.cost,
+        provider_status=actual_execution.provider_status,
     )
     ArtifactBundleWriter(destination).write(
         manifest=manifest,
@@ -165,19 +198,20 @@ def publish_report_and_bundle(
     artifact_id: str | None = None,
     allow_dirty: bool = False,
     collector: ProvenanceCollector | None = None,
+    execution: ExecutionMetadata | None = None,
 ) -> Path:
     """Stage the report until its bundle has published successfully."""
     output.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        dir=output.parent, prefix=f".{output.name}.tmp-", suffix=".json"
+    staging = Path(
+        tempfile.mkdtemp(dir=output.parent, prefix=f".{output.name}.tmp-")
     )
-    os.close(descriptor)
-    temporary = Path(temporary_name)
-    published_bundle: Path | None = None
+    temporary = staging / "report.json"
+    staged_bundle = staging / "bundle"
+    destination_bundle = manifest_path_for(output, bundle_dir).parent
     try:
         render_report(temporary)
         report = cast(JsonValue, json.loads(temporary.read_text(encoding="utf-8")))
-        published_bundle = write_bound_bundle(
+        write_bound_bundle(
             output=output,
             report=report,
             config=config,
@@ -185,20 +219,89 @@ def publish_report_and_bundle(
             artifact_kind=artifact_kind,
             seed=seed,
             datasets=datasets,
-            bundle_dir=bundle_dir,
+            bundle_dir=staged_bundle,
             artifact_id=artifact_id,
             allow_dirty=allow_dirty,
             collector=collector,
+            execution=execution,
         )
-        os.replace(temporary, output)
-        return published_bundle
-    except Exception:
-        if temporary.exists():
-            temporary.unlink()
-        if published_bundle is not None and published_bundle.exists():
-            import shutil
+        _publish_staged_pair(
+            staged_primary=temporary,
+            staged_bundle=staged_bundle,
+            destination_primary=output,
+            destination_bundle=destination_bundle,
+        )
+        return destination_bundle
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
 
-            shutil.rmtree(published_bundle)
+
+def publish_dataset_and_bundle(
+    *,
+    output: Path,
+    build_dataset: Callable[[Path], JsonValue],
+    config: Mapping[str, JsonValue],
+    command_name: str,
+    seed: int,
+    datasets: tuple[DatasetProvenance, ...] = (),
+    bundle_dir: Path | None = None,
+    artifact_id: str | None = None,
+    allow_dirty: bool = False,
+    collector: ProvenanceCollector | None = None,
+    execution: ExecutionMetadata | None = None,
+) -> Path:
+    """Build and publish a dataset directory and its bound bundle as one pair."""
+    output.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(
+        tempfile.mkdtemp(dir=output.parent, prefix=f".{output.name}.tmp-")
+    )
+    staged_dataset = staging / "dataset"
+    staged_bundle = staging / "bundle"
+    destination_bundle = manifest_path_for(output, bundle_dir).parent
+    try:
+        report = build_dataset(staged_dataset)
+        write_bound_bundle(
+            output=output,
+            report=report,
+            config=config,
+            command_name=command_name,
+            artifact_kind="dataset_generation",
+            seed=seed,
+            datasets=datasets,
+            bundle_dir=staged_bundle,
+            artifact_id=artifact_id,
+            allow_dirty=allow_dirty,
+            collector=collector,
+            execution=execution,
+        )
+        _publish_staged_pair(
+            staged_primary=staged_dataset,
+            staged_bundle=staged_bundle,
+            destination_primary=output,
+            destination_bundle=destination_bundle,
+        )
+        return destination_bundle
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
+
+
+def _publish_staged_pair(
+    *,
+    staged_primary: Path,
+    staged_bundle: Path,
+    destination_primary: Path,
+    destination_bundle: Path,
+) -> None:
+    bundle_published = False
+    try:
+        _publish_no_replace(staged_bundle, destination_bundle)
+        bundle_published = True
+        _publish_no_replace(staged_primary, destination_primary)
+    except Exception:
+        if bundle_published and destination_bundle.exists():
+            shutil.rmtree(destination_bundle)
         raise
 
 

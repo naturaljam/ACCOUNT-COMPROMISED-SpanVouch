@@ -2,6 +2,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from spanvouch.contracts.artifacts import (
+    CostProvenance,
+    ModelProvenance,
+    UsageProvenance,
+)
 from spanvouch.contracts.diagnosis import (
     AbstainReason,
     DiagnoserKind,
@@ -9,10 +14,12 @@ from spanvouch.contracts.diagnosis import (
     DiagnosisStatus,
 )
 from spanvouch.contracts.trace import TraceIR
+from spanvouch.contracts.versioning import canonical_sha256
 from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.diagnosis.errors import DiagnosisError
 from spanvouch.evaluation.baselines import final_state_baseline, rule_only_baseline
 from spanvouch.evaluation.diagnosis_labels import DiagnosisGoldLabel, validate_dataset_join
+from spanvouch.evaluation.provenance import ExecutionMetadata
 from spanvouch.failure_types import FailureType
 from spanvouch.trace.diagnostic_view import TraceProjector
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
@@ -75,6 +82,60 @@ class DiagnosisEvaluationReport(BaseModel):
     metrics: DiagnosisMetrics
     usage: DiagnosisUsageSummary
     weak_baselines: tuple[WeakBaselineSummary, ...]
+
+    def execution_metadata(self) -> ExecutionMetadata:
+        provider_reports = tuple(
+            sample.report
+            for sample in self.samples
+            if sample.report is not None and sample.report.usage is not None
+        )
+        provider_failed = self.diagnoser is DiagnoserKind.DEEPSEEK and any(
+            sample.operational_error is not None for sample in self.samples
+        )
+        if not provider_reports:
+            return ExecutionMetadata(provider_status="failed" if provider_failed else "not_used")
+        models: dict[tuple[str, str, str], ModelProvenance] = {}
+        for report in provider_reports:
+            provenance = report.provenance
+            if not (
+                provenance.provider
+                and provenance.model
+                and provenance.prompt_sha256
+            ):
+                raise ValueError("provider report lacks model provenance")
+            identity = (
+                provenance.provider,
+                provenance.model,
+                provenance.prompt_sha256,
+            )
+            models[identity] = ModelProvenance(
+                provider=provenance.provider,
+                model=provenance.model,
+                endpoint_class="external-api",
+                generation_config_sha256=canonical_sha256({"model": provenance.model}),
+                prompt_sha256=provenance.prompt_sha256,
+            )
+        cost = (
+            CostProvenance(
+                currency="USD",
+                basis="estimated",
+                amount=self.usage.estimated_cost_usd,
+                pricing_ref="evaluation-report",
+            )
+            if self.usage.estimated_cost_usd is not None
+            else None
+        )
+        return ExecutionMetadata(
+            provider_status="failed" if provider_failed else "used",
+            models=tuple(models[key] for key in sorted(models)),
+            usage=UsageProvenance(
+                requests=self.usage.provider_sample_count,
+                input_tokens=self.usage.input_tokens,
+                output_tokens=self.usage.output_tokens,
+                total_tokens=self.usage.total_tokens,
+            ),
+            cost=cost,
+        )
 
 
 def _ratio(numerator: int, denominator: int) -> float | None:

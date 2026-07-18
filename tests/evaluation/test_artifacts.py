@@ -494,6 +494,64 @@ def test_secret_classifier_scans_opaque_atoms_before_semantic_acceptance(
         artifacts_module.ArtifactSecretClassifier().require_safe(value, path=path)
 
 
+@pytest.mark.parametrize(
+    "event",
+    (
+        {"metrics": {"samples": [{"candidate_id": _LOWERCASE_OPAQUE_TOKEN}]}},
+        {
+            "metrics": {
+                "samples": [
+                    {"report": {"evidence": {"observed_value": _LOWERCASE_OPAQUE_TOKEN}}}
+                ]
+            }
+        },
+    ),
+)
+def test_secret_classifier_does_not_lend_metrics_exemptions_to_events(
+    event: object,
+) -> None:
+    with pytest.raises(ValueError, match="unsafe artifact content"):
+        artifacts_module.ArtifactSecretClassifier().require_safe(
+            event, path=("structured_events",)
+        )
+
+
+@pytest.mark.parametrize(
+    "path",
+    (
+        ("metrics", "untrusted", "candidate_id"),
+        ("metrics", "untrusted", "report_sha256"),
+    ),
+)
+def test_secret_classifier_requires_exact_metrics_field_paths(
+    path: tuple[str, ...],
+) -> None:
+    with pytest.raises(ValueError, match="unsafe artifact content"):
+        artifacts_module.ArtifactSecretClassifier().require_safe(
+            (
+                _LOWERCASE_OPAQUE_TOKEN
+                if path[-1] == "candidate_id"
+                else "0123456789abcdef" * 4
+            ),
+            path=path,
+        )
+
+
+def test_bundle_writer_rejects_event_that_nests_a_metrics_shaped_bypass(
+    tmp_path: Path, artifact_manifest: object
+) -> None:
+    event = {"metrics": {"samples": [{"candidate_id": _LOWERCASE_OPAQUE_TOKEN}]}}
+    with pytest.raises(ValueError, match="unsafe artifact content"):
+        ArtifactBundleWriter(tmp_path / "bundle").write(
+            manifest=artifact_manifest,
+            config={"mode": "deterministic"},
+            metrics={"status": "complete"},
+            structured_events=(event,),
+            environment="python=3.12",
+            readme="# Reproduce\n",
+        )
+
+
 @pytest.mark.parametrize("surface", ("config_dataset", "metrics_status"))
 def test_bundle_writer_rejects_opaque_semantic_values_before_hashing(
     tmp_path: Path, artifact_manifest: object, surface: str

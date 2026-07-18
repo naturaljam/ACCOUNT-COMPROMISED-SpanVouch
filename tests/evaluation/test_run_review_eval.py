@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 import spanvouch.evaluation.run_review_eval as review_eval_module
+from spanvouch.contracts.artifacts import ArtifactManifest
 from spanvouch.contracts.diagnosis import ProviderUsage
 from spanvouch.contracts.verification import (
     VerificationInput,
@@ -16,6 +17,7 @@ from spanvouch.contracts.versioning import (
 )
 from spanvouch.diagnosis.errors import ProviderRequestError
 from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig, ProviderResponse
+from spanvouch.evaluation.provenance import manifest_path_for
 from spanvouch.evaluation.review_labels import load_review_candidates
 from spanvouch.evaluation.review_metrics import ReviewEvaluationReport
 from spanvouch.evaluation.run_review_eval import _run, main, write_report
@@ -54,6 +56,13 @@ def test_default_cli_detects_all_injected_defects_without_external_usage(
     assert report.metrics.operational_error_rate == 0.0
     assert report.usage.provider_sample_count == 0
     assert report.usage.total_tokens == 0
+    manifest = ArtifactManifest.model_validate_json(
+        manifest_path_for(output).read_text(encoding="utf-8")
+    )
+    assert manifest.provider_status == "not_used"
+    assert manifest.models == ()
+    assert manifest.usage is None
+    assert manifest.cost is None
 
 
 def test_write_report_excludes_gold_label_fields(tmp_path: Path) -> None:
@@ -224,6 +233,18 @@ def test_hybrid_cli_runs_only_allowlisted_candidates_and_reports_semantic_metric
     assert report.usage.total_tokens == 30
     assert report.usage.latency_p50_ms == 15.0
     assert report.usage.latency_p95_ms == 19.5
+    manifest = ArtifactManifest.model_validate_json(
+        manifest_path_for(output).read_text(encoding="utf-8")
+    )
+    assert manifest.provider_status == "used"
+    assert manifest.usage is not None
+    assert manifest.usage.requests == 2
+    assert manifest.usage.total_tokens == 30
+    assert len(manifest.models) == 2
+    assert {
+        (model.provider, model.model) for model in manifest.models
+    } == {("deepseek", "deepseek-test-model")}
+    assert manifest.cost is None
 
 
 async def test_semantic_invalid_output_is_not_counted_as_structured_success() -> None:
@@ -285,6 +306,7 @@ async def test_semantic_provider_error_is_recorded_as_operational() -> None:
         sample for sample in report.samples if sample.candidate_id == "clean-01--unmodified"
     )
     assert sample.semantic_operational_error == "ProviderRequestError"
+    assert report.execution_metadata().provider_status == "failed"
 
 
 async def test_semantic_programming_error_is_not_misreported_as_operational() -> None:

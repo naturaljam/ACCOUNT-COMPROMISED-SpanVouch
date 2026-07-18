@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from spanvouch.contracts.trace import TraceIR
+from spanvouch.contracts.verification import VerificationInput, VerifierReport
 from spanvouch.evaluation.generate_review_dataset import MutationKind
 from spanvouch.evaluation.review_labels import validate_review_dataset
 from spanvouch.evaluation.review_metrics import evaluate_review_candidates
@@ -12,6 +13,19 @@ from spanvouch.verification.invariant_engine import InvariantEngine
 
 DATASET = Path("evals/datasets/supportlab-review-v1")
 SOURCE_DATASET = Path("evals/datasets/supportlab-v1")
+
+
+class _CountingVerifier:
+    def __init__(self) -> None:
+        self._delegate = DeterministicVerifier(
+            InvariantEngine(supportlab_rules()), policy_version="review-policy-v1"
+        )
+        self.version_fingerprint = self._delegate.version_fingerprint
+        self.calls = 0
+
+    async def verify(self, input_: VerificationInput) -> VerifierReport:
+        self.calls += 1
+        return await self._delegate.verify(input_)
 
 
 def _traces() -> tuple[TraceIR, ...]:
@@ -142,16 +156,16 @@ async def test_direct_evaluation_rejects_misleading_family_denominators() -> Non
         for label in labels
     )
 
+    verifier = _CountingVerifier()
     with pytest.raises(ValueError, match="mutation family counts"):
         await evaluate_review_candidates(
             candidates=reshaped_candidates,
             labels=reshaped_labels,
             traces=_traces(),
-            verifier=DeterministicVerifier(
-                InvariantEngine(supportlab_rules()), policy_version="review-policy-v1"
-            ),
+            verifier=verifier,
             policy_version="review-policy-v1",
         )
+    assert verifier.calls == 0
 
 
 async def test_direct_evaluation_rejects_duplicate_candidate_and_label_ids() -> None:
@@ -174,16 +188,16 @@ async def test_direct_evaluation_rejects_duplicate_candidate_and_label_ids() -> 
     assert len(duplicated_candidates) == 36
     assert len({candidate.candidate_id for candidate in duplicated_candidates}) == 35
     assert len(duplicated_labels) == 36
+    verifier = _CountingVerifier()
     with pytest.raises(ValueError, match="duplicate review candidate_id"):
         await evaluate_review_candidates(
             candidates=duplicated_candidates,
             labels=duplicated_labels,
             traces=_traces(),
-            verifier=DeterministicVerifier(
-                InvariantEngine(supportlab_rules()), policy_version="review-policy-v1"
-            ),
+            verifier=verifier,
             policy_version="review-policy-v1",
         )
+    assert verifier.calls == 0
 
 
 async def test_direct_evaluation_rejects_swapped_unsupported_source_ids() -> None:
@@ -219,16 +233,16 @@ async def test_direct_evaluation_rejects_swapped_unsupported_source_ids() -> Non
 
     assert len(reshaped_candidates) == 36
     assert len({candidate.candidate_id for candidate in reshaped_candidates}) == 36
+    verifier = _CountingVerifier()
     with pytest.raises(ValueError, match="unsupported source run IDs"):
         await evaluate_review_candidates(
             candidates=tuple(reshaped_candidates),
             labels=reshaped_labels,
             traces=_traces(),
-            verifier=DeterministicVerifier(
-                InvariantEngine(supportlab_rules()), policy_version="review-policy-v1"
-            ),
+            verifier=verifier,
             policy_version="review-policy-v1",
         )
+    assert verifier.calls == 0
 
 
 async def test_direct_evaluation_rejects_report_bound_to_another_trace_id() -> None:
@@ -252,13 +266,13 @@ async def test_direct_evaluation_rejects_report_bound_to_another_trace_id() -> N
         for candidate in candidates
     )
 
+    verifier = _CountingVerifier()
     with pytest.raises(ValueError, match="trace_id"):
         await evaluate_review_candidates(
             candidates=reshaped,
             labels=labels,
             traces=traces,
-            verifier=DeterministicVerifier(
-                InvariantEngine(supportlab_rules()), policy_version="review-policy-v1"
-            ),
+            verifier=verifier,
             policy_version="review-policy-v1",
         )
+    assert verifier.calls == 0

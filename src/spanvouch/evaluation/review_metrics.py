@@ -5,6 +5,7 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from spanvouch.contracts.artifacts import CostProvenance, ModelProvenance, UsageProvenance
 from spanvouch.contracts.trace import TraceIR
 from spanvouch.contracts.verification import (
     FindingCode,
@@ -12,16 +13,18 @@ from spanvouch.contracts.verification import (
     VerifierReport,
     VerifierVerdict,
 )
+from spanvouch.contracts.versioning import canonical_sha256
 from spanvouch.diagnosis.errors import ProviderError
 from spanvouch.evaluation.generate_review_dataset import (
-    EXPECTED_UNSUPPORTED_SOURCE_RUN_IDS,
     MutationKind,
     ReviewCandidate,
 )
+from spanvouch.evaluation.provenance import ExecutionMetadata
 from spanvouch.evaluation.provider_view import build_verifier_provider_view
 from spanvouch.evaluation.review_labels import (
     ReviewGoldLabel,
-    validate_review_cohort,
+    validate_review_candidate_cohort,
+    validate_review_join,
 )
 
 
@@ -84,6 +87,53 @@ class ReviewEvaluationReport(BaseModel):
     verifier_version: str = Field(min_length=1)
     policy_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     usage: ReviewUsageSummary
+
+    def execution_metadata(self) -> ExecutionMetadata:
+        semantic_reports = tuple(
+            sample.semantic_verifier_report
+            for sample in self.samples
+            if sample.semantic_verifier_report is not None
+            and sample.semantic_verifier_report.usage is not None
+        )
+        provider_failed = any(
+            sample.semantic_operational_error is not None for sample in self.samples
+        )
+        if not semantic_reports:
+            return ExecutionMetadata(provider_status="failed" if provider_failed else "not_used")
+        models: dict[tuple[str, str, str], ModelProvenance] = {}
+        for report in semantic_reports:
+            provenance = report.provenance
+            if not (provenance.provider and provenance.model and provenance.prompt_sha256):
+                raise ValueError("semantic report lacks model provenance")
+            identity = (provenance.provider, provenance.model, provenance.prompt_sha256)
+            models[identity] = ModelProvenance(
+                provider=provenance.provider,
+                model=provenance.model,
+                endpoint_class="external-api",
+                generation_config_sha256=canonical_sha256({"model": provenance.model}),
+                prompt_sha256=provenance.prompt_sha256,
+            )
+        cost = (
+            CostProvenance(
+                currency="USD",
+                basis="estimated",
+                amount=self.usage.estimated_cost_usd,
+                pricing_ref="evaluation-report",
+            )
+            if self.usage.estimated_cost_usd is not None
+            else None
+        )
+        return ExecutionMetadata(
+            provider_status="failed" if provider_failed else "used",
+            models=tuple(models[key] for key in sorted(models)),
+            usage=UsageProvenance(
+                requests=self.usage.provider_sample_count,
+                input_tokens=self.usage.input_tokens,
+                output_tokens=self.usage.output_tokens,
+                total_tokens=self.usage.total_tokens,
+            ),
+            cost=cost,
+        )
 
 
 def _ratio(numerator: int, denominator: int) -> float:
@@ -269,13 +319,8 @@ async def evaluate_review_candidates(
     source_run_ids = tuple(trace.run_id for trace in traces)
     if len(source_run_ids) != len(set(source_run_ids)):
         raise ValueError("duplicate Phase 2 source run_id")
-    unsupported_sources = frozenset(
-        candidate.source_run_id
-        for candidate in candidates
-        if candidate.mutation_kind is MutationKind.UNSUPPORTED_SCOPE
-    )
-    if unsupported_sources != EXPECTED_UNSUPPORTED_SOURCE_RUN_IDS:
-        raise ValueError("review unsupported source run IDs do not match frozen contract")
+    source_trace_ids = {trace.run_id: trace.trace_id for trace in traces}
+    validate_review_candidate_cohort(candidates, source_trace_ids)
     selected_ids = set(semantic_candidate_ids)
     if len(selected_ids) != len(semantic_candidate_ids):
         raise ValueError("duplicate semantic candidate_id")
@@ -325,7 +370,7 @@ async def evaluate_review_candidates(
     ordered_samples = tuple(samples)
     # Label identity and expected findings remain evaluator-only until every
     # verifier call has returned.
-    validate_review_cohort(candidates, labels, {trace.run_id: trace.trace_id for trace in traces})
+    validate_review_join(candidates, labels)
     metrics = _compute_metrics(candidates, labels, ordered_samples)
     valid_count = sum(
         candidate.mutation_kind is MutationKind.UNMODIFIED for candidate in candidates

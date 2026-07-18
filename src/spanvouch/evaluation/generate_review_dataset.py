@@ -8,7 +8,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from spanvouch.contracts.diagnosis import (
     ClaimStage,
@@ -28,8 +28,8 @@ from spanvouch.evaluation.provenance import (
     ProvenanceCollector,
     dataset_provenance,
     default_collector,
+    publish_dataset_and_bundle,
     require_release_eligible,
-    write_bound_bundle,
 )
 from spanvouch.labs.supportlab.invariants import supportlab_rules
 from spanvouch.review.policy import DEFAULT_REVIEW_POLICY_VERSION
@@ -435,16 +435,20 @@ def main(argv: Sequence[str] | None = None, *, collector: ProvenanceCollector | 
     provenance = collector or default_collector()
     try:
         require_release_eligible(provenance, allow_dirty=arguments.allow_dirty_artifact)
-        manifest = asyncio.run(
-            generate_review_dataset(
-                arguments.output,
-                arguments.seed,
-                source_dataset=arguments.source_dataset_dir,
+
+        def build(staged: Path) -> JsonValue:
+            manifest = asyncio.run(
+                generate_review_dataset(
+                    staged,
+                    arguments.seed,
+                    source_dataset=arguments.source_dataset_dir,
+                )
             )
-        )
-        write_bound_bundle(
+            return manifest.model_dump(mode="json")
+
+        publish_dataset_and_bundle(
             output=arguments.output,
-            report=manifest.model_dump(mode="json"),
+            build_dataset=build,
             config={
                 "schema_version": "1.0",
                 "dataset": arguments.output.as_posix(),
@@ -455,7 +459,6 @@ def main(argv: Sequence[str] | None = None, *, collector: ProvenanceCollector | 
                 "allow_live_api": False,
             },
             command_name="spanvouch dataset generate-review",
-            artifact_kind="dataset_generation",
             seed=arguments.seed,
             datasets=(
                 dataset_provenance(

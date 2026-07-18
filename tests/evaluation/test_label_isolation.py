@@ -1,8 +1,6 @@
 import json
 from pathlib import Path
 
-import pytest
-
 from spanvouch.contracts.diagnosis import ProviderUsage
 from spanvouch.contracts.trace import TraceIR
 from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig, ProviderResponse
@@ -38,20 +36,23 @@ def test_mutation_and_expected_sentinels_never_enter_provider_view() -> None:
 
 
 async def test_captured_provider_messages_exclude_evaluator_only_sentinels(
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     dataset = Path("evals/datasets/supportlab-review-v1")
     source = Path("evals/datasets/supportlab-v1")
-    candidate = load_review_candidates(dataset / "review-candidates-v1.jsonl")[0]
-    label = next(
-        item
-        for item in load_review_labels(dataset / "review-labels-v1.jsonl")
-        if item.candidate_id == candidate.candidate_id
+    candidates = load_review_candidates(dataset / "review-candidates-v1.jsonl")
+    labels = load_review_labels(dataset / "review-labels-v1.jsonl")
+    sentinel_label = labels[0].model_copy(
+        update={
+            "expected_finding_codes": ("GOLD_SENTINEL_FINDING",),
+            "label": "GOLD_SENTINEL_LABEL",
+            "split": "GOLD_SENTINEL_SPLIT",
+        }
     )
-    trace = next(
+    labels = (sentinel_label, *labels[1:])
+    traces = tuple(
         TraceIR.model_validate_json(line)
         for line in (source / "traces.jsonl").read_text(encoding="utf-8").splitlines()
-        if line and TraceIR.model_validate_json(line).run_id == candidate.source_run_id
+        if line
     )
 
     class CaptureProvider:
@@ -62,6 +63,7 @@ async def test_captured_provider_messages_exclude_evaluator_only_sentinels(
             self, messages: tuple[ChatMessage, ...], config: GenerationConfig
         ) -> ProviderResponse:
             self.calls.append(messages)
+            request_id = f"fixed-response-{len(self.calls)}"
             return ProviderResponse(
                 content=json.dumps(
                     {
@@ -73,28 +75,22 @@ async def test_captured_provider_messages_exclude_evaluator_only_sentinels(
                     }
                 ),
                 model=config.model,
-                response_id="fixed-response",
+                response_id=request_id,
                 finish_reason="stop",
                 usage=ProviderUsage(
                     input_tokens=1,
                     output_tokens=1,
                     total_tokens=2,
                     latency_ms=1.0,
-                    request_id="fixed-request",
+                    request_id=request_id,
                 ),
             )
 
     captured = CaptureProvider()
-    monkeypatch.setattr(
-        "spanvouch.evaluation.review_metrics.validate_review_cohort", lambda *_: None
-    )
-    monkeypatch.setattr(
-        "spanvouch.evaluation.review_metrics.EXPECTED_UNSUPPORTED_SOURCE_RUN_IDS", frozenset()
-    )
-    await evaluate_review_candidates(
-        candidates=(candidate,),
-        labels=(label,),
-        traces=(trace,),
+    report = await evaluate_review_candidates(
+        candidates=candidates,
+        labels=labels,
+        traces=traces,
         verifier=DeterministicVerifier(
             InvariantEngine(supportlab_rules()), policy_version="supportlab-review-policy-v1"
         ),
@@ -102,10 +98,19 @@ async def test_captured_provider_messages_exclude_evaluator_only_sentinels(
         semantic_verifier=SemanticVerifier(
             captured, provider_id="test-provider", model="test-model"
         ),
-        semantic_candidate_ids=(candidate.candidate_id,),
+        semantic_candidate_ids=tuple(candidate.candidate_id for candidate in candidates),
     )
 
-    assert len(captured.calls) == 1
-    serialized = "\n".join(message.content for message in captured.calls[0])
-    for sentinel in ("GOLD_SENTINEL_MUTATION", "GOLD_SENTINEL_FINDING", "split"):
+    assert len(captured.calls) == 34
+    serialized = "\n".join(
+        message.content for messages in captured.calls for message in messages
+    )
+    persisted = report.model_dump_json()
+    for sentinel in (
+        "GOLD_SENTINEL_MUTATION",
+        "GOLD_SENTINEL_FINDING",
+        "GOLD_SENTINEL_LABEL",
+        "GOLD_SENTINEL_SPLIT",
+    ):
         assert sentinel not in serialized
+        assert sentinel not in persisted

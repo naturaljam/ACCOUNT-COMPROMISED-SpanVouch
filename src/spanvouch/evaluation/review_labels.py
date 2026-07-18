@@ -138,7 +138,18 @@ def validate_review_cohort(
     labels: tuple[ReviewGoldLabel, ...],
     source_trace_ids: Mapping[str, str],
 ) -> None:
+    validate_review_candidate_cohort(candidates, source_trace_ids)
     validate_review_join(candidates, labels)
+
+
+def validate_review_candidate_cohort(
+    candidates: tuple[ReviewCandidate, ...],
+    source_trace_ids: Mapping[str, str],
+) -> None:
+    """Validate the complete provider-visible cohort without consulting gold labels."""
+    candidate_ids = tuple(candidate.candidate_id for candidate in candidates)
+    if len(candidate_ids) != len(set(candidate_ids)):
+        raise ValueError("duplicate review candidate_id")
     if frozenset(source_trace_ids) != EXPECTED_SOURCE_RUN_IDS:
         raise ValueError("Phase 2 source run IDs do not match frozen 20-run contract")
     unknown = sorted(

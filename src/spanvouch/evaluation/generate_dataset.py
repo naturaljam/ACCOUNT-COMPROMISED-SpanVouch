@@ -6,15 +6,15 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, JsonValue
 
 from spanvouch.contracts.trace import TraceIR, TraceSpan
 from spanvouch.contracts.versioning import canonical_json
 from spanvouch.evaluation.provenance import (
     ProvenanceCollector,
     default_collector,
+    publish_dataset_and_bundle,
     require_release_eligible,
-    write_bound_bundle,
 )
 from spanvouch.labs.supportlab.decision import ScriptedDecisionModel
 from spanvouch.labs.supportlab.graph import run_support_scenario
@@ -178,14 +178,18 @@ def main(argv: Sequence[str] | None = None, *, collector: ProvenanceCollector | 
     provenance = collector or default_collector()
     try:
         require_release_eligible(provenance, allow_dirty=arguments.allow_dirty_artifact)
-        manifest = asyncio.run(generate_dataset(arguments.output, arguments.seed))
-        # The CLI report is canonical so the bound bundle can preserve it byte-for-byte.
-        (arguments.output / "manifest.json").write_text(
-            canonical_json(manifest) + "\n", encoding="utf-8", newline="\n"
-        )
-        write_bound_bundle(
+
+        def build(staged: Path) -> JsonValue:
+            manifest = asyncio.run(generate_dataset(staged, arguments.seed))
+            # The CLI report is canonical so the bound bundle preserves it byte-for-byte.
+            (staged / "manifest.json").write_text(
+                canonical_json(manifest) + "\n", encoding="utf-8", newline="\n"
+            )
+            return manifest.model_dump(mode="json")
+
+        publish_dataset_and_bundle(
             output=arguments.output,
-            report=manifest.model_dump(mode="json"),
+            build_dataset=build,
             config={
                 "schema_version": "1.0",
                 "dataset": arguments.output.as_posix(),
@@ -195,7 +199,6 @@ def main(argv: Sequence[str] | None = None, *, collector: ProvenanceCollector | 
                 "allow_live_api": False,
             },
             command_name="spanvouch dataset generate",
-            artifact_kind="dataset_generation",
             seed=arguments.seed,
             bundle_dir=arguments.bundle_dir,
             artifact_id=arguments.artifact_id,

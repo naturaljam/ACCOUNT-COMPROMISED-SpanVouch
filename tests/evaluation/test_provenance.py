@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from spanvouch.evaluation.provenance import (
     LocalProvenanceCollector,
     dataset_provenance,
     manifest_path_for,
+    publish_dataset_and_bundle,
     publish_report_and_bundle,
     write_bound_bundle,
 )
@@ -106,20 +108,19 @@ def test_publish_removes_just_published_bundle_when_report_replace_fails(
     output = tmp_path / "report.json"
     bundle = tmp_path / "report.json.bundle"
 
-    def publish(**_: object) -> Path:
-        bundle.mkdir()
-        return bundle
+    from spanvouch.evaluation.artifacts import _publish_no_replace as real_publish
 
-    monkeypatch.setattr("spanvouch.evaluation.provenance.write_bound_bundle", publish)
-    monkeypatch.setattr(
-        "spanvouch.evaluation.provenance.os.replace",
-        lambda *_: (_ for _ in ()).throw(OSError("replace failure")),
-    )
+    def fail_report(source: Path, destination: Path) -> None:
+        if destination == output:
+            raise OSError("replace failure")
+        real_publish(source, destination)
+
+    monkeypatch.setattr("spanvouch.evaluation.provenance._publish_no_replace", fail_report)
 
     with pytest.raises(OSError, match="replace failure"):
         publish_report_and_bundle(
             output=output,
-            render_report=lambda path: path.write_text('{"status":"complete"}\n'),
+            render_report=lambda path: path.write_bytes(b'{"status":"complete"}\n'),
             config={"schema_version": "1.0", "seed": 1, "allow_live_api": False},
             command_name="spanvouch evaluate review",
             artifact_kind="evaluation_bundle",
@@ -185,3 +186,133 @@ def test_dataset_generator_commands_publish_bound_bundles(tmp_path: Path) -> Non
     assert (review / "manifest.json").read_bytes() == (
         manifest_path_for(review).parent / "metrics.json"
     ).read_bytes()
+
+
+def test_report_publication_never_overwrites_existing_output(tmp_path: Path) -> None:
+    output = tmp_path / "report.json"
+    original = b'{"old":true}\n'
+    output.write_bytes(original)
+
+    with pytest.raises(FileExistsError):
+        publish_report_and_bundle(
+            output=output,
+            render_report=lambda path: path.write_text('{"status":"complete"}\n'),
+            config={"schema_version": "1.0", "seed": 1, "allow_live_api": False},
+            command_name="spanvouch evaluate review",
+            artifact_kind="evaluation_bundle",
+            seed=1,
+            collector=FixedCollector(dirty=False),
+        )
+
+    assert output.read_bytes() == original
+    assert not manifest_path_for(output).parent.exists()
+    assert not tuple(tmp_path.glob(".*.tmp-*"))
+
+
+def test_dataset_pair_never_overwrites_existing_bundle(tmp_path: Path) -> None:
+    output = tmp_path / "dataset"
+    bundle = manifest_path_for(output).parent
+    bundle.mkdir()
+    marker = bundle / "keep.txt"
+    marker.write_bytes(b"old bundle\n")
+
+    def build(staged: Path) -> object:
+        staged.mkdir()
+        (staged / "payload.jsonl").write_bytes(b"{}\n")
+        return {"status": "complete"}
+
+    with pytest.raises(FileExistsError):
+        publish_dataset_and_bundle(
+            output=output,
+            build_dataset=build,
+            config={"schema_version": "1.0", "seed": 1, "allow_live_api": False},
+            command_name="spanvouch dataset generate",
+            seed=1,
+            collector=FixedCollector(dirty=False),
+        )
+
+    assert not output.exists()
+    assert marker.read_bytes() == b"old bundle\n"
+    assert not tuple(tmp_path.glob(".*.tmp-*"))
+
+
+def test_dataset_pair_race_has_one_complete_winner(tmp_path: Path) -> None:
+    output = tmp_path / "dataset"
+
+    def publish(index: int) -> str:
+        def build(staged: Path) -> object:
+            staged.mkdir()
+            (staged / "payload.jsonl").write_bytes(f"{index}\n".encode())
+            return {"index": index, "status": "complete"}
+
+        try:
+            publish_dataset_and_bundle(
+                output=output,
+                build_dataset=build,
+                config={"schema_version": "1.0", "seed": index, "allow_live_api": False},
+                command_name="spanvouch dataset generate",
+                seed=index,
+                collector=FixedCollector(dirty=False),
+            )
+        except FileExistsError:
+            return "lost"
+        return "won"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = tuple(executor.map(publish, (1, 2)))
+
+    assert sorted(results) == ["lost", "won"]
+    winner = int((output / "payload.jsonl").read_text(encoding="utf-8"))
+    metrics = (manifest_path_for(output).parent / "metrics.json").read_text(encoding="utf-8")
+    assert f'"index":{winner}' in metrics
+    assert not tuple(tmp_path.glob(".*.tmp-*"))
+
+
+def test_report_pair_race_has_one_winner_and_never_overwrites(tmp_path: Path) -> None:
+    output = tmp_path / "report.json"
+
+    def publish(index: int) -> str:
+        try:
+            publish_report_and_bundle(
+                output=output,
+                render_report=lambda path: path.write_bytes(
+                    f'{{"index":{index},"status":"complete"}}\n'.encode()
+                ),
+                config={"schema_version": "1.0", "seed": index, "allow_live_api": False},
+                command_name="spanvouch evaluate review",
+                artifact_kind="evaluation_bundle",
+                seed=index,
+                collector=FixedCollector(dirty=False),
+            )
+        except FileExistsError:
+            return "lost"
+        return "won"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = tuple(executor.map(publish, (1, 2)))
+
+    assert sorted(results) == ["lost", "won"]
+    assert output.read_bytes() == (manifest_path_for(output).parent / "metrics.json").read_bytes()
+    assert not tuple(tmp_path.glob(".*.tmp-*"))
+
+
+def test_dataset_pair_rolls_back_bundle_when_output_already_exists(tmp_path: Path) -> None:
+    output = tmp_path / "dataset"
+    output.mkdir()
+    (output / "keep.txt").write_text("old\n")
+
+    with pytest.raises(FileExistsError):
+        publish_dataset_and_bundle(
+            output=output,
+            build_dataset=lambda staged: (
+                (staged.mkdir(), {"status": "complete"})[1]
+            ),
+            config={"schema_version": "1.0", "seed": 1, "allow_live_api": False},
+            command_name="spanvouch dataset generate",
+            seed=1,
+            collector=FixedCollector(dirty=False),
+        )
+
+    assert (output / "keep.txt").read_text() == "old\n"
+    assert not manifest_path_for(output).parent.exists()
+    assert not tuple(tmp_path.glob(".*.tmp-*"))
