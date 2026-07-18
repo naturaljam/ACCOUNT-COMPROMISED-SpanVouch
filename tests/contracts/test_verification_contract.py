@@ -6,9 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from spanvouch.contracts.verification import VerifierReport
-from spanvouch.contracts.versioning import canonical_bytes
+from spanvouch.contracts.verification import VerificationInput, VerifierReport
+from spanvouch.contracts.versioning import canonical_bytes, canonical_sha256
 from spanvouch.verification.protocols import Verifier
+from tests.review.factories import make_diagnosis_report, make_review_snapshot
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -53,6 +54,87 @@ def test_verified_report_rejects_evidence_gaps() -> None:
     )
     with pytest.raises(ValueError, match="verified verdict forbids evidence gaps"):
         VerifierReport(**payload)
+
+
+def test_verification_input_binds_report_hash() -> None:
+    report = make_diagnosis_report()
+    request = VerificationInput(
+        snapshot=make_review_snapshot(),
+        report=report,
+        report_sha256=canonical_sha256(report),
+    )
+    assert request.report_sha256 == canonical_sha256(request.report)
+
+
+def test_verification_input_rejects_well_formed_forged_report_hash() -> None:
+    report = make_diagnosis_report()
+    with pytest.raises(ValueError, match="report_sha256 does not match report"):
+        VerificationInput(
+            snapshot=make_review_snapshot(),
+            report=report,
+            report_sha256="0" * 64,
+        )
+
+
+def _operational_finding() -> dict[str, object]:
+    return {
+        "finding_id": "provider-error-1",
+        "code": "provider_operational_error",
+        "severity": "operational",
+        "message": "provider unavailable",
+        "revisable": False,
+    }
+
+
+def _operational_metadata() -> dict[str, object]:
+    return {
+        "code": "provider_unavailable",
+        "message": "provider unavailable",
+        "retryable": True,
+    }
+
+
+@pytest.mark.parametrize(
+    ("findings", "metadata"),
+    (((_operational_finding(),), None), ((), _operational_metadata())),
+)
+def test_operational_finding_and_metadata_must_appear_together(
+    findings: tuple[dict[str, object], ...],
+    metadata: dict[str, object] | None,
+) -> None:
+    payload = _base()
+    payload.update(
+        verdict="review_required",
+        findings=findings,
+        operational_error=metadata,
+    )
+    with pytest.raises(
+        ValueError,
+        match="provider operational finding and operational_error must appear together",
+    ):
+        VerifierReport(**payload)
+
+
+@pytest.mark.parametrize("verdict", ("verified", "needs_evidence"))
+def test_operational_state_requires_review_required_verdict(verdict: str) -> None:
+    payload = _base()
+    payload.update(
+        verdict=verdict,
+        findings=(_operational_finding(),),
+        operational_error=_operational_metadata(),
+    )
+    with pytest.raises(ValueError, match="operational state requires review_required verdict"):
+        VerifierReport(**payload)
+
+
+def test_review_required_operational_state_is_valid() -> None:
+    payload = _base()
+    payload.update(
+        verdict="review_required",
+        findings=(_operational_finding(),),
+        operational_error=_operational_metadata(),
+    )
+    assert VerifierReport(**payload).operational_error is not None
 
 
 def test_checked_in_schema_and_fixture_match_contract() -> None:

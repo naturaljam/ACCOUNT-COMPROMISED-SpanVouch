@@ -156,6 +156,8 @@ class VerificationInput(ContractModel):
 
     @model_validator(mode="after")
     def validate_binding(self) -> Self:
+        if self.report_sha256 != canonical_sha256(self.report):
+            raise ValueError("report_sha256 does not match report")
         if self.report.trace_id != self.snapshot.trace_id:
             raise ValueError("report trace_id must match snapshot")
         if self.report.run_id != self.snapshot.run_id:
@@ -198,9 +200,14 @@ class VerifierReport(ContractRoot):
                 raise ValueError("verified verdict forbids hard findings")
             if self.evidence_gaps:
                 raise ValueError("verified verdict forbids evidence gaps")
-        if self.operational_error is not None and not any(
+        has_operational_finding = any(
             finding.code is FindingCode.PROVIDER_OPERATIONAL_ERROR
             for finding in self.findings
-        ):
-            raise ValueError("operational_error requires a provider operational finding")
+        )
+        if has_operational_finding != (self.operational_error is not None):
+            raise ValueError(
+                "provider operational finding and operational_error must appear together"
+            )
+        if has_operational_finding and self.verdict is not VerifierVerdict.REVIEW_REQUIRED:
+            raise ValueError("operational state requires review_required verdict")
         return self

@@ -280,8 +280,9 @@ async def test_report_fingerprint_mismatch_fails_before_prompt_or_provider(
     finish_reason: str,
 ) -> None:
     provider = RecordingProvider(content, finish_reason=finish_reason)
+    forged_input = _input().model_copy(update={"report_sha256": "0" * 64})
 
-    report = await SemanticVerifier(provider).verify(_input(report_sha256="0" * 64))
+    report = await SemanticVerifier(provider).verify(forged_input)
 
     assert report.verdict is VerifierVerdict.REVIEW_REQUIRED
     assert tuple(finding.code for finding in report.findings) == (

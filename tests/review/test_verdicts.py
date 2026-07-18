@@ -152,7 +152,7 @@ def test_semantic_provider_operational_error_requires_review() -> None:
     deterministic = make_verifier_report()
     semantic = make_verifier_report(
         kind=VerifierKind.SEMANTIC,
-        verdict=VerifierVerdict.NEEDS_EVIDENCE,
+        verdict=VerifierVerdict.REVIEW_REQUIRED,
         findings=(
             make_finding(
                 code=FindingCode.PROVIDER_OPERATIONAL_ERROR,
@@ -168,6 +168,29 @@ def test_semantic_provider_operational_error_requires_review() -> None:
     )
 
     merged = merge_verifier_reports(deterministic, semantic)
+
+    assert merged.verdict is VerifierVerdict.REVIEW_REQUIRED
+
+
+def test_deterministic_only_operational_error_cannot_keep_verified() -> None:
+    operational = make_verifier_report(
+        verdict=VerifierVerdict.REVIEW_REQUIRED,
+        findings=(
+            make_finding(
+                code=FindingCode.PROVIDER_OPERATIONAL_ERROR,
+                severity=FindingSeverity.OPERATIONAL,
+                revisable=False,
+            ),
+        ),
+        operational_error=OperationalErrorMetadata(
+            code="provider_unavailable",
+            message="The provider is unavailable.",
+            retryable=True,
+        ),
+    )
+    forged = operational.model_copy(update={"verdict": VerifierVerdict.VERIFIED})
+
+    merged = merge_verifier_reports(forged, None)
 
     assert merged.verdict is VerifierVerdict.REVIEW_REQUIRED
 
@@ -218,6 +241,11 @@ def test_merge_preserves_reports_and_orders_findings_stably() -> None:
                 severity=FindingSeverity.HARD,
                 revisable=False,
             ),
+        ),
+        operational_error=OperationalErrorMetadata(
+            code="provider_unavailable",
+            message="The provider is unavailable.",
+            retryable=True,
         ),
     )
     deterministic_dump = deterministic.model_dump(mode="json")

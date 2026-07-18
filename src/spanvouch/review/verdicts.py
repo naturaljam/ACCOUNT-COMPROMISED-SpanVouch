@@ -82,6 +82,8 @@ def _composite_verdict(
     semantic: VerifierReport | None,
 ) -> VerifierVerdict:
     deterministic_verdict = _deterministic_verdict(deterministic)
+    if _has_provider_operational_error(deterministic):
+        return VerifierVerdict.REVIEW_REQUIRED
     if semantic is None:
         return deterministic_verdict
     if _has_provider_operational_error(semantic):
