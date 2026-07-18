@@ -29,6 +29,12 @@ class RecursiveModel(BaseModel):
     child: "RecursiveModel | None" = None
 
 
+class UnrelatedDumpErrorModel(BaseModel):
+    def model_dump(self, **kwargs: object) -> dict[str, object]:
+        del kwargs
+        raise ValueError("Circular reference detected by unrelated custom serializer")
+
+
 def test_canonical_bytes_are_utf8_sorted_compact_and_utc_z() -> None:
     model = ExampleContract(
         happened_at=datetime(2026, 7, 18, 12, 0, tzinfo=UTC),
@@ -186,6 +192,16 @@ def test_cyclic_base_model_raises_typed_error() -> None:
         canonical_bytes(model)
 
     assert isinstance(captured.value.__cause__, ValueError)
+
+
+def test_unrelated_model_dump_value_error_propagates_unchanged() -> None:
+    with pytest.raises(
+        ValueError,
+        match="Circular reference detected by unrelated custom serializer",
+    ) as captured:
+        canonical_bytes(UnrelatedDumpErrorModel())
+
+    assert type(captured.value) is ValueError
 
 
 def test_shared_reference_without_cycle_remains_valid() -> None:

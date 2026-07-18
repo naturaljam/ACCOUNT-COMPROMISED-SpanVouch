@@ -8,6 +8,8 @@ from typing import cast
 
 from pydantic import BaseModel, ConfigDict, JsonValue
 
+_PYDANTIC_CIRCULAR_REFERENCE_ERROR = "Circular reference detected (id repeated)"
+
 
 class ContractError(ValueError):
     """Base error for contract compatibility and canonicalization failures."""
@@ -53,7 +55,7 @@ def _canonical_value(value: object, active_container_ids: set[int]) -> JsonValue
             try:
                 dumped = value.model_dump(mode="python")
             except ValueError as error:
-                if not str(error).startswith("Circular reference detected"):
+                if str(error) != _PYDANTIC_CIRCULAR_REFERENCE_ERROR:
                     raise
                 raise ContractError("cyclic references are not canonical JSON") from error
             return _canonical_value(
