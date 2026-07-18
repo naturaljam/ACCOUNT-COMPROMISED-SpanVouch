@@ -30,6 +30,7 @@ from spanvouch.diagnosis.models import (
     ProviderUsage,
 )
 from spanvouch.failure_types import SUPPORTED_DIAGNOSIS_FAILURE_TYPES, FailureType
+from spanvouch.trace.diagnostic_view import sanitize_diagnostic_trace_view
 
 SHA256_PATTERN = r"^[0-9a-f]{64}$"
 
@@ -272,7 +273,7 @@ class ReviewInputSnapshot(ReviewModel):
             raise ValueError("view_json must be valid JSON") from error
         if self.view_json != canonical_json(parsed):
             raise ValueError("view_json must use canonical JSON")
-        view = DiagnosticTraceView.model_validate(parsed)
+        view = sanitize_diagnostic_trace_view(DiagnosticTraceView.model_validate(parsed))
         sanitized_view_json = canonical_json(view)
         if self.view_json != sanitized_view_json:
             raise ValueError(

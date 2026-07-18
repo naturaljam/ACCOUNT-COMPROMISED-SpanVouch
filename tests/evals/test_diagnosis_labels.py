@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from spanvouch.contracts.trace import TraceIR
-from spanvouch.diagnosis.models import DiagnosisStatus
+from spanvouch.diagnosis.models import DiagnosisStatus, EvidenceSelector
 from spanvouch.evals.diagnosis_labels import (
     DiagnosisDatasetManifest,
     build_diagnosis_manifest,
@@ -45,6 +45,43 @@ def test_gold_evidence_selectors_resolve_to_real_spans() -> None:
         span_ids = {span.span_id for span in traces[label.run_id].spans}
         assert set(label.acceptable_critical_span_ids) <= span_ids
         assert {selector.span_id for selector in label.acceptable_evidence} <= span_ids
+
+
+def test_dataset_join_rejects_run_id_set_mismatch() -> None:
+    traces = load_traces()
+    labels = load_diagnosis_labels(DATASET_DIR / "diagnosis-labels-v1.jsonl")
+
+    with pytest.raises(ValueError, match="diagnosis label join mismatch"):
+        validate_dataset_join(traces[:-1], labels)
+
+
+def test_dataset_join_rejects_unknown_critical_span_and_evidence_selector() -> None:
+    traces = load_traces()
+    labels = load_diagnosis_labels(DATASET_DIR / "diagnosis-labels-v1.jsonl")
+    diagnosed_index = next(
+        index
+        for index, label in enumerate(labels)
+        if label.expected_status is DiagnosisStatus.DIAGNOSED
+    )
+    diagnosed = labels[diagnosed_index]
+
+    unknown_span_labels = list(labels)
+    unknown_span_labels[diagnosed_index] = diagnosed.model_copy(
+        update={"acceptable_critical_span_ids": ("missing-span",)}
+    )
+    with pytest.raises(ValueError, match="unknown critical span"):
+        validate_dataset_join(traces, tuple(unknown_span_labels))
+
+    unknown_selector_labels = list(labels)
+    unknown_selector_labels[diagnosed_index] = diagnosed.model_copy(
+        update={
+            "acceptable_evidence": (
+                EvidenceSelector(span_id="missing-span", field_path="name"),
+            )
+        }
+    )
+    with pytest.raises(ValueError, match="unknown evidence selector"):
+        validate_dataset_join(traces, tuple(unknown_selector_labels))
 
 
 def test_loader_rejects_duplicate_run_ids(tmp_path: Path) -> None:

@@ -7,6 +7,11 @@ from spanvouch.observability.tracing import build_test_tracer
 from spanvouch.trace.mapper import map_spans
 
 
+def test_empty_span_sequence_is_rejected() -> None:
+    with pytest.raises(ValueError, match="empty span sequence"):
+        map_spans("run-empty", [])
+
+
 def test_otel_spans_map_to_connected_trace_ir() -> None:
     tracer, exporter = build_test_tracer()
     with tracer.start_as_current_span(

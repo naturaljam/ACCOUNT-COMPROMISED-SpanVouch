@@ -1,9 +1,12 @@
+import json
+
 import pytest
 from pydantic import ValidationError
 
 from spanvouch.review.models import (
     DiagnosisCorrectionDraft,
     DiagnosisRevision,
+    ReviewInputSnapshot,
     RevisionOrigin,
     canonical_sha256,
 )
@@ -18,6 +21,27 @@ def test_snapshot_hash_is_stable_for_canonical_json() -> None:
     first = make_review_snapshot()
     second = first.model_copy(update={"view_json": first.view_json})
     assert first.input_sha256 == second.input_sha256
+
+
+def test_snapshot_rejects_invalid_and_noncanonical_view_json() -> None:
+    snapshot = make_review_snapshot()
+    payload = snapshot.model_dump(mode="python")
+
+    with pytest.raises(ValidationError, match="valid JSON"):
+        ReviewInputSnapshot.model_validate({**payload, "view_json": "{"})
+
+    noncanonical = json.dumps(json.loads(snapshot.view_json), ensure_ascii=False)
+    with pytest.raises(ValidationError, match="canonical JSON"):
+        ReviewInputSnapshot.model_validate({**payload, "view_json": noncanonical})
+
+
+def test_snapshot_rejects_hash_that_is_not_bound_to_sanitized_view() -> None:
+    snapshot = make_review_snapshot()
+
+    with pytest.raises(ValidationError, match="input_sha256"):
+        ReviewInputSnapshot.model_validate(
+            {**snapshot.model_dump(mode="python"), "input_sha256": "0" * 64}
+        )
 
 
 def test_revision_zero_has_no_previous_hash() -> None:

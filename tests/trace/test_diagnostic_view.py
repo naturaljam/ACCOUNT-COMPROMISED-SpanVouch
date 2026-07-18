@@ -1,16 +1,18 @@
 import json
+import re
 from itertools import product
 from pathlib import Path
 
 import pytest
 
-from spanvouch.contracts import trace as trace_view_module
 from spanvouch.contracts.trace import DiagnosticTraceView, TraceIR
 from spanvouch.review.models import canonical_json
+from spanvouch.trace import diagnostic_view as trace_view_module
 from spanvouch.trace.diagnostic_view import (
     ALLOWED_ATTRIBUTES,
     SECRET_REDACTION,
     TraceProjector,
+    TraceProjectorPort,
     sanitize_diagnostic_trace_view,
     sanitize_diagnostic_value,
 )
@@ -35,6 +37,64 @@ def load_trace(run_id: str) -> TraceIR:
 
 def project_trace(trace: TraceIR) -> DiagnosticTraceView:
     return TraceProjector().project(trace).view
+
+
+def test_sanitizer_handles_empty_and_long_safe_mapping_keys() -> None:
+    long_safe_key = "ordinary_context_" + "x" * 256
+
+    assert sanitize_diagnostic_value({"": "safe", long_safe_key: "visible"}) == {
+        "": "safe",
+        long_safe_key: "visible",
+    }
+
+
+def test_sanitizer_redacts_cyclic_mappings_and_sanitized_key_collisions() -> None:
+    cyclic: dict[str, object] = {"safe": "prefix"}
+    cyclic["cycle"] = cyclic
+
+    assert sanitize_diagnostic_value(cyclic) == {
+        "safe": "prefix",
+        "cycle": SECRET_REDACTION,
+    }
+    assert sanitize_diagnostic_value(
+        {"api_key=first-secret": "first", "api_key=second-secret": "second"}
+    ) == {f"api_key={SECRET_REDACTION}": SECRET_REDACTION}
+
+
+def test_redaction_match_is_idempotent_and_preserves_quoted_value_shape() -> None:
+    pattern = re.compile(r"(?P<prefix>Bearer )(?P<value>.+)")
+    already_redacted = pattern.fullmatch(f"Bearer {SECRET_REDACTION}")
+    quoted_secret = pattern.fullmatch('Bearer "opaque-secret"')
+
+    assert already_redacted is not None
+    assert quoted_secret is not None
+    assert trace_view_module._redact_match(already_redacted) == already_redacted.group(0)
+    assert trace_view_module._redact_match(quoted_secret) == (
+        f'Bearer "{SECRET_REDACTION}"'
+    )
+
+
+def test_structural_lookahead_stops_at_a_physical_line_boundary() -> None:
+    assert not trace_view_module._has_structural_equals_ahead(
+        "credential label\nnext=value",
+        len("credential label"),
+    )
+
+
+def test_trace_view_sanitizer_fails_closed_when_attribute_budget_is_exhausted() -> None:
+    view = project_trace(load_trace("clean-01"))
+    oversized = {f"safe-{index}": "visible" for index in range(10_001)}
+    unsafe_span = view.spans[0].model_copy(update={"attributes": oversized})
+    unsafe_view = view.model_copy(update={"spans": (unsafe_span, *view.spans[1:])})
+
+    sanitized = sanitize_diagnostic_trace_view(unsafe_view)
+
+    assert sanitized.spans[0].attributes == {"sanitization": SECRET_REDACTION}
+
+
+def test_trace_projector_port_default_cannot_project() -> None:
+    with pytest.raises(NotImplementedError):
+        TraceProjectorPort.project(object(), load_trace("clean-01"))
 
 
 def test_trace_view_removes_identity_and_fault_injection_fields() -> None:
