@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
 import platform
 import shutil
+import stat
 import sys
 import tempfile
+import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -71,6 +74,13 @@ class ExecutionMetadata(BaseModel):
         if self.provider_status == "used" and (not self.models or self.usage is None):
             raise ValueError("used execution requires models and usage")
         return self
+
+
+@dataclass(frozen=True)
+class _PublishedBundleIdentity:
+    device: int
+    inode: int
+    tree_fingerprint: str
 
 
 @dataclass(frozen=True)
@@ -294,15 +304,142 @@ def _publish_staged_pair(
     destination_primary: Path,
     destination_bundle: Path,
 ) -> None:
-    bundle_published = False
+    expected_fingerprint = _tree_fingerprint(staged_bundle)
+    expected_device, expected_inode = _directory_identity(staged_bundle)
+    expected_identity = _PublishedBundleIdentity(
+        device=expected_device,
+        inode=expected_inode,
+        tree_fingerprint=expected_fingerprint,
+    )
+    published_identity: _PublishedBundleIdentity | None = None
     try:
         _publish_no_replace(staged_bundle, destination_bundle)
-        bundle_published = True
+        published_identity = expected_identity
+        _capture_published_bundle_identity(destination_bundle, expected_identity)
         _publish_no_replace(staged_primary, destination_primary)
     except Exception:
-        if bundle_published and destination_bundle.exists():
-            shutil.rmtree(destination_bundle)
+        if published_identity is not None:
+            try:
+                _rollback_published_bundle(destination_bundle, published_identity)
+            except RuntimeError as cleanup_error:
+                raise cleanup_error from None
         raise
+
+
+def _capture_published_bundle_identity(
+    destination: Path, expected: _PublishedBundleIdentity
+) -> _PublishedBundleIdentity:
+    device, inode = _directory_identity(destination)
+    if (
+        device != expected.device
+        or inode != expected.inode
+        or _tree_fingerprint(destination) != expected.tree_fingerprint
+    ):
+        raise RuntimeError("published artifact ownership verification failed")
+    return expected
+
+
+def _rollback_published_bundle(
+    destination: Path, owner: _PublishedBundleIdentity
+) -> None:
+    quarantine = destination.parent / f".{destination.name}.rollback-{uuid.uuid4().hex}"
+    try:
+        _publish_no_replace(destination, quarantine)
+    except FileNotFoundError:
+        return
+    except Exception:
+        raise RuntimeError("artifact rollback cleanup conflict") from None
+
+    if _quarantined_tree_matches(quarantine, owner):
+        try:
+            shutil.rmtree(quarantine)
+        except Exception:
+            raise RuntimeError("artifact rollback cleanup conflict") from None
+        return
+
+    try:
+        _publish_no_replace(quarantine, destination)
+    except Exception:
+        # Both the current destination and the quarantined tree are evidence.
+        # Leave both in place for explicit operator recovery.
+        raise RuntimeError("artifact rollback cleanup conflict") from None
+
+
+def _quarantined_tree_matches(
+    quarantine: Path, owner: _PublishedBundleIdentity
+) -> bool:
+    try:
+        device, inode = _directory_identity(quarantine)
+        fingerprint = _tree_fingerprint(quarantine)
+    except (OSError, RuntimeError):
+        return False
+    return (
+        device == owner.device
+        and inode == owner.inode
+        and fingerprint == owner.tree_fingerprint
+    )
+
+
+def _directory_identity(path: Path) -> tuple[int, int]:
+    metadata = path.stat(follow_symlinks=False)
+    if not stat.S_ISDIR(metadata.st_mode) or _is_reparse_point(metadata):
+        raise RuntimeError("artifact tree is not an owned directory")
+    return metadata.st_dev, metadata.st_ino
+
+
+def _tree_fingerprint(root: Path) -> str:
+    entries: list[dict[str, str | int]] = []
+
+    def visit(directory: Path) -> None:
+        before = directory.stat(follow_symlinks=False)
+        if not stat.S_ISDIR(before.st_mode) or _is_reparse_point(before):
+            raise RuntimeError("artifact tree contains an unsupported filesystem entry")
+        relative_directory = directory.relative_to(root).as_posix()
+        entries.append({"kind": "directory", "path": relative_directory})
+        for child in sorted(directory.iterdir(), key=lambda item: item.name):
+            metadata = child.stat(follow_symlinks=False)
+            if _is_reparse_point(metadata) or stat.S_ISLNK(metadata.st_mode):
+                raise RuntimeError("artifact tree contains an unsupported filesystem entry")
+            relative = child.relative_to(root).as_posix()
+            if stat.S_ISDIR(metadata.st_mode):
+                visit(child)
+                continue
+            if not stat.S_ISREG(metadata.st_mode):
+                raise RuntimeError("artifact tree contains an unsupported filesystem entry")
+            digest = sha256(child.read_bytes()).hexdigest()
+            after = child.stat(follow_symlinks=False)
+            if _stat_signature(metadata) != _stat_signature(after):
+                raise RuntimeError("artifact tree changed while fingerprinting")
+            entries.append(
+                {
+                    "kind": "file",
+                    "path": relative,
+                    "sha256": digest,
+                    "size": metadata.st_size,
+                }
+            )
+        after = directory.stat(follow_symlinks=False)
+        if _stat_signature(before) != _stat_signature(after):
+            raise RuntimeError("artifact tree changed while fingerprinting")
+
+    visit(root)
+    return canonical_sha256(cast(JsonValue, entries))
+
+
+def _stat_signature(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+    )
+
+
+def _is_reparse_point(metadata: os.stat_result) -> bool:
+    attributes = getattr(metadata, "st_file_attributes", 0)
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return bool(attributes & reparse_flag)
 
 
 def dataset_provenance(

@@ -1,3 +1,6 @@
+import os
+import shutil
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -35,6 +38,31 @@ class FixedCollector:
             architecture="amd64",
             dependency_lock_sha256="b" * 64,
         )
+
+
+def _create_directory_link(link: Path, target: Path) -> None:
+    try:
+        link.symlink_to(target, target_is_directory=True)
+        return
+    except OSError:
+        if os.name != "nt":
+            pytest.skip("directory symlinks are unavailable")
+    result = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    if result.returncode != 0:
+        pytest.skip("directory reparse points are unavailable")
+
+
+def _remove_directory_link(link: Path) -> None:
+    if link.is_symlink():
+        link.unlink()
+    else:
+        os.rmdir(link)
 
 
 def test_evaluation_output_always_has_a_bound_manifest(tmp_path: Path) -> None:
@@ -130,6 +158,198 @@ def test_publish_removes_just_published_bundle_when_report_replace_fails(
 
     assert not output.exists()
     assert not bundle.exists()
+    assert not tuple(tmp_path.glob(".*.rollback-*"))
+
+
+def test_rollback_restores_foreign_bundle_replacement_byte_exact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "report.json"
+    bundle = manifest_path_for(output).parent
+    foreign = {"foreign.txt": b"foreign evidence\n", "nested/item.bin": b"\x00\x01foreign"}
+    from spanvouch.evaluation.artifacts import _publish_no_replace as real_publish
+    from spanvouch.evaluation.provenance import (
+        _capture_published_bundle_identity as real_capture,
+    )
+
+    def fail_primary(source: Path, destination: Path) -> None:
+        if destination == output:
+            raise OSError("replace failure")
+        real_publish(source, destination)
+
+    def capture_then_substitute(destination: Path, identity: object) -> object:
+        owner = real_capture(destination, identity)
+        shutil.rmtree(bundle)
+        for relative, content in foreign.items():
+            target = bundle / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+        return owner
+
+    monkeypatch.setattr("spanvouch.evaluation.provenance._publish_no_replace", fail_primary)
+    monkeypatch.setattr(
+        "spanvouch.evaluation.provenance._capture_published_bundle_identity",
+        capture_then_substitute,
+    )
+
+    with pytest.raises(OSError, match="replace failure"):
+        publish_report_and_bundle(
+            output=output,
+            render_report=lambda path: path.write_bytes(b'{"status":"complete"}\n'),
+            config={"schema_version": "1.0", "seed": 1, "allow_live_api": False},
+            command_name="spanvouch evaluate review",
+            artifact_kind="evaluation_bundle",
+            seed=1,
+            collector=FixedCollector(dirty=False),
+        )
+
+    assert not output.exists()
+    assert {relative: (bundle / relative).read_bytes() for relative in foreign} == foreign
+    assert not tuple(tmp_path.glob(".*.rollback-*"))
+    assert not tuple(tmp_path.glob(".*.tmp-*"))
+
+
+def test_rollback_restores_foreign_non_directory_substitution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "report.json"
+    bundle = manifest_path_for(output).parent
+    foreign = b"foreign non-directory evidence\n"
+    from spanvouch.evaluation.artifacts import _publish_no_replace as real_publish
+    from spanvouch.evaluation.provenance import (
+        _capture_published_bundle_identity as real_capture,
+    )
+
+    def fail_primary(source: Path, destination: Path) -> None:
+        if destination == output:
+            raise OSError("replace failure")
+        real_publish(source, destination)
+
+    def capture_then_substitute(destination: Path, identity: object) -> object:
+        owner = real_capture(destination, identity)
+        shutil.rmtree(bundle)
+        bundle.write_bytes(foreign)
+        return owner
+
+    monkeypatch.setattr("spanvouch.evaluation.provenance._publish_no_replace", fail_primary)
+    monkeypatch.setattr(
+        "spanvouch.evaluation.provenance._capture_published_bundle_identity",
+        capture_then_substitute,
+    )
+
+    with pytest.raises(OSError, match="replace failure"):
+        publish_report_and_bundle(
+            output=output,
+            render_report=lambda path: path.write_bytes(b'{"status":"complete"}\n'),
+            config={"schema_version": "1.0", "seed": 1, "allow_live_api": False},
+            command_name="spanvouch evaluate review",
+            artifact_kind="evaluation_bundle",
+            seed=1,
+            collector=FixedCollector(dirty=False),
+        )
+
+    assert bundle.read_bytes() == foreign
+    assert not tuple(tmp_path.glob(".*.rollback-*"))
+    assert not tuple(tmp_path.glob(".*.tmp-*"))
+
+
+def test_rollback_preserves_both_foreign_trees_when_destination_is_reoccupied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "report.json"
+    bundle = manifest_path_for(output).parent
+    from spanvouch.evaluation.artifacts import _publish_no_replace as real_publish
+    from spanvouch.evaluation.provenance import (
+        _capture_published_bundle_identity as real_capture,
+    )
+
+    def race(source: Path, destination: Path) -> None:
+        if destination == output:
+            raise OSError("replace failure")
+        real_publish(source, destination)
+        if source == bundle and ".rollback-" in destination.name:
+            bundle.mkdir()
+            (bundle / "foreign-two.txt").write_bytes(b"foreign two\n")
+
+    def capture_then_substitute(destination: Path, identity: object) -> object:
+        owner = real_capture(destination, identity)
+        shutil.rmtree(bundle)
+        bundle.mkdir()
+        (bundle / "foreign-one.txt").write_bytes(b"foreign one\n")
+        return owner
+
+    monkeypatch.setattr("spanvouch.evaluation.provenance._publish_no_replace", race)
+    monkeypatch.setattr(
+        "spanvouch.evaluation.provenance._capture_published_bundle_identity",
+        capture_then_substitute,
+    )
+
+    with pytest.raises(RuntimeError, match="artifact rollback cleanup conflict") as raised:
+        publish_report_and_bundle(
+            output=output,
+            render_report=lambda path: path.write_bytes(b'{"status":"complete"}\n'),
+            config={"schema_version": "1.0", "seed": 1, "allow_live_api": False},
+            command_name="spanvouch evaluate review",
+            artifact_kind="evaluation_bundle",
+            seed=1,
+            collector=FixedCollector(dirty=False),
+        )
+
+    assert "foreign" not in str(raised.value)
+    assert (bundle / "foreign-two.txt").read_bytes() == b"foreign two\n"
+    quarantines = tuple(tmp_path.glob(".*.rollback-*"))
+    assert len(quarantines) == 1
+    assert (quarantines[0] / "foreign-one.txt").read_bytes() == b"foreign one\n"
+
+
+def test_rollback_restores_foreign_symlink_or_reparse_substitution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "report.json"
+    bundle = manifest_path_for(output).parent
+    target = tmp_path / "foreign-target"
+    target.mkdir()
+    marker = target / "evidence.txt"
+    marker.write_bytes(b"do not delete\n")
+    probe = tmp_path / "symlink-probe"
+    _create_directory_link(probe, target)
+    _remove_directory_link(probe)
+    from spanvouch.evaluation.artifacts import _publish_no_replace as real_publish
+    from spanvouch.evaluation.provenance import (
+        _capture_published_bundle_identity as real_capture,
+    )
+
+    def fail_primary(source: Path, destination: Path) -> None:
+        if destination == output:
+            raise OSError("replace failure")
+        real_publish(source, destination)
+
+    def capture_then_substitute(destination: Path, identity: object) -> object:
+        owner = real_capture(destination, identity)
+        shutil.rmtree(bundle)
+        _create_directory_link(bundle, target)
+        return owner
+
+    monkeypatch.setattr("spanvouch.evaluation.provenance._publish_no_replace", fail_primary)
+    monkeypatch.setattr(
+        "spanvouch.evaluation.provenance._capture_published_bundle_identity",
+        capture_then_substitute,
+    )
+
+    with pytest.raises(OSError, match="replace failure"):
+        publish_report_and_bundle(
+            output=output,
+            render_report=lambda path: path.write_bytes(b'{"status":"complete"}\n'),
+            config={"schema_version": "1.0", "seed": 1, "allow_live_api": False},
+            command_name="spanvouch evaluate review",
+            artifact_kind="evaluation_bundle",
+            seed=1,
+            collector=FixedCollector(dirty=False),
+        )
+
+    assert bundle.resolve() == target.resolve()
+    assert marker.read_bytes() == b"do not delete\n"
+    assert not tuple(tmp_path.glob(".*.rollback-*"))
 
 
 def test_dataset_and_local_provenance_collect_only_declared_metadata(
