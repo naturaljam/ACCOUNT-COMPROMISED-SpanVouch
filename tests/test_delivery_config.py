@@ -12,8 +12,16 @@ def test_frozen_dataset_fixtures_are_checked_out_with_lf_endings() -> None:
     attributes_file = ROOT / ".gitattributes"
     assert attributes_file.is_file(), "repository .gitattributes must define fixture EOLs"
 
-    dataset = ROOT / "evals" / "datasets" / "supportlab-v1"
-    fixture_paths = sorted(dataset.glob("*.jsonl")) + sorted(dataset.glob("*.json"))
+    datasets = (
+        ROOT / "evals" / "datasets" / "supportlab-v1",
+        ROOT / "evals" / "datasets" / "supportlab-review-v1",
+    )
+    fixture_paths = sorted(
+        path
+        for dataset in datasets
+        for pattern in ("*.jsonl", "*.json")
+        for path in dataset.glob(pattern)
+    )
     relative_paths = [path.relative_to(ROOT).as_posix() for path in fixture_paths]
     result = subprocess.run(
         ["git", "check-attr", "text", "eol", "--", *relative_paths],
@@ -29,6 +37,17 @@ def test_frozen_dataset_fixtures_are_checked_out_with_lf_endings() -> None:
         for attribute, value in (("text", "set"), ("eol", "lf"))
     }
     assert set(result.stdout.splitlines()) == expected
+
+
+def test_phase_3_verification_documents_exact_sqlite_process_gate() -> None:
+    verification = (
+        ROOT / "docs" / "evaluation" / "phase3-verification-review.md"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        r".\.venv\Scripts\python.exe -m pytest "
+        r"tests/review/test_sqlite_process_stability.py -q"
+    ) in verification
 
 
 def test_phase_2_delivery_is_safe_and_reproducible() -> None:

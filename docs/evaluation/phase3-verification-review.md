@@ -45,6 +45,16 @@ The evaluator joins candidate IDs to expected finding codes; it does not infer s
 
 The command exits nonzero and records `status=failed` if any exact deterministic gate degrades, even when two degraded reports are byte-identical. Hybrid semantic verdicts remain descriptive measurements without an accuracy threshold.
 
+## SQLite independent-process stability
+
+Run the repository stability gate from a frozen synced Windows environment:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/review/test_sqlite_process_stability.py -q
+```
+
+The test starts all 20 independent Python interpreters before waiting for any of them. Each process opens the same SQLite database, creates a distinct deterministic review case through `SQLiteReviewRepository`, reopens the repository, and emits a sanitized result. The parent collects every exit code plus stdout/stderr, fails on any process error, and reopens the database to verify 20 distinct durable cases with no verifier reports or provider path.
+
 ## Persistence and delivery evidence
 
 Task 12 runs the following offline gates before any paid experiment:
