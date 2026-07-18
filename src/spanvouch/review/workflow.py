@@ -11,6 +11,19 @@ from uuid import uuid4
 from langgraph.graph import END, START, StateGraph
 
 from spanvouch.contracts.diagnosis import DiagnosisReport
+from spanvouch.contracts.verification import (
+    EvidenceGap,
+    FindingCode,
+    FindingSeverity,
+    OperationalErrorMetadata,
+    VerificationFinding,
+    VerificationInput,
+    VerificationMode,
+    VerifierKind,
+    VerifierProvenance,
+    VerifierReport,
+    VerifierVerdict,
+)
 from spanvouch.diagnosis.errors import (
     ProviderConfigurationError,
     ProviderError,
@@ -32,25 +45,15 @@ from spanvouch.review.errors import ReviewConflictError, ReviewError
 from spanvouch.review.models import (
     DiagnosisReviewDetail,
     DiagnosisRevision,
-    EvidenceGap,
-    FindingCode,
-    FindingSeverity,
-    OperationalErrorMetadata,
     ReviewRuntimeBundle,
     ReviewStatus,
     RevisionOrigin,
-    VerificationFinding,
-    VerificationInput,
-    VerificationMode,
-    VerifierKind,
-    VerifierProvenance,
-    VerifierReport,
-    VerifierVerdict,
     canonical_json,
     canonical_sha256,
 )
-from spanvouch.review.protocols import ReviewRepository, ReviewReviser, Verifier
+from spanvouch.review.protocols import ReviewRepository, ReviewReviser
 from spanvouch.review.verdicts import MergedVerifierReports, merge_verifier_reports
+from spanvouch.verification.protocols import Verifier
 
 ProviderWorkResult = TypeVar("ProviderWorkResult")
 ProviderFinalizationResult = TypeVar("ProviderFinalizationResult")
@@ -411,7 +414,7 @@ class ReviewWorkflow:
         for report in runtime.verifier_reports:
             if report.revision_number != runtime.case.current_revision_number:
                 continue
-            if report.verifier_kind is VerifierKind.DETERMINISTIC:
+            if report.verifier_kind == VerifierKind.DETERMINISTIC:
                 deterministic = report
             else:
                 semantic = report
@@ -609,7 +612,7 @@ class ReviewWorkflow:
     def _normalize_report(
         report: VerifierReport, kind: VerifierKind, revision_number: int
     ) -> VerifierReport:
-        if report.verifier_kind is not kind or report.provenance.verifier_kind is not kind:
+        if report.verifier_kind != kind or report.provenance.verifier_kind != kind:
             raise ReviewConflictError("verifier returned the wrong verifier kind")
         return VerifierReport.model_validate(
             {**report.model_dump(), "revision_number": revision_number}
@@ -668,7 +671,7 @@ class ReviewWorkflow:
                     {
                         "revision_number": report.revision_number,
                         "verdict": merged.verdict.value,
-                        "verifier_kind": report.verifier_kind.value,
+                        "verifier_kind": report.verifier_kind,
                     }
                 ),
                 occurred_at=now,
@@ -903,7 +906,7 @@ class ReviewWorkflow:
         if effect_kind == "semantic":
             effect_is_durable = any(
                 report.verifier_run_id == effect_id
-                and report.verifier_kind is VerifierKind.SEMANTIC
+                and report.verifier_kind == VerifierKind.SEMANTIC
                 for report in runtime.verifier_reports
             )
         elif effect_kind == "revision":
@@ -985,7 +988,7 @@ class ReviewWorkflow:
                 {
                     "revision_number": report.revision_number,
                     "verdict": merged.verdict.value,
-                    "verifier_kind": report.verifier_kind.value,
+                    "verifier_kind": report.verifier_kind,
                 }
             ),
             occurred_at=completed_at,

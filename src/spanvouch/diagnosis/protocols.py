@@ -9,7 +9,7 @@ from spanvouch.contracts.trace import DiagnosticContext
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
 
 if TYPE_CHECKING:
-    from spanvouch.review.models import EvidenceGap
+    from spanvouch.contracts.verification import EvidenceGap
 
 
 class Diagnoser(Protocol):

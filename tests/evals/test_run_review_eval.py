@@ -5,16 +5,18 @@ import pytest
 
 import spanvouch.evals.run_review_eval as review_eval_module
 from spanvouch.contracts.diagnosis import ProviderUsage
+from spanvouch.contracts.verification import (
+    VerificationInput,
+    VerifierKind,
+    VerifierReport,
+    VerifierVerdict,
+)
 from spanvouch.diagnosis.errors import ProviderRequestError
 from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig, ProviderResponse
 from spanvouch.evals.review_labels import load_review_candidates
 from spanvouch.evals.review_metrics import ReviewEvaluationReport
 from spanvouch.evals.run_review_eval import _run, main, write_report
 from spanvouch.review.models import (
-    VerificationInput,
-    VerifierKind,
-    VerifierReport,
-    VerifierVerdict,
     canonical_json,
 )
 from spanvouch.review.semantic_verifier import SemanticVerifier

@@ -1,0 +1,453 @@
+{
+  "$defs": {
+    "ClaimStage": {
+      "enum": [
+        "cause",
+        "propagation",
+        "outcome"
+      ],
+      "title": "ClaimStage",
+      "type": "string"
+    },
+    "EvidenceGap": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_selectors": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowed Selectors",
+          "type": "array"
+        },
+        "claim_index": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Claim Index"
+        },
+        "finding_code": {
+          "$ref": "#/$defs/FindingCode"
+        },
+        "gap_id": {
+          "minLength": 1,
+          "title": "Gap Id",
+          "type": "string"
+        },
+        "instruction": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Instruction",
+          "type": "string"
+        },
+        "related_span_ids": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Related Span Ids",
+          "type": "array"
+        },
+        "required_evidence_kind": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Required Evidence Kind",
+          "type": "string"
+        },
+        "stage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ClaimStage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "gap_id",
+        "finding_code",
+        "required_evidence_kind",
+        "instruction"
+      ],
+      "title": "EvidenceGap",
+      "type": "object"
+    },
+    "FindingCode": {
+      "enum": [
+        "invalid_selector",
+        "evidence_value_mismatch",
+        "evidence_hash_mismatch",
+        "claim_not_grounded",
+        "critical_span_not_grounded",
+        "duplicate_reference",
+        "evidence_budget_exceeded",
+        "clean_trace_conflict",
+        "unsupported_scope",
+        "diagnosis_conflict",
+        "alternative_hypothesis",
+        "semantic_support_missing",
+        "invalid_verifier_output",
+        "provider_operational_error"
+      ],
+      "title": "FindingCode",
+      "type": "string"
+    },
+    "FindingSeverity": {
+      "enum": [
+        "hard",
+        "advisory",
+        "operational"
+      ],
+      "title": "FindingSeverity",
+      "type": "string"
+    },
+    "OperationalErrorMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "retryable": {
+          "title": "Retryable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ],
+      "title": "OperationalErrorMetadata",
+      "type": "object"
+    },
+    "ProviderUsage": {
+      "additionalProperties": false,
+      "properties": {
+        "input_tokens": {
+          "minimum": 0,
+          "title": "Input Tokens",
+          "type": "integer"
+        },
+        "latency_ms": {
+          "minimum": 0.0,
+          "title": "Latency Ms",
+          "type": "number"
+        },
+        "output_tokens": {
+          "minimum": 0,
+          "title": "Output Tokens",
+          "type": "integer"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Request Id"
+        },
+        "total_tokens": {
+          "minimum": 0,
+          "title": "Total Tokens",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "latency_ms"
+      ],
+      "title": "ProviderUsage",
+      "type": "object"
+    },
+    "VerificationFinding": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/FindingCode"
+        },
+        "finding_id": {
+          "minLength": 1,
+          "title": "Finding Id",
+          "type": "string"
+        },
+        "message": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "related_selectors": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Related Selectors",
+          "type": "array"
+        },
+        "related_span_ids": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Related Span Ids",
+          "type": "array"
+        },
+        "revisable": {
+          "title": "Revisable",
+          "type": "boolean"
+        },
+        "severity": {
+          "$ref": "#/$defs/FindingSeverity"
+        }
+      },
+      "required": [
+        "finding_id",
+        "code",
+        "severity",
+        "message",
+        "revisable"
+      ],
+      "title": "VerificationFinding",
+      "type": "object"
+    },
+    "VerifierProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        },
+        "policy_version": {
+          "minLength": 1,
+          "title": "Policy Version",
+          "type": "string"
+        },
+        "prompt_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prompt Sha256"
+        },
+        "prompt_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prompt Version"
+        },
+        "provider": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider"
+        },
+        "verifier_kind": {
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_.-]*$",
+          "title": "Verifier Kind",
+          "type": "string"
+        },
+        "verifier_version": {
+          "minLength": 1,
+          "title": "Verifier Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "verifier_kind",
+        "verifier_version",
+        "policy_version"
+      ],
+      "title": "VerifierProvenance",
+      "type": "object"
+    },
+    "VerifierVerdict": {
+      "enum": [
+        "verified",
+        "needs_evidence",
+        "review_required"
+      ],
+      "title": "VerifierVerdict",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "alternative_failure_type": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Alternative Failure Type"
+    },
+    "completed_at": {
+      "format": "date-time",
+      "title": "Completed At",
+      "type": "string"
+    },
+    "confidence": {
+      "anyOf": [
+        {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Confidence"
+    },
+    "evidence_gaps": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/EvidenceGap"
+      },
+      "title": "Evidence Gaps",
+      "type": "array"
+    },
+    "findings": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/VerificationFinding"
+      },
+      "title": "Findings",
+      "type": "array"
+    },
+    "operational_error": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/OperationalErrorMetadata"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "provenance": {
+      "$ref": "#/$defs/VerifierProvenance"
+    },
+    "report_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Report Sha256",
+      "type": "string"
+    },
+    "revision_number": {
+      "minimum": 0,
+      "title": "Revision Number",
+      "type": "integer"
+    },
+    "schema_name": {
+      "const": "spanvouch.verification",
+      "default": "spanvouch.verification",
+      "title": "Schema Name",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "started_at": {
+      "format": "date-time",
+      "title": "Started At",
+      "type": "string"
+    },
+    "usage": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ProviderUsage"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "verdict": {
+      "$ref": "#/$defs/VerifierVerdict"
+    },
+    "verifier_kind": {
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_.-]*$",
+      "title": "Verifier Kind",
+      "type": "string"
+    },
+    "verifier_run_id": {
+      "minLength": 1,
+      "title": "Verifier Run Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "verifier_run_id",
+    "revision_number",
+    "report_sha256",
+    "verifier_kind",
+    "verdict",
+    "provenance",
+    "started_at",
+    "completed_at"
+  ],
+  "title": "VerifierReport",
+  "type": "object"
+}

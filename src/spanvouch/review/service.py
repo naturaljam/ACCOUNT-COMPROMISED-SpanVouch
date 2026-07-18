@@ -13,6 +13,14 @@ from spanvouch.contracts.diagnosis import (
     EvidenceRef,
 )
 from spanvouch.contracts.trace import DiagnosticContext, TraceIR
+from spanvouch.contracts.verification import (
+    ReviewInputSnapshot,
+    VerificationInput,
+    VerificationMode,
+    VerifierKind,
+    VerifierReport,
+    VerifierVerdict,
+)
 from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.review.commands import (
     ApplyHumanDecision,
@@ -28,21 +36,16 @@ from spanvouch.review.models import (
     DiagnosisRevision,
     HumanDecisionDraft,
     HumanReviewDecision,
-    ReviewInputSnapshot,
     ReviewStatus,
     RevisionOrigin,
-    VerificationInput,
-    VerificationMode,
-    VerifierKind,
-    VerifierReport,
-    VerifierVerdict,
     canonical_json,
     canonical_sha256,
     resume_requires_live_api,
 )
-from spanvouch.review.protocols import ReviewRepository, ReviewWorkflowRunner, Verifier
+from spanvouch.review.protocols import ReviewRepository, ReviewWorkflowRunner
 from spanvouch.trace.diagnostic_view import TraceProjector
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
+from spanvouch.verification.protocols import Verifier
 
 CATALOG_VERSION = "evidence-catalog-v1"
 HUMAN_CORRECTION_VERSION = "human-correction-v1"

@@ -4,6 +4,13 @@ from typing import Any
 import pytest
 
 from spanvouch.contracts.diagnosis import DiagnosisReport, ProviderUsage
+from spanvouch.contracts.verification import (
+    FindingCode,
+    ReviewInputSnapshot,
+    VerificationInput,
+    VerifierKind,
+    VerifierVerdict,
+)
 from spanvouch.diagnosis.errors import (
     ProviderConfigurationError,
     ProviderProtocolError,
@@ -11,11 +18,6 @@ from spanvouch.diagnosis.errors import (
 )
 from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig, ProviderResponse
 from spanvouch.review.models import (
-    FindingCode,
-    ReviewInputSnapshot,
-    VerificationInput,
-    VerifierKind,
-    VerifierVerdict,
     canonical_json,
     canonical_sha256,
 )
@@ -158,7 +160,7 @@ async def test_valid_strict_outputs_resolve_selectors_locally(
 
     report = await SemanticVerifier(provider).verify(_input())
 
-    assert report.verifier_kind is VerifierKind.SEMANTIC
+    assert report.verifier_kind == VerifierKind.SEMANTIC
     assert report.verdict is expected_verdict
     assert tuple(finding.code for finding in report.findings) == (
         () if expected_code is None else (expected_code,)

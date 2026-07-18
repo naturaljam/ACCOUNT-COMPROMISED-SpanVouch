@@ -20,12 +20,12 @@ from spanvouch.contracts.diagnosis import (
     EvidenceSelector,
 )
 from spanvouch.contracts.trace import TraceIR
+from spanvouch.contracts.verification import FindingCode, VerifierVerdict
 from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
 from spanvouch.evals.generate_dataset import DatasetManifest
 from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.invariants.supportlab import supportlab_rules
-from spanvouch.review.models import FindingCode, VerifierVerdict
 from spanvouch.trace.diagnostic_view import TraceProjector
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
 

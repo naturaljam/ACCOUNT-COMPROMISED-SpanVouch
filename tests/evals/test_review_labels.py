@@ -8,6 +8,10 @@ import pytest
 
 from spanvouch.contracts.diagnosis import DiagnosisReport
 from spanvouch.contracts.trace import TraceIR
+from spanvouch.contracts.verification import (
+    ReviewInputSnapshot,
+    VerificationInput,
+)
 from spanvouch.evals.generate_review_dataset import generate_review_dataset
 from spanvouch.evals.review_labels import (
     load_review_candidates,
@@ -20,8 +24,6 @@ from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.invariants.supportlab import supportlab_rules
 from spanvouch.review.evidence_verifier import EvidenceVerifier
 from spanvouch.review.models import (
-    ReviewInputSnapshot,
-    VerificationInput,
     canonical_json,
     canonical_sha256,
 )

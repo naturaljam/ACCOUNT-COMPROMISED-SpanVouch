@@ -22,6 +22,11 @@ from spanvouch.contracts.diagnosis import (
     EvidenceSelector,
     TaxonomyRef,
 )
+from spanvouch.contracts.verification import (
+    VerificationMode,
+    VerifierKind,
+    VerifierVerdict,
+)
 from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.failure_types import FailureType
 from spanvouch.review.commands import ApplyHumanDecision, CreateReviewCase
@@ -35,9 +40,6 @@ from spanvouch.review.models import (
     HumanDecisionDraft,
     ReviewRuntimeBundle,
     ReviewStatus,
-    VerificationMode,
-    VerifierKind,
-    VerifierVerdict,
     canonical_json,
     canonical_sha256,
 )
@@ -1439,7 +1441,7 @@ async def test_correction_and_idempotency_are_atomic_with_sqlite(tmp_path: Path)
     assert len(corrected.verifier_reports) == 2
     correction_verification = corrected.verifier_reports[-1]
     assert correction_verification.revision_number == 1
-    assert correction_verification.verifier_kind is VerifierKind.DETERMINISTIC
+    assert correction_verification.verifier_kind == VerifierKind.DETERMINISTIC
     assert correction_verification.verdict is VerifierVerdict.VERIFIED
     assert corrected.case.deterministic_run_id == correction_verification.verifier_run_id
     assert corrected.case.semantic_run_id is None

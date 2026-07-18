@@ -11,6 +11,13 @@ from spanvouch.contracts.diagnosis import (
     TaxonomyRef,
 )
 from spanvouch.contracts.trace import DiagnosticContext
+from spanvouch.contracts.verification import (
+    EvidenceGap,
+    FindingCode,
+    FindingSeverity,
+    VerificationFinding,
+    VerifierVerdict,
+)
 from spanvouch.diagnosis.llm_diagnoser import LlmDiagnoser
 from spanvouch.diagnosis.protocols import (
     ChatMessage,
@@ -23,13 +30,8 @@ from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.review.errors import ReviewConflictError
 from spanvouch.review.models import (
     DiagnosisRevision,
-    EvidenceGap,
-    FindingCode,
-    FindingSeverity,
     ReviewRuntimeBundle,
     RevisionOrigin,
-    VerificationFinding,
-    VerifierVerdict,
     canonical_sha256,
 )
 from spanvouch.review.reviser import DiagnosisReviser

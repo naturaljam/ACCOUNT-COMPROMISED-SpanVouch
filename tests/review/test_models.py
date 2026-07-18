@@ -3,10 +3,10 @@ import json
 import pytest
 from pydantic import ValidationError
 
+from spanvouch.contracts.verification import ReviewInputSnapshot
 from spanvouch.review.models import (
     DiagnosisCorrectionDraft,
     DiagnosisRevision,
-    ReviewInputSnapshot,
     RevisionOrigin,
     canonical_sha256,
 )

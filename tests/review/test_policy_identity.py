@@ -1,8 +1,9 @@
 from pathlib import Path
 
 from spanvouch.api.app import _deterministic_runtime
+from spanvouch.contracts.verification import VerificationInput
 from spanvouch.evals.run_review_eval import DEFAULT_POLICY_VERSION
-from spanvouch.review.models import VerificationInput, canonical_sha256
+from spanvouch.review.models import canonical_sha256
 from spanvouch.review.policy import DEFAULT_REVIEW_POLICY_VERSION
 from tests.review.factories import make_diagnosis_report, make_review_snapshot
 

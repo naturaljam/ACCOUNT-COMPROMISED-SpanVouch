@@ -13,10 +13,7 @@ from spanvouch.contracts.diagnosis import (
     EvidenceSelector,
 )
 from spanvouch.contracts.trace import DiagnosticTraceView
-from spanvouch.failure_types import FailureType
-from spanvouch.invariants.engine import InvariantEngine
-from spanvouch.invariants.models import InvariantResult, InvariantStatus, RuleContext, RuleScope
-from spanvouch.review.models import (
+from spanvouch.contracts.verification import (
     EvidenceGap,
     FindingCode,
     FindingSeverity,
@@ -26,6 +23,11 @@ from spanvouch.review.models import (
     VerifierProvenance,
     VerifierReport,
     VerifierVerdict,
+)
+from spanvouch.failure_types import FailureType
+from spanvouch.invariants.engine import InvariantEngine
+from spanvouch.invariants.models import InvariantResult, InvariantStatus, RuleContext, RuleScope
+from spanvouch.review.models import (
     canonical_json,
     canonical_sha256,
 )
@@ -271,7 +273,7 @@ def _unique_gaps(gaps: Iterable[EvidenceGap]) -> tuple[EvidenceGap, ...]:
 
 
 class EvidenceVerifier:
-    kind = VerifierKind.DETERMINISTIC
+    kind: str = VerifierKind.DETERMINISTIC
 
     def __init__(self, engine: InvariantEngine, *, policy_version: str) -> None:
         self._engine = engine

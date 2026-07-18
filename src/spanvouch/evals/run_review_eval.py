@@ -14,8 +14,8 @@ from spanvouch.invariants.supportlab import supportlab_rules
 from spanvouch.review.evidence_verifier import EvidenceVerifier
 from spanvouch.review.models import canonical_json
 from spanvouch.review.policy import DEFAULT_REVIEW_POLICY_VERSION as DEFAULT_POLICY_VERSION
-from spanvouch.review.protocols import Verifier
 from spanvouch.review.semantic_verifier import SemanticVerifier
+from spanvouch.verification.protocols import Verifier
 
 
 def _load_traces(path: Path) -> tuple[TraceIR, ...]:

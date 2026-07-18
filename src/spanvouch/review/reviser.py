@@ -4,9 +4,10 @@ from collections.abc import Mapping
 
 from spanvouch.contracts.diagnosis import DiagnoserKind, DiagnosisReport
 from spanvouch.contracts.trace import DiagnosticContext
+from spanvouch.contracts.verification import EvidenceGap
 from spanvouch.diagnosis.protocols import Diagnoser, RevisionCapableDiagnoser
 from spanvouch.review.errors import ReviewConflictError
-from spanvouch.review.models import EvidenceGap, ReviewRuntimeBundle
+from spanvouch.review.models import ReviewRuntimeBundle
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
 
 

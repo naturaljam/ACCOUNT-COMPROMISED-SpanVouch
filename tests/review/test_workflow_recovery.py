@@ -6,6 +6,11 @@ from pathlib import Path
 import pytest
 
 from spanvouch.contracts.diagnosis import DiagnoserKind
+from spanvouch.contracts.verification import (
+    VerificationMode,
+    VerifierKind,
+    VerifierVerdict,
+)
 from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.diagnosis.errors import (
     ProviderConfigurationError,
@@ -17,9 +22,6 @@ from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.review.errors import ReviewConflictError
 from spanvouch.review.models import (
     ReviewStatus,
-    VerificationMode,
-    VerifierKind,
-    VerifierVerdict,
 )
 from spanvouch.review.service import ReviewService
 from spanvouch.review.sqlite_repository import SQLiteReviewRepository
@@ -155,7 +157,7 @@ class ClearedLeaseRaceRepository(SQLiteReviewRepository):
 
     async def append_verifier_run(self, command):  # type: ignore[no-untyped-def]
         result = await super().append_verifier_run(command)
-        if command.report.verifier_kind is VerifierKind.SEMANTIC:
+        if command.report.verifier_kind == VerifierKind.SEMANTIC:
             self.finalized.set()
             await asyncio.wait_for(self.conflict_observed.wait(), timeout=1.0)
         return result
@@ -232,7 +234,7 @@ class PostCommitPauseRepository(SQLiteReviewRepository):
 
     async def append_verifier_run(self, command):  # type: ignore[no-untyped-def]
         result = await super().append_verifier_run(command)
-        if self.pause_semantic and command.report.verifier_kind is VerifierKind.SEMANTIC:
+        if self.pause_semantic and command.report.verifier_kind == VerifierKind.SEMANTIC:
             self.provider_effect_committed.set()
             await asyncio.wait_for(self.release_original.wait(), timeout=2.0)
         return result
@@ -595,7 +597,7 @@ async def test_missing_semantic_verifier_persists_configuration_failure(
     assert detail.case.status is ReviewStatus.AWAITING_HUMAN_REVIEW
     assert len(detail.verifier_reports) == 2
     semantic_report = detail.verifier_reports[-1]
-    assert semantic_report.verifier_kind is VerifierKind.SEMANTIC
+    assert semantic_report.verifier_kind == VerifierKind.SEMANTIC
     assert semantic_report.operational_error is not None
     assert semantic_report.operational_error.code == "provider_not_configured"
     assert [event for event, _ in _events(database)][-2:] == [

@@ -16,6 +16,13 @@ from spanvouch.contracts.diagnosis import (
     DiagnosisReport,
     EvidenceSelector,
 )
+from spanvouch.contracts.verification import (
+    ReviewInputSnapshot,
+    VerificationMode,
+    VerifierKind,
+    VerifierReport,
+    VerifierVerdict,
+)
 from spanvouch.failure_types import FailureType
 from spanvouch.review.commands import (
     AppendDiagnosisRevision,
@@ -45,14 +52,9 @@ from spanvouch.review.models import (
     DiagnosisReviewDetail,
     DiagnosisRevision,
     HumanReviewDecision,
-    ReviewInputSnapshot,
     ReviewRuntimeBundle,
     ReviewStatus,
     RevisionOrigin,
-    VerificationMode,
-    VerifierKind,
-    VerifierReport,
-    VerifierVerdict,
     WorkflowEvent,
     WorkflowEventType,
     canonical_json,
@@ -626,7 +628,7 @@ class SQLiteReviewRepository:
                 state = self._require_state(connection, command.case_id)
                 run_column = (
                     "deterministic_run_id"
-                    if command.report.verifier_kind is VerifierKind.DETERMINISTIC
+                    if command.report.verifier_kind == VerifierKind.DETERMINISTIC
                     else "semantic_run_id"
                 )
                 if (
@@ -642,7 +644,7 @@ class SQLiteReviewRepository:
 
             state = self._require_state(connection, command.case_id)
             self._require_cas(state, command.expected_version, command.prior_status)
-            if command.report.verifier_kind is VerifierKind.SEMANTIC:
+            if command.report.verifier_kind == VerifierKind.SEMANTIC:
                 if command.lease_owner is None:
                     raise ReviewConflictError(
                         "semantic verifier result requires review lease owner"
@@ -659,7 +661,7 @@ class SQLiteReviewRepository:
                 raise ReviewConflictError("verifier report binding conflict")
             if (
                 str(state["verification_mode"]) == VerificationMode.DETERMINISTIC.value
-                and command.report.verifier_kind is VerifierKind.SEMANTIC
+                and command.report.verifier_kind == VerifierKind.SEMANTIC
             ):
                 raise ReviewConflictError("verifier mode conflict")
             if (
@@ -671,12 +673,12 @@ class SQLiteReviewRepository:
             self._after_insert("verifier_run")
             deterministic_run_id = (
                 command.report.verifier_run_id
-                if command.report.verifier_kind is VerifierKind.DETERMINISTIC
+                if command.report.verifier_kind == VerifierKind.DETERMINISTIC
                 else None
             )
             semantic_run_id = (
                 command.report.verifier_run_id
-                if command.report.verifier_kind is VerifierKind.SEMANTIC
+                if command.report.verifier_kind == VerifierKind.SEMANTIC
                 else None
             )
             cursor = connection.execute(
@@ -1234,7 +1236,7 @@ class SQLiteReviewRepository:
                 report.verifier_run_id,
                 case_id,
                 report.revision_number,
-                report.verifier_kind.value,
+                report.verifier_kind,
                 canonical_json(report),
                 report.verdict.value,
                 canonical_json(report.usage) if report.usage is not None else None,
@@ -1450,7 +1452,7 @@ class SQLiteReviewRepository:
             if (
                 report.verifier_run_id != str(row["verifier_run_id"])
                 or report.revision_number != int(row["revision_number"])
-                or report.verifier_kind.value != str(row["verifier_kind"])
+                or report.verifier_kind != str(row["verifier_kind"])
                 or report.verdict.value != str(row["verdict"])
                 or (
                     canonical_json(report.usage) if report.usage is not None else None

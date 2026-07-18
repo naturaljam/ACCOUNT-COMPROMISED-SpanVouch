@@ -1,14 +1,16 @@
 from dataclasses import dataclass
 
-from spanvouch.review.models import (
+from spanvouch.contracts.verification import (
     EvidenceGap,
     FindingCode,
     FindingSeverity,
-    ReviewStatus,
     VerificationFinding,
     VerifierKind,
     VerifierReport,
     VerifierVerdict,
+)
+from spanvouch.review.models import (
+    ReviewStatus,
 )
 
 _ALLOWED_TRANSITIONS = frozenset(
@@ -24,7 +26,7 @@ _ALLOWED_TRANSITIONS = frozenset(
     }
 )
 
-_KIND_ORDER = {
+_KIND_ORDER: dict[str, int] = {
     VerifierKind.DETERMINISTIC: 0,
     VerifierKind.SEMANTIC: 1,
 }
@@ -96,15 +98,15 @@ def merge_verifier_reports(
     semantic: VerifierReport | None,
 ) -> MergedVerifierReports:
     """Combine verifier decisions without rewriting either source report."""
-    if deterministic.verifier_kind is not VerifierKind.DETERMINISTIC:
+    if deterministic.verifier_kind != VerifierKind.DETERMINISTIC:
         raise ValueError("deterministic report must have deterministic verifier kind")
     if semantic is not None:
-        if semantic.verifier_kind is not VerifierKind.SEMANTIC:
+        if semantic.verifier_kind != VerifierKind.SEMANTIC:
             raise ValueError("semantic report must have semantic verifier kind")
         if semantic.revision_number != deterministic.revision_number:
             raise ValueError("verifier reports must target the same revision")
 
-    sourced_findings: list[tuple[VerifierKind, VerificationFinding]] = [
+    sourced_findings: list[tuple[str, VerificationFinding]] = [
         (deterministic.verifier_kind, finding) for finding in deterministic.findings
     ]
     if semantic is not None:

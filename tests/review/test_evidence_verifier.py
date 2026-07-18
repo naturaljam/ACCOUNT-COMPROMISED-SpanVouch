@@ -15,15 +15,17 @@ from spanvouch.contracts.diagnosis import (
     TaxonomyRef,
 )
 from spanvouch.contracts.trace import DiagnosticTraceView, SpanStatus
-from spanvouch.invariants.engine import InvariantEngine
-from spanvouch.invariants.supportlab import supportlab_rules
-from spanvouch.review.evidence_verifier import EvidenceVerifier
-from spanvouch.review.models import (
+from spanvouch.contracts.verification import (
     FindingCode,
     ReviewInputSnapshot,
     VerificationInput,
     VerifierKind,
     VerifierVerdict,
+)
+from spanvouch.invariants.engine import InvariantEngine
+from spanvouch.invariants.supportlab import supportlab_rules
+from spanvouch.review.evidence_verifier import EvidenceVerifier
+from spanvouch.review.models import (
     canonical_json,
     canonical_sha256,
 )
@@ -225,7 +227,7 @@ async def test_valid_report_is_verified_without_findings_or_gaps(
 
     report = await verifier.verify(input_)
 
-    assert report.verifier_kind is VerifierKind.DETERMINISTIC
+    assert report.verifier_kind == VerifierKind.DETERMINISTIC
     assert report.verdict is VerifierVerdict.VERIFIED
     assert report.findings == ()
     assert report.evidence_gaps == ()

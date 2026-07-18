@@ -18,18 +18,18 @@ from spanvouch.api.app import create_app
 from spanvouch.cli import review as review_cli
 from spanvouch.contracts.diagnosis import DiagnoserKind, EvidenceSelector
 from spanvouch.contracts.trace import TraceIR
+from spanvouch.contracts.verification import (
+    VerificationInput,
+    VerificationMode,
+    VerifierKind,
+    VerifierReport,
+)
 from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.diagnosis.errors import ProviderProtocolError
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
 from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.invariants.supportlab import supportlab_rules
 from spanvouch.review.evidence_verifier import EvidenceVerifier
-from spanvouch.review.models import (
-    VerificationInput,
-    VerificationMode,
-    VerifierKind,
-    VerifierReport,
-)
 from spanvouch.review.reviser import DiagnosisReviser
 from spanvouch.review.semantic_verifier import SemanticVerifier
 from spanvouch.review.service import ReviewService
@@ -447,8 +447,9 @@ def test_allowed_trace_value_secrets_never_reach_sqlite_or_public_aggregate(
 @pytest.mark.asyncio
 async def test_invalid_semantic_provider_body_is_not_copied_into_verifier_report() -> None:
     from spanvouch.contracts.diagnosis import ProviderUsage
+    from spanvouch.contracts.verification import VerificationInput
     from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig, ProviderResponse
-    from spanvouch.review.models import VerificationInput, canonical_sha256
+    from spanvouch.review.models import canonical_sha256
     from tests.review.factories import make_diagnosis_report, make_review_snapshot
 
     class InvalidBodyProvider:

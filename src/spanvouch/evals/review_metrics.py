@@ -7,6 +7,13 @@ from typing import Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field
 
 from spanvouch.contracts.trace import TraceIR
+from spanvouch.contracts.verification import (
+    FindingCode,
+    ReviewInputSnapshot,
+    VerificationInput,
+    VerifierReport,
+    VerifierVerdict,
+)
 from spanvouch.diagnosis.errors import ProviderError
 from spanvouch.evals.generate_review_dataset import MutationKind, ReviewCandidate
 from spanvouch.evals.review_labels import (
@@ -14,11 +21,6 @@ from spanvouch.evals.review_labels import (
     validate_review_cohort,
 )
 from spanvouch.review.models import (
-    FindingCode,
-    ReviewInputSnapshot,
-    VerificationInput,
-    VerifierReport,
-    VerifierVerdict,
     canonical_json,
     canonical_sha256,
 )

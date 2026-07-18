@@ -12,22 +12,24 @@ from spanvouch.contracts.diagnosis import (
     EvidenceSelector,
     TaxonomyRef,
 )
-from spanvouch.invariants.engine import InvariantEngine
-from spanvouch.review.commands import CreateReviewCase, WorkflowEventType
-from spanvouch.review.evidence_verifier import EvidenceVerifier
-from spanvouch.review.models import (
-    DiagnosisRevision,
+from spanvouch.contracts.verification import (
     EvidenceGap,
     FindingCode,
     FindingSeverity,
-    ReviewStatus,
-    RevisionOrigin,
     VerificationFinding,
     VerificationInput,
     VerificationMode,
     VerifierKind,
     VerifierReport,
     VerifierVerdict,
+)
+from spanvouch.invariants.engine import InvariantEngine
+from spanvouch.review.commands import CreateReviewCase, WorkflowEventType
+from spanvouch.review.evidence_verifier import EvidenceVerifier
+from spanvouch.review.models import (
+    DiagnosisRevision,
+    ReviewStatus,
+    RevisionOrigin,
     canonical_json,
     canonical_sha256,
 )

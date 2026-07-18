@@ -5,17 +5,19 @@ from typing import Any, Self
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from spanvouch.contracts.diagnosis import DiagnoserKind
-from spanvouch.review.models import (
-    DecisionAction,
-    DiagnosisRevision,
-    HumanReviewDecision,
+from spanvouch.contracts.verification import (
     ReviewInputSnapshot,
-    ReviewStatus,
-    RevisionOrigin,
     VerificationMode,
     VerifierKind,
     VerifierReport,
     VerifierVerdict,
+)
+from spanvouch.review.models import (
+    DecisionAction,
+    DiagnosisRevision,
+    HumanReviewDecision,
+    ReviewStatus,
+    RevisionOrigin,
     canonical_json,
 )
 from spanvouch.review.models import WorkflowEventType as WorkflowEventType
@@ -216,7 +218,7 @@ class AppendVerifierRun(TransitionCommand):
     def validate_report_event(self) -> Self:
         self.require_valid_transition()
         if (
-            self.report.verifier_kind is VerifierKind.SEMANTIC
+            self.report.verifier_kind == VerifierKind.SEMANTIC
             and self.lease_owner is None
         ):
             raise ValueError("semantic verifier result requires lease_owner")
@@ -273,7 +275,7 @@ class FinalizeSemanticFailure(ReviewCommand):
     def validate_atomic_transition(self) -> Self:
         verifier = self.verifier
         route = self.route
-        if verifier.report.verifier_kind is not VerifierKind.SEMANTIC:
+        if verifier.report.verifier_kind != VerifierKind.SEMANTIC:
             raise ValueError("semantic failure finalization requires a semantic report")
         if verifier.report.operational_error is None:
             raise ValueError("semantic failure finalization requires an operational error")
@@ -347,7 +349,7 @@ class ApplyHumanDecision(TransitionCommand):
             if self.correction_revision.revision_id != self.decision.resulting_revision_id:
                 raise ValueError("decision resulting revision must match correction revision")
             verifier_report = self.correction_verifier_report
-            if verifier_report.verifier_kind is not VerifierKind.DETERMINISTIC:
+            if verifier_report.verifier_kind != VerifierKind.DETERMINISTIC:
                 raise ValueError("correction verifier report must be deterministic")
             if verifier_report.verdict is not VerifierVerdict.VERIFIED:
                 raise ValueError("correction verifier report must be verified")

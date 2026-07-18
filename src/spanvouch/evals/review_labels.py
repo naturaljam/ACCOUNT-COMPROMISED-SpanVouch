@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from spanvouch.contracts.diagnosis import DiagnosisStatus
 from spanvouch.contracts.trace import TraceIR
+from spanvouch.contracts.verification import FindingCode, VerifierVerdict
 from spanvouch.evals.diagnosis_labels import (
     DiagnosisDatasetManifest,
     build_diagnosis_manifest,
@@ -28,7 +29,6 @@ from spanvouch.evals.generate_review_dataset import (
     ReviewDatasetManifest,
     validate_source_dataset,
 )
-from spanvouch.review.models import FindingCode, VerifierVerdict
 
 
 class ReviewGoldLabel(BaseModel):

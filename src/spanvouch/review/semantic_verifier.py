@@ -14,9 +14,7 @@ from pydantic import (
 )
 
 from spanvouch.contracts.diagnosis import ClaimStage, EvidenceSelector, ProviderUsage
-from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig, ModelProvider
-from spanvouch.failure_types import FailureType
-from spanvouch.review.models import (
+from spanvouch.contracts.verification import (
     EvidenceGap,
     FindingCode,
     FindingSeverity,
@@ -26,6 +24,10 @@ from spanvouch.review.models import (
     VerifierProvenance,
     VerifierReport,
     VerifierVerdict,
+)
+from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig, ModelProvider
+from spanvouch.failure_types import FailureType
+from spanvouch.review.models import (
     canonical_json,
     canonical_sha256,
 )
@@ -103,7 +105,7 @@ def _sorted_unique(values: Iterable[str]) -> tuple[str, ...]:
 
 
 class SemanticVerifier:
-    kind = VerifierKind.SEMANTIC
+    kind: str = VerifierKind.SEMANTIC
 
     def __init__(
         self,

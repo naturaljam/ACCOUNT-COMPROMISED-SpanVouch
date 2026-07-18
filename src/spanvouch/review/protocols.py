@@ -2,6 +2,9 @@ from datetime import datetime
 from typing import Protocol
 
 from spanvouch.contracts.diagnosis import DiagnoserKind, DiagnosisReport
+from spanvouch.contracts.verification import (
+    EvidenceGap,
+)
 from spanvouch.review.commands import (
     AppendDiagnosisRevision,
     AppendVerifierRun,
@@ -16,20 +19,8 @@ from spanvouch.review.commands import (
 from spanvouch.review.models import (
     DiagnosisReviewCase,
     DiagnosisReviewDetail,
-    EvidenceGap,
     ReviewRuntimeBundle,
-    VerificationInput,
-    VerifierKind,
-    VerifierReport,
 )
-
-
-class Verifier(Protocol):
-    kind: VerifierKind
-    version_fingerprint: str
-
-    async def verify(self, input_: VerificationInput) -> VerifierReport:
-        raise NotImplementedError
 
 
 class ReviewWorkflowRunner(Protocol):

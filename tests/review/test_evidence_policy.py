@@ -21,16 +21,18 @@ from spanvouch.contracts.trace import (
     SpanKind,
     SpanStatus,
 )
+from spanvouch.contracts.verification import (
+    FindingCode,
+    ReviewInputSnapshot,
+    VerificationInput,
+    VerifierVerdict,
+)
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
 from spanvouch.failure_types import FailureType
 from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.invariants.supportlab import supportlab_rules
 from spanvouch.review.evidence_verifier import EvidenceVerifier
 from spanvouch.review.models import (
-    FindingCode,
-    ReviewInputSnapshot,
-    VerificationInput,
-    VerifierVerdict,
     canonical_json,
     canonical_sha256,
 )

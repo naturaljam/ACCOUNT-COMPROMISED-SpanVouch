@@ -6,8 +6,9 @@ import json
 from pathlib import Path
 
 from spanvouch.contracts.diagnosis import DiagnoserKind
+from spanvouch.contracts.verification import VerificationMode
 from spanvouch.review.commands import CreateReviewCase, WorkflowEventType
-from spanvouch.review.models import ReviewStatus, VerificationMode, canonical_json
+from spanvouch.review.models import ReviewStatus, canonical_json
 from spanvouch.review.sqlite_repository import SQLiteReviewRepository
 from tests.review.factories import NOW, make_review_snapshot, make_revision
 

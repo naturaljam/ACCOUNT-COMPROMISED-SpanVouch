@@ -9,6 +9,11 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from spanvouch.contracts.diagnosis import DiagnoserKind
+from spanvouch.contracts.verification import (
+    VerificationMode,
+    VerifierKind,
+    VerifierVerdict,
+)
 from spanvouch.review import commands as review_commands
 from spanvouch.review.commands import (
     AppendDiagnosisRevision,
@@ -30,9 +35,6 @@ from spanvouch.review.models import (
     HumanReviewDecision,
     ReviewStatus,
     RevisionOrigin,
-    VerificationMode,
-    VerifierKind,
-    VerifierVerdict,
     canonical_json,
     canonical_sha256,
 )

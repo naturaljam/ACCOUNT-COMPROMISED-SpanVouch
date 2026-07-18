@@ -24,13 +24,14 @@ from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.invariants.supportlab import supportlab_rules
 from spanvouch.review.evidence_verifier import EvidenceVerifier
 from spanvouch.review.policy import DEFAULT_REVIEW_POLICY_VERSION
-from spanvouch.review.protocols import ReviewRepository, Verifier
+from spanvouch.review.protocols import ReviewRepository
 from spanvouch.review.reviser import DiagnosisReviser
 from spanvouch.review.semantic_verifier import SemanticVerifier
 from spanvouch.review.service import ReviewService
 from spanvouch.review.sqlite_repository import SQLiteReviewRepository
 from spanvouch.review.workflow import ReviewWorkflow
 from spanvouch.trace.repository import InMemoryTraceRepository, TraceRepository
+from spanvouch.verification.protocols import Verifier
 
 DEFAULT_REVIEW_DATABASE = Path(".data/spanvouch.db")
 

@@ -29,7 +29,7 @@ from spanvouch.trace.diagnostic_view import sanitize_diagnostic_trace_view
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
 
 if TYPE_CHECKING:
-    from spanvouch.review.models import EvidenceGap
+    from spanvouch.contracts.verification import EvidenceGap
 
 
 class _ClaimDraft(BaseModel):

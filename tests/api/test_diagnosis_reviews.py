@@ -9,6 +9,13 @@ from fastapi.testclient import TestClient
 
 from spanvouch.api.app import create_app
 from spanvouch.contracts.diagnosis import DiagnoserKind
+from spanvouch.contracts.verification import (
+    VerificationInput,
+    VerificationMode,
+    VerifierKind,
+    VerifierReport,
+    VerifierVerdict,
+)
 from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.diagnosis.errors import ProviderProtocolError, ProviderRequestError
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
@@ -18,11 +25,6 @@ from spanvouch.review.commands import ClaimReviewWork, CreateReviewCase
 from spanvouch.review.evidence_verifier import EvidenceVerifier
 from spanvouch.review.models import (
     ReviewStatus,
-    VerificationInput,
-    VerificationMode,
-    VerifierKind,
-    VerifierReport,
-    VerifierVerdict,
     WorkflowEventType,
     canonical_json,
 )

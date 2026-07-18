@@ -11,24 +11,26 @@ from spanvouch.contracts.diagnosis import (
     TaxonomyRef,
 )
 from spanvouch.contracts.trace import DiagnosticSpan, DiagnosticTraceView, SpanKind, SpanStatus
-from spanvouch.failure_types import FailureType
-from spanvouch.review.models import (
-    CorrectionClaim,
-    DiagnosisCorrectionDraft,
-    DiagnosisReviewCase,
-    DiagnosisRevision,
+from spanvouch.contracts.verification import (
     FindingCode,
     FindingSeverity,
     OperationalErrorMetadata,
     ReviewInputSnapshot,
-    ReviewStatus,
-    RevisionOrigin,
     VerificationFinding,
     VerificationMode,
     VerifierKind,
     VerifierProvenance,
     VerifierReport,
     VerifierVerdict,
+)
+from spanvouch.failure_types import FailureType
+from spanvouch.review.models import (
+    CorrectionClaim,
+    DiagnosisCorrectionDraft,
+    DiagnosisReviewCase,
+    DiagnosisRevision,
+    ReviewStatus,
+    RevisionOrigin,
     canonical_json,
     canonical_sha256,
 )
