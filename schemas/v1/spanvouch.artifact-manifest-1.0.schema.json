@@ -1,0 +1,457 @@
+{
+  "$defs": {
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "media_type": {
+          "minLength": 1,
+          "title": "Media Type",
+          "type": "string"
+        },
+        "path": {
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "media_type"
+      ],
+      "title": "ArtifactRef",
+      "type": "object"
+    },
+    "CodeProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "dirty_worktree": {
+          "title": "Dirty Worktree",
+          "type": "boolean"
+        },
+        "git_commit": {
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Git Commit",
+          "type": "string"
+        },
+        "repository_identity": {
+          "minLength": 1,
+          "title": "Repository Identity",
+          "type": "string"
+        }
+      },
+      "required": [
+        "git_commit",
+        "repository_identity",
+        "dirty_worktree"
+      ],
+      "title": "CodeProvenance",
+      "type": "object"
+    },
+    "CostProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "amount": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Amount"
+        },
+        "basis": {
+          "enum": [
+            "estimated",
+            "billed"
+          ],
+          "title": "Basis",
+          "type": "string"
+        },
+        "currency": {
+          "pattern": "^[A-Z]{3}$",
+          "title": "Currency",
+          "type": "string"
+        },
+        "pricing_ref": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pricing Ref"
+        }
+      },
+      "required": [
+        "currency",
+        "basis"
+      ],
+      "title": "CostProvenance",
+      "type": "object"
+    },
+    "DatasetProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "dataset_id": {
+          "minLength": 1,
+          "title": "Dataset Id",
+          "type": "string"
+        },
+        "manifest_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Manifest Sha256",
+          "type": "string"
+        },
+        "payloads": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ArtifactRef"
+          },
+          "title": "Payloads",
+          "type": "array"
+        },
+        "version": {
+          "minLength": 1,
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "dataset_id",
+        "version",
+        "manifest_sha256"
+      ],
+      "title": "DatasetProvenance",
+      "type": "object"
+    },
+    "ModelProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "endpoint_class": {
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_.-]*$",
+          "title": "Endpoint Class",
+          "type": "string"
+        },
+        "generation_config_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Generation Config Sha256",
+          "type": "string"
+        },
+        "model": {
+          "minLength": 1,
+          "title": "Model",
+          "type": "string"
+        },
+        "prompt_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Prompt Sha256",
+          "type": "string"
+        },
+        "provider": {
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_.-]*$",
+          "title": "Provider",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "model",
+        "endpoint_class",
+        "generation_config_sha256",
+        "prompt_sha256"
+      ],
+      "title": "ModelProvenance",
+      "type": "object"
+    },
+    "PackageProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_.-]*$",
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "minLength": 1,
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "title": "PackageProvenance",
+      "type": "object"
+    },
+    "RandomnessProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "deterministic_flags": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Deterministic Flags",
+          "type": "array"
+        },
+        "seed": {
+          "title": "Seed",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "seed"
+      ],
+      "title": "RandomnessProvenance",
+      "type": "object"
+    },
+    "RuntimeProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "architecture": {
+          "minLength": 1,
+          "title": "Architecture",
+          "type": "string"
+        },
+        "dependency_lock_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Dependency Lock Sha256",
+          "type": "string"
+        },
+        "os": {
+          "minLength": 1,
+          "title": "Os",
+          "type": "string"
+        },
+        "python": {
+          "minLength": 1,
+          "title": "Python",
+          "type": "string"
+        }
+      },
+      "required": [
+        "python",
+        "os",
+        "architecture",
+        "dependency_lock_sha256"
+      ],
+      "title": "RuntimeProvenance",
+      "type": "object"
+    },
+    "UsageProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "input_tokens": {
+          "minimum": 0,
+          "title": "Input Tokens",
+          "type": "integer"
+        },
+        "output_tokens": {
+          "minimum": 0,
+          "title": "Output Tokens",
+          "type": "integer"
+        },
+        "requests": {
+          "minimum": 0,
+          "title": "Requests",
+          "type": "integer"
+        },
+        "total_tokens": {
+          "minimum": 0,
+          "title": "Total Tokens",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "requests",
+        "input_tokens",
+        "output_tokens",
+        "total_tokens"
+      ],
+      "title": "UsageProvenance",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "artifact_id": {
+      "minLength": 1,
+      "title": "Artifact Id",
+      "type": "string"
+    },
+    "artifact_kind": {
+      "minLength": 1,
+      "title": "Artifact Kind",
+      "type": "string"
+    },
+    "code": {
+      "$ref": "#/$defs/CodeProvenance"
+    },
+    "command_name": {
+      "minLength": 1,
+      "title": "Command Name",
+      "type": "string"
+    },
+    "configuration": {
+      "$ref": "#/$defs/ArtifactRef"
+    },
+    "contracts": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "minProperties": 1,
+      "title": "Contracts",
+      "type": "object"
+    },
+    "cost": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CostProvenance"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "created_at_utc": {
+      "format": "date-time",
+      "title": "Created At Utc",
+      "type": "string"
+    },
+    "datasets": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/DatasetProvenance"
+      },
+      "title": "Datasets",
+      "type": "array"
+    },
+    "inputs": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ArtifactRef"
+      },
+      "title": "Inputs",
+      "type": "array"
+    },
+    "metrics_schema_ref": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Metrics Schema Ref"
+    },
+    "models": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ModelProvenance"
+      },
+      "title": "Models",
+      "type": "array"
+    },
+    "outputs": {
+      "items": {
+        "$ref": "#/$defs/ArtifactRef"
+      },
+      "minItems": 1,
+      "title": "Outputs",
+      "type": "array"
+    },
+    "package": {
+      "$ref": "#/$defs/PackageProvenance"
+    },
+    "parent_artifacts": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Parent Artifacts",
+      "type": "array"
+    },
+    "provider_status": {
+      "enum": [
+        "not_used",
+        "used",
+        "failed"
+      ],
+      "title": "Provider Status",
+      "type": "string"
+    },
+    "randomness": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RandomnessProvenance"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "runtime": {
+      "$ref": "#/$defs/RuntimeProvenance"
+    },
+    "schema_name": {
+      "const": "spanvouch.artifact-manifest",
+      "default": "spanvouch.artifact-manifest",
+      "title": "Schema Name",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "usage": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/UsageProvenance"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "artifact_id",
+    "artifact_kind",
+    "created_at_utc",
+    "command_name",
+    "code",
+    "package",
+    "contracts",
+    "configuration",
+    "runtime",
+    "outputs",
+    "provider_status"
+  ],
+  "title": "ArtifactManifest",
+  "type": "object"
+}
