@@ -18,6 +18,7 @@ from spanvouch.review.commands import (
     CreateReviewCase,
     FinalizeSemanticFailure,
     RenewReviewLease,
+    RouteCappedRevisionToHuman,
     RouteRevisionFailureToHuman,
     RouteToHumanReview,
 )
@@ -120,6 +121,11 @@ class ReviewRepository(Protocol):
         raise NotImplementedError
 
     async def route_to_human(self, command: RouteToHumanReview) -> DiagnosisReviewCase:
+        raise NotImplementedError
+
+    async def route_capped_revision_to_human(
+        self, command: RouteCappedRevisionToHuman
+    ) -> DiagnosisReviewCase:
         raise NotImplementedError
 
     async def route_revision_failure(

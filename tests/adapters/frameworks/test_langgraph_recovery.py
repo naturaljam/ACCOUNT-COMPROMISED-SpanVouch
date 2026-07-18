@@ -11,6 +11,7 @@ from spanvouch.adapters.frameworks.langgraph_review import (
 from spanvouch.adapters.storage.sqlite import SQLiteReviewRepository
 from spanvouch.contracts.diagnosis import DiagnoserKind
 from spanvouch.contracts.review import (
+    DiagnosisReviewCase,
     ReviewStatus,
 )
 from spanvouch.contracts.verification import (
@@ -18,6 +19,7 @@ from spanvouch.contracts.verification import (
     VerifierKind,
     VerifierVerdict,
 )
+from spanvouch.contracts.versioning import canonical_json
 from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.diagnosis.errors import (
     ProviderConfigurationError,
@@ -26,6 +28,7 @@ from spanvouch.diagnosis.errors import (
 )
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
 from spanvouch.review.application import ReviewApplication
+from spanvouch.review.commands import RouteCappedRevisionToHuman
 from spanvouch.review.errors import ReviewConflictError, ReviewWorkflowProviderError
 from spanvouch.verification.invariant_engine import InvariantEngine
 from tests.adapters.frameworks.test_langgraph_review import (
@@ -39,6 +42,195 @@ from tests.adapters.frameworks.test_langgraph_review import (
     _report,
     _workflow,
 )
+from tests.review.factories import NOW
+
+
+class CoordinatedCappedRouteRepository(SQLiteReviewRepository):
+    def __init__(self, database: Path) -> None:
+        super().__init__(database)
+        self.route_calls = 0
+        self.both_routes_entered = asyncio.Event()
+
+    async def route_capped_revision_to_human(
+        self, command: RouteCappedRevisionToHuman
+    ) -> DiagnosisReviewCase:
+        self.route_calls += 1
+        if self.route_calls == 2:
+            self.both_routes_entered.set()
+        await asyncio.wait_for(self.both_routes_entered.wait(), timeout=1.0)
+        return await super().route_capped_revision_to_human(command)
+
+
+async def _seed_capped_revision_state(
+    database: Path,
+    repository: SQLiteReviewRepository,
+    *,
+    status: ReviewStatus,
+) -> None:
+    await _create_case(
+        repository,
+        mode=VerificationMode.DETERMINISTIC,
+        diagnoser=DiagnoserKind.DEEPSEEK,
+    )
+    deterministic = FakeVerifier(
+        VerifierKind.DETERMINISTIC,
+        [
+            _report(
+                VerifierKind.DETERMINISTIC,
+                VerifierVerdict.NEEDS_EVIDENCE,
+                revision_number=0,
+                suffix="capped-initial",
+            ),
+            _report(
+                VerifierKind.DETERMINISTIC,
+                VerifierVerdict.NEEDS_EVIDENCE,
+                revision_number=1,
+                suffix="capped-final",
+            ),
+        ],
+    )
+    reviser = FakeReviser(
+        supported=(DiagnoserKind.DEEPSEEK,),
+        outcomes=[_deepseek_report()],
+    )
+    detail = await _workflow(
+        repository,
+        deterministic,
+        reviser=reviser,
+    ).run("case-review-1")
+    assert detail.case.status is ReviewStatus.AWAITING_HUMAN_REVIEW
+    assert detail.case.current_revision_number == 1
+    assert detail.case.evidence_revision_count == 1
+
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "DELETE FROM workflow_events WHERE case_id = ? AND event_type = ?",
+            ("case-review-1", "awaiting_human_review"),
+        )
+        connection.execute(
+            "UPDATE workflow_events SET event_type = ?, to_status = ? "
+            "WHERE case_id = ? AND event_sequence = "
+            "(SELECT MAX(event_sequence) FROM workflow_events WHERE case_id = ?)",
+            (
+                "revision_requested",
+                ReviewStatus.REVISION_REQUESTED.value,
+                "case-review-1",
+                "case-review-1",
+            ),
+        )
+        version = 6
+        if status is ReviewStatus.REVISING:
+            version = 7
+            connection.execute(
+                "INSERT INTO workflow_events("
+                "event_id, case_id, event_sequence, event_type, from_status, to_status, "
+                "case_version, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "event-capped-revision-started",
+                    "case-review-1",
+                    7,
+                    "revision_started",
+                    ReviewStatus.REVISION_REQUESTED.value,
+                    ReviewStatus.REVISING.value,
+                    version,
+                    canonical_json({"source": "capped-recovery-test"}),
+                    NOW.isoformat(),
+                ),
+            )
+        connection.execute(
+            "UPDATE review_cases SET status = ?, version = ?, lease_owner = NULL, "
+            "lease_expires_at = NULL, updated_at = ? WHERE case_id = ?",
+            (status.value, version, NOW.isoformat(), "case-review-1"),
+        )
+        connection.commit()
+
+
+@pytest.mark.parametrize(
+    "capped_status",
+    (ReviewStatus.REVISION_REQUESTED, ReviewStatus.REVISING),
+)
+async def test_capped_revision_race_routes_once_without_provider_or_second_revision(
+    tmp_path: Path,
+    capped_status: ReviewStatus,
+) -> None:
+    database = tmp_path / f"capped-{capped_status.value}.sqlite3"
+    repository = CoordinatedCappedRouteRepository(database)
+    await repository.initialize()
+    await _seed_capped_revision_state(database, repository, status=capped_status)
+    provider = FakeVerifier(VerifierKind.DETERMINISTIC, [])
+    reviser = FakeReviser(supported=(DiagnoserKind.DEEPSEEK,), outcomes=[])
+    route_ids = iter(("capped-route-1", "capped-route-2"))
+
+    def id_factory() -> str:
+        return next(route_ids)
+    first = _workflow(
+        repository,
+        provider,
+        reviser=reviser,
+        id_factory=id_factory,
+        lease_owner="capped-first",
+    )
+    second = _workflow(
+        repository,
+        provider,
+        reviser=reviser,
+        id_factory=id_factory,
+        lease_owner="capped-second",
+    )
+
+    first_detail, second_detail = await asyncio.gather(
+        first.resume("case-review-1"),
+        second.resume("case-review-1"),
+    )
+
+    assert first_detail.case.status is ReviewStatus.AWAITING_HUMAN_REVIEW
+    assert second_detail.case.status is ReviewStatus.AWAITING_HUMAN_REVIEW
+    assert provider.inputs == []
+    assert reviser.calls == []
+    assert len(first_detail.revisions) == 2
+    assert repository.route_calls == 2
+    assert [event for event, _ in _events(database)].count("awaiting_human_review") == 1
+
+
+async def test_capped_revising_state_does_not_steal_an_active_lease(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "capped-active-lease.sqlite3"
+    repository = SQLiteReviewRepository(database)
+    await repository.initialize()
+    await _seed_capped_revision_state(
+        database,
+        repository,
+        status=ReviewStatus.REVISING,
+    )
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE review_cases SET lease_owner = ?, lease_expires_at = ? "
+            "WHERE case_id = ?",
+            (
+                "still-active-worker",
+                (NOW + timedelta(minutes=1)).isoformat(),
+                "case-review-1",
+            ),
+        )
+        connection.commit()
+    provider = FakeVerifier(VerifierKind.DETERMINISTIC, [])
+    reviser = FakeReviser(supported=(DiagnoserKind.DEEPSEEK,), outcomes=[])
+
+    with pytest.raises(ReviewConflictError, match="review work lease is active"):
+        await _workflow(
+            repository,
+            provider,
+            reviser=reviser,
+            clock=MutableClock(),
+            id_factory=lambda: "active-capped-route",
+        ).resume("case-review-1")
+
+    detail = await repository.get_detail("case-review-1")
+    assert detail.case.status is ReviewStatus.REVISING
+    assert provider.inputs == []
+    assert reviser.calls == []
+    assert [event for event, _ in _events(database)].count("awaiting_human_review") == 0
 
 
 class BlockingSemanticVerifier:

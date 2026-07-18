@@ -248,6 +248,22 @@ class RouteToHumanReview(TransitionCommand):
         return self
 
 
+class RouteCappedRevisionToHuman(TransitionCommand):
+    def require_valid_transition(self) -> None:
+        if (
+            self.prior_status
+            not in {ReviewStatus.REVISION_REQUESTED, ReviewStatus.REVISING}
+            or self.target_status is not ReviewStatus.AWAITING_HUMAN_REVIEW
+            or self.event_type is not WorkflowEventType.AWAITING_HUMAN_REVIEW
+        ):
+            raise ValueError("invalid capped-revision human-route transition")
+
+    @model_validator(mode="after")
+    def validate_route(self) -> Self:
+        self.require_valid_transition()
+        return self
+
+
 class FinalizeSemanticFailure(ReviewCommand):
     verifier: AppendVerifierRun
     route: RouteToHumanReview

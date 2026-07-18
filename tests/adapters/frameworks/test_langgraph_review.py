@@ -32,6 +32,7 @@ from spanvouch.contracts.verification import (
 )
 from spanvouch.contracts.versioning import canonical_json, canonical_sha256
 from spanvouch.review.commands import CreateReviewCase, WorkflowEventType
+from spanvouch.review.transitions import ReviewRoute
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
 from spanvouch.verification.deterministic import DeterministicVerifier
 from spanvouch.verification.invariant_engine import InvariantEngine
@@ -236,7 +237,7 @@ def _workflow(
     semantic: FakeVerifier | None = None,
     reviser: FakeReviser | None = None,
     clock: Callable[[], datetime] | None = None,
-    id_factory: SequenceIds | None = None,
+    id_factory: Callable[[], str] | None = None,
     lease_owner: str = "workflow-worker",
     lease_token_factory: Callable[[], str] | None = None,
     lease_duration: timedelta = timedelta(seconds=30),
@@ -252,6 +253,12 @@ def _workflow(
         lease_token_factory=lease_token_factory,
         lease_duration=lease_duration,
     )
+
+
+def test_langgraph_route_mapping_handles_every_review_route() -> None:
+    from spanvouch.adapters.frameworks.langgraph_review import _LANGGRAPH_ROUTE_TARGETS
+
+    assert set(_LANGGRAPH_ROUTE_TARGETS) == set(ReviewRoute)
 
 
 async def test_deterministic_happy_path_uses_graph_and_routes_every_case_to_human(

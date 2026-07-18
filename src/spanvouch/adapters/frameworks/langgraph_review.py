@@ -44,6 +44,7 @@ from spanvouch.review.commands import (
     FinalizeSemanticFailure,
     RenewReviewLease,
     ReviewLeaseWork,
+    RouteCappedRevisionToHuman,
     RouteRevisionFailureToHuman,
     RouteToHumanReview,
     WorkflowEventType,
@@ -62,13 +63,24 @@ from spanvouch.verification.verdicts import MergedVerifierReports, merge_verifie
 ProviderWorkResult = TypeVar("ProviderWorkResult")
 ProviderFinalizationResult = TypeVar("ProviderFinalizationResult")
 
+_LANGGRAPH_ROUTE_TARGETS: dict[Hashable, str] = {
+    ReviewRoute.VERIFY_INITIAL: ReviewRoute.VERIFY_INITIAL.value,
+    ReviewRoute.REQUEST_REVISION: ReviewRoute.REQUEST_REVISION.value,
+    ReviewRoute.REVISE_ONCE: ReviewRoute.REVISE_ONCE.value,
+    ReviewRoute.VERIFY_FINAL: ReviewRoute.VERIFY_FINAL.value,
+    ReviewRoute.ROUTE_TO_HUMAN: ReviewRoute.ROUTE_TO_HUMAN.value,
+    ReviewRoute.END: END,
+}
+if set(_LANGGRAPH_ROUTE_TARGETS) != set(ReviewRoute):
+    raise RuntimeError("LangGraph route mapping must handle every ReviewRoute")
+
 
 class ReviewWorkflowState(TypedDict):
     case_id: str
     lease_owner: str
     verification_round: int
     composite_verdict: str | None
-    route: NotRequired[str]
+    route: NotRequired[ReviewRoute]
     lease_claimed: NotRequired[bool]
     provider_effect_committed: NotRequired[bool]
     provider_effect_kind: NotRequired[str]
@@ -146,30 +158,31 @@ class LangGraphReviewWorkflow:
     def _compile_graph(self) -> Any:
         graph = StateGraph(ReviewWorkflowState)
         graph.add_node("dispatch", self._dispatch)
-        graph.add_node("verify_initial", self._verify_initial)
-        graph.add_node("request_revision", self._request_revision)
-        graph.add_node("revise_once", self._revise_once)
-        graph.add_node("verify_final", self._verify_final)
-        graph.add_node("route_to_human", self._route_to_human)
+        graph.add_node(ReviewRoute.VERIFY_INITIAL.value, self._verify_initial)
+        graph.add_node(ReviewRoute.REQUEST_REVISION.value, self._request_revision)
+        graph.add_node(ReviewRoute.REVISE_ONCE.value, self._revise_once)
+        graph.add_node(ReviewRoute.VERIFY_FINAL.value, self._verify_final)
+        graph.add_node(ReviewRoute.ROUTE_TO_HUMAN.value, self._route_to_human)
         graph.add_edge(START, "dispatch")
-        routes: dict[Hashable, str] = {
-            "verify_initial": "verify_initial",
-            "request_revision": "request_revision",
-            "revise_once": "revise_once",
-            "verify_final": "verify_final",
-            "route_to_human": "route_to_human",
-            "end": END,
-        }
-        graph.add_conditional_edges("dispatch", self._route, routes)
-        graph.add_conditional_edges("verify_initial", self._route, routes)
-        graph.add_conditional_edges("request_revision", self._route, routes)
-        graph.add_conditional_edges("revise_once", self._route, routes)
-        graph.add_conditional_edges("verify_final", self._route, routes)
-        graph.add_edge("route_to_human", END)
+        graph.add_conditional_edges(
+            "dispatch", self._route, _LANGGRAPH_ROUTE_TARGETS
+        )
+        for source in (
+            ReviewRoute.VERIFY_INITIAL,
+            ReviewRoute.REQUEST_REVISION,
+            ReviewRoute.REVISE_ONCE,
+            ReviewRoute.VERIFY_FINAL,
+        ):
+            graph.add_conditional_edges(
+                source.value,
+                self._route,
+                _LANGGRAPH_ROUTE_TARGETS,
+            )
+        graph.add_edge(ReviewRoute.ROUTE_TO_HUMAN.value, END)
         return graph.compile()
 
     @staticmethod
-    def _route(state: ReviewWorkflowState) -> str:
+    def _route(state: ReviewWorkflowState) -> ReviewRoute:
         return state["route"]
 
     def _now(self) -> datetime:
@@ -343,7 +356,7 @@ class LangGraphReviewWorkflow:
     async def _dispatch(self, state: ReviewWorkflowState) -> ReviewWorkflowState:
         runtime = await self._repository.load_runtime(state["case_id"])
         route = next_route(runtime.case)
-        if route in {ReviewRoute.END, ReviewRoute.ROUTE_TO_HUMAN}:
+        if route is ReviewRoute.END:
             raise ReviewConflictError("review case cannot be resumed from its current status")
         return {
             **state,
@@ -353,7 +366,7 @@ class LangGraphReviewWorkflow:
                 if runtime.case.composite_verdict is not None
                 else None
             ),
-            "route": route.value,
+            "route": route,
             "lease_claimed": False,
         }
 
@@ -459,7 +472,7 @@ class LangGraphReviewWorkflow:
             if request_revision:
                 return self._state_after(
                     runtime,
-                    "request_revision",
+                    ReviewRoute.REQUEST_REVISION,
                     lease_owner=state["lease_owner"],
                     postcommit_state=state,
                 )
@@ -468,7 +481,7 @@ class LangGraphReviewWorkflow:
             runtime = await self._repository.load_runtime(case_id)
             return self._state_after(
                 runtime,
-                "route_to_human",
+                ReviewRoute.ROUTE_TO_HUMAN,
                 lease_owner=state["lease_owner"],
                 postcommit_state=state,
             )
@@ -556,7 +569,7 @@ class LangGraphReviewWorkflow:
                 if request_revision:
                     return self._state_after(
                         runtime,
-                        "request_revision",
+                        ReviewRoute.REQUEST_REVISION,
                         lease_owner=state["lease_owner"],
                         provider_effect_kind="semantic",
                         provider_effect_id=semantic.verifier_run_id,
@@ -567,7 +580,7 @@ class LangGraphReviewWorkflow:
         if semantic_committed and semantic is not None:
             return self._state_after(
                 runtime,
-                "route_to_human",
+                ReviewRoute.ROUTE_TO_HUMAN,
                 lease_owner=state["lease_owner"],
                 provider_effect_kind="semantic",
                 provider_effect_id=semantic.verifier_run_id,
@@ -575,7 +588,7 @@ class LangGraphReviewWorkflow:
             )
         return self._state_after(
             runtime,
-            "route_to_human",
+            ReviewRoute.ROUTE_TO_HUMAN,
             lease_owner=state["lease_owner"],
             postcommit_state=state,
         )
@@ -684,7 +697,7 @@ class LangGraphReviewWorkflow:
         return {
             **self._state_after(
                 runtime,
-                "revise_once",
+                ReviewRoute.REVISE_ONCE,
                 lease_owner=state["lease_owner"],
             ),
             "lease_claimed": True,
@@ -760,7 +773,7 @@ class LangGraphReviewWorkflow:
         runtime = await self._repository.load_runtime(claimed_runtime.case.case_id)
         return self._state_after(
             runtime,
-            "verify_final",
+            ReviewRoute.VERIFY_FINAL,
             lease_owner=state["lease_owner"],
             provider_effect_kind="revision",
             provider_effect_id=committed_revision.revision_id,
@@ -818,11 +831,49 @@ class LangGraphReviewWorkflow:
 
     async def _route_to_human(self, state: ReviewWorkflowState) -> ReviewWorkflowState:
         runtime = await self._repository.load_runtime(state["case_id"])
+        if runtime.case.status in {
+            ReviewStatus.REVISION_REQUESTED,
+            ReviewStatus.REVISING,
+        }:
+            if next_route(runtime.case) is not ReviewRoute.ROUTE_TO_HUMAN:
+                raise ReviewConflictError("review case has not reached the revision limit")
+            if runtime.case.composite_verdict is None:
+                raise ReviewConflictError("review case has no composite verdict")
+            try:
+                await self._repository.route_capped_revision_to_human(
+                    RouteCappedRevisionToHuman(
+                        case_id=runtime.case.case_id,
+                        expected_version=runtime.case.version,
+                        prior_status=runtime.case.status,
+                        target_status=ReviewStatus.AWAITING_HUMAN_REVIEW,
+                        event_id=self._id_factory(),
+                        event_type=WorkflowEventType.AWAITING_HUMAN_REVIEW,
+                        event_metadata_json=canonical_json(
+                            {
+                                "reason": "evidence_revision_limit_reached",
+                                "verdict": runtime.case.composite_verdict.value,
+                            }
+                        ),
+                        occurred_at=self._now(),
+                    )
+                )
+            except ReviewConflictError:
+                converged = await self._converged_human_route(state)
+                if converged is not None:
+                    return converged
+                raise
+            runtime = await self._repository.load_runtime(runtime.case.case_id)
+            return self._state_after(
+                runtime,
+                ReviewRoute.END,
+                lease_owner=state["lease_owner"],
+                postcommit_state=state,
+            )
         if runtime.case.status is not ReviewStatus.VERIFYING:
             if self._has_validated_external_progress(state, runtime):
                 return self._state_after(
                     runtime,
-                    "end",
+                    ReviewRoute.END,
                     lease_owner=state["lease_owner"],
                     postcommit_state=state,
                 )
@@ -846,6 +897,9 @@ class LangGraphReviewWorkflow:
                 )
             )
         except ReviewConflictError:
+            converged = await self._converged_human_route(state)
+            if converged is not None:
+                return converged
             converged = await self._durable_postcommit_state(state)
             if converged is not None:
                 return converged
@@ -853,7 +907,20 @@ class LangGraphReviewWorkflow:
         runtime = await self._repository.load_runtime(runtime.case.case_id)
         return self._state_after(
             runtime,
-            "end",
+            ReviewRoute.END,
+            lease_owner=state["lease_owner"],
+            postcommit_state=state,
+        )
+
+    async def _converged_human_route(
+        self, state: ReviewWorkflowState
+    ) -> ReviewWorkflowState | None:
+        runtime = await self._repository.load_runtime(state["case_id"])
+        if runtime.case.status is not ReviewStatus.AWAITING_HUMAN_REVIEW:
+            return None
+        return self._state_after(
+            runtime,
+            ReviewRoute.END,
             lease_owner=state["lease_owner"],
             postcommit_state=state,
         )
@@ -868,7 +935,7 @@ class LangGraphReviewWorkflow:
             return None
         return self._state_after(
             runtime,
-            "end",
+            ReviewRoute.END,
             lease_owner=state["lease_owner"],
             postcommit_state=state,
         )
@@ -1016,7 +1083,7 @@ class LangGraphReviewWorkflow:
     @staticmethod
     def _state_after(
         runtime: ReviewRuntimeBundle,
-        route: str,
+        route: ReviewRoute,
         *,
         lease_owner: str,
         provider_effect_kind: str | None = None,

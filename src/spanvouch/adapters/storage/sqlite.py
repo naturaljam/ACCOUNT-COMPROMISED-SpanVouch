@@ -50,6 +50,7 @@ from spanvouch.review.commands import (
     FinalizeSemanticFailure,
     RenewReviewLease,
     ReviewLeaseWork,
+    RouteCappedRevisionToHuman,
     RouteRevisionFailureToHuman,
     RouteToHumanReview,
     TransitionCommand,
@@ -207,6 +208,16 @@ class SQLiteReviewRepository:
             RouteToHumanReview, command, "invalid route to human command"
         )
         return await asyncio.to_thread(self._route_to_human, command)
+
+    async def route_capped_revision_to_human(
+        self, command: RouteCappedRevisionToHuman
+    ) -> DiagnosisReviewCase:
+        command = self._revalidate_command(
+            RouteCappedRevisionToHuman,
+            command,
+            "invalid capped revision route command",
+        )
+        return await asyncio.to_thread(self._route_capped_revision_to_human, command)
 
     async def route_revision_failure(
         self, command: RouteRevisionFailureToHuman
@@ -887,6 +898,62 @@ class SQLiteReviewRepository:
             ).fetchone()
             if verified_current_revision is None:
                 raise ReviewConflictError("verification required before human review")
+            cursor = connection.execute(
+                "UPDATE review_cases SET status = ?, version = version + 1, "
+                "lease_owner = NULL, lease_expires_at = NULL, updated_at = ? "
+                "WHERE case_id = ? AND version = ? AND status = ?",
+                (
+                    command.target_status.value,
+                    _timestamp(command.occurred_at),
+                    command.case_id,
+                    command.expected_version,
+                    command.prior_status.value,
+                ),
+            )
+            self._require_updated(cursor)
+            self._insert_transition_event(connection, command)
+            return self._read_case(connection, command.case_id)
+
+    def _route_capped_revision_to_human(
+        self, command: RouteCappedRevisionToHuman
+    ) -> DiagnosisReviewCase:
+        with self._transaction(write=True) as connection:
+            self._require_valid_transition(command)
+            if self._event_exists(connection, command.event_id):
+                if self._event_matches(
+                    connection,
+                    event_id=command.event_id,
+                    command=command,
+                    case_version=command.expected_version + 1,
+                ):
+                    state = self._require_state(connection, command.case_id)
+                    if (
+                        int(state["version"]) == command.expected_version + 1
+                        and str(state["status"]) == command.target_status.value
+                        and state["lease_owner"] is None
+                        and state["lease_expires_at"] is None
+                    ):
+                        return self._read_case(connection, command.case_id)
+                raise ReviewConflictError("duplicate workflow event")
+            state = self._require_state(connection, command.case_id)
+            self._require_cas(state, command.expected_version, command.prior_status)
+            if (
+                int(state["current_revision_number"]) < 1
+                and int(state["evidence_revision_count"]) < 1
+            ):
+                raise ReviewConflictError("evidence revision limit is not reached")
+            verified_current_revision = connection.execute(
+                "SELECT 1 FROM verifier_runs WHERE case_id = ? AND revision_number = ? LIMIT 1",
+                (command.case_id, int(state["current_revision_number"])),
+            ).fetchone()
+            if verified_current_revision is None:
+                raise ReviewConflictError("verification required before human review")
+            if (
+                state["lease_owner"] is not None
+                and state["lease_expires_at"] is not None
+                and _parse_timestamp(str(state["lease_expires_at"])) > command.occurred_at
+            ):
+                raise ReviewConflictError("review work lease is active")
             cursor = connection.execute(
                 "UPDATE review_cases SET status = ?, version = version + 1, "
                 "lease_owner = NULL, lease_expires_at = NULL, updated_at = ? "
