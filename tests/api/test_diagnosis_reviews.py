@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from spanvouch.adapters.storage.sqlite import SQLiteReviewRepository
 from spanvouch.api.app import create_app
 from spanvouch.contracts.diagnosis import DiagnoserKind
 from spanvouch.contracts.review import (
@@ -28,7 +29,6 @@ from spanvouch.invariants.supportlab import supportlab_rules
 from spanvouch.review.commands import ClaimReviewWork, CreateReviewCase
 from spanvouch.review.reviser import DiagnosisReviser
 from spanvouch.review.service import ReviewService
-from spanvouch.review.sqlite_repository import SQLiteReviewRepository
 from spanvouch.review.workflow import ReviewWorkflow
 from spanvouch.trace.repository import InMemoryTraceRepository
 from spanvouch.verification.deterministic import DeterministicVerifier

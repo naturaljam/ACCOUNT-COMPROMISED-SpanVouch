@@ -3,6 +3,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from spanvouch.adapters.storage.sqlite import SQLiteReviewRepository
 from spanvouch.contracts.diagnosis import (
     ClaimStage,
     DiagnoserKind,
@@ -30,7 +31,6 @@ from spanvouch.contracts.verification import (
 )
 from spanvouch.contracts.versioning import canonical_json, canonical_sha256
 from spanvouch.review.commands import CreateReviewCase, WorkflowEventType
-from spanvouch.review.sqlite_repository import SQLiteReviewRepository
 from spanvouch.review.workflow import ReviewWorkflow
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
 from spanvouch.verification.deterministic import DeterministicVerifier

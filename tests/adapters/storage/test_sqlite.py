@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel, ValidationError
 
+from spanvouch.adapters.storage.sqlite import SQLiteReviewRepository
+from spanvouch.adapters.storage.sqlite_schema import connect_database
 from spanvouch.contracts.diagnosis import DiagnoserKind
 from spanvouch.contracts.review import (
     DecisionAction,
@@ -37,8 +39,6 @@ from spanvouch.review.errors import (
     ReviewNotFoundError,
     ReviewPersistenceError,
 )
-from spanvouch.review.schema import connect_database
-from spanvouch.review.sqlite_repository import SQLiteReviewRepository
 from tests.review.factories import (
     NOW,
     make_correction_draft,

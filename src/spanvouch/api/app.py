@@ -10,6 +10,7 @@ from uuid import uuid4
 from fastapi import FastAPI
 
 from spanvouch.adapters.models.deepseek import DeepSeekConfig, DeepSeekProvider
+from spanvouch.adapters.storage.sqlite import SQLiteReviewRepository
 from spanvouch.api.routes.diagnoses import build_diagnosis_router
 from spanvouch.api.routes.diagnosis_reviews import build_diagnosis_review_router
 from spanvouch.api.routes.health import router as health_router
@@ -25,7 +26,6 @@ from spanvouch.review.policy import DEFAULT_REVIEW_POLICY_VERSION
 from spanvouch.review.protocols import ReviewRepository
 from spanvouch.review.reviser import DiagnosisReviser
 from spanvouch.review.service import ReviewService
-from spanvouch.review.sqlite_repository import SQLiteReviewRepository
 from spanvouch.review.workflow import ReviewWorkflow
 from spanvouch.trace.repository import InMemoryTraceRepository, TraceRepository
 from spanvouch.verification.deterministic import DeterministicVerifier

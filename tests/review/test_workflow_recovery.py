@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from spanvouch.adapters.storage.sqlite import SQLiteReviewRepository
 from spanvouch.contracts.diagnosis import DiagnoserKind
 from spanvouch.contracts.review import (
     ReviewStatus,
@@ -23,7 +24,6 @@ from spanvouch.diagnosis.errors import (
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
 from spanvouch.review.errors import ReviewConflictError
 from spanvouch.review.service import ReviewService
-from spanvouch.review.sqlite_repository import SQLiteReviewRepository
 from spanvouch.review.workflow import ReviewWorkflow, ReviewWorkflowProviderError
 from spanvouch.verification.invariant_engine import InvariantEngine
 from tests.review.test_workflow import (

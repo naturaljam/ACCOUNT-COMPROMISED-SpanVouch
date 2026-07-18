@@ -10,6 +10,10 @@ from typing import TypeVar, cast
 
 from pydantic import BaseModel, ValidationError
 
+from spanvouch.adapters.storage.sqlite_schema import (
+    connect_database,
+    initialize_database,
+)
 from spanvouch.contracts.diagnosis import (
     DiagnosisProvenance,
     DiagnosisReport,
@@ -58,7 +62,6 @@ from spanvouch.review.errors import (
     ReviewSchemaError,
 )
 from spanvouch.review.runtime import ReviewRuntimeBundle
-from spanvouch.review.schema import connect_database, initialize_database
 
 FailureInjector = Callable[[str], None]
 CommandT = TypeVar("CommandT", bound=BaseModel)

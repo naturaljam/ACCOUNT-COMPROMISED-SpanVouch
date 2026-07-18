@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from spanvouch.adapters.storage.sqlite import SQLiteReviewRepository
 from spanvouch.contracts.diagnosis import (
     ClaimStage,
     DiagnoserKind,
@@ -43,13 +44,12 @@ from spanvouch.review.commands import ApplyHumanDecision, CreateReviewCase
 from spanvouch.review.errors import ReviewConflictError, ReviewValidationError
 from spanvouch.review.runtime import ReviewRuntimeBundle
 from spanvouch.review.service import ReviewService
-from spanvouch.review.sqlite_repository import SQLiteReviewRepository
-from tests.review.factories import NOW, make_verifier_report
-from tests.review.test_sqlite_repository import (
+from tests.adapters.storage.test_sqlite import (
     _claim_command,
     _route_command,
     _verifier_command,
 )
+from tests.review.factories import NOW, make_verifier_report
 from tests.trace.test_diagnostic_view import load_trace
 
 
