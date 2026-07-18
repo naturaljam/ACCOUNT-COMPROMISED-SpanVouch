@@ -4,9 +4,9 @@ Updated: 2026-07-18
 
 ## Scope and provenance
 
-This document records reproducible Phase 3 evidence for the `diagnosis -> independent verification -> at most one evidence revision -> human decision` workflow. The Task 12 baseline at commit `578df55fc4cac36a8f522ce9e03c3c7f4111d117` and its later delivery/acceptance commits are historical evidence, not final merge-acceptance provenance for the current implementation.
+This document records reproducible Phase 3 evidence for the `diagnosis -> independent verification -> at most one evidence revision -> human decision` workflow. The Task 12 baseline at commit `578df55fc4cac36a8f522ce9e03c3c7f4111d117` and its later delivery/acceptance commits are historical evidence.
 
-The current implementation commit intentionally does not record a final code-under-test SHA or claim controller gates. After the code commit exists, the controller will run fresh acceptance gates against that exact SHA and add the result in a separate evidence-only documentation commit.
+Final controller acceptance was run against the exact code-under-test commit `66e8f5d36f7d46db50f7bd962a036fcc94affbe6`. This evidence-only documentation commit is intentionally separate from that code SHA, so the implementation under test remains unambiguous.
 
 The frozen review cohort contains 36 candidates: 20 unmodified rule reports and 16 deterministic mutations. It is bound to the frozen 20-trace SupportLab cohort.
 
@@ -73,11 +73,24 @@ The 2026-07-17 offline gate produced the following fresh evidence:
 - container runtime and data ownership: UID/GID `10001:10001`; `/data/afc.db` owned by `10001:10001` and writable;
 - isolated named volume cleanup: passed after the recovery assertion.
 
-The current correction's ordinary local verification passed 580 tests and strict mypy over 63 source files, with only the pre-existing Starlette/httpx deprecation warning. These counts are implementation evidence, not final controller acceptance; the evidence-only follow-up commit will record the exact code SHA and complete gate relationship.
+Final controller acceptance on `66e8f5d36f7d46db50f7bd962a036fcc94affbe6` produced:
+
+- 710 collected and passing tests with 93% total coverage;
+- Ruff clean and strict mypy clean over 63 source files;
+- the focused evaluation/delivery suite passing 37 tests;
+- 20/20 independent SQLite repository stability processes passing;
+- Phase 1 and Phase 3 regenerated manifests exactly matching the frozen manifests;
+- two byte-identical deterministic review reports with SHA-256 `ff6af27b596a65d67fe2bda432f296d40e3f4c14a8537975e85ed9a7820fd39e`;
+- deterministic status `complete` over 36 candidates, valid pass rate `1.0`, hard-defect recall `1.0`, unsupported-scope detection `1.0`, operational-error rate `0.0`, provider samples `0`, and provider tokens `0`;
+- Docker Compose configuration, pinned-image build, health, non-root runtime, persistence/restart, and cleanup gates passing.
+
+The only warning was the pre-existing Starlette/httpx `TestClient` deprecation warning.
 
 On this Windows workstation, `uv run pytest` resolves the test runner through a bundled runtime that cannot import the repository's `tests` namespace. The canonical `.venv\Scripts\python -m pytest --cov=afc --cov-report=term-missing` invocation uses the frozen synced environment and produced the passing full-suite evidence above. Linux CI continues to run the locked wheel installation with `uv run --no-sync`.
 
-No live result is inferred from these offline checks.
+No paid or live provider call was made during final acceptance, and no live result is inferred from these offline checks.
+
+The isolated Docker acceptance ingested `supportlab-trace-001`, created and confirmed a real review case, restarted the API container, and returned an exact terminal JSON match after recovery. The recovered aggregate contained one revision, one deterministic verifier report, and five ordered events. Runtime UID/GID and `/data` ownership were both `10001:10001`; the isolated container, network, and named volume were removed after the assertions passed.
 
 ## Security and recovery interpretation
 
