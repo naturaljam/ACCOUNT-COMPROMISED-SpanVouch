@@ -763,6 +763,22 @@ _ESCAPED_INNER_QUOTE_CASES = (
     (r'\"', r'\\\"'),
     (r"\'", r"\\\'"),
 )
+_COMPACT_VALUE_PREFIX_CORES = (
+    "apikey",
+    "accesskey",
+    "privatekey",
+    "userpassword",
+    "clientsecret",
+    "sessiontoken",
+)
+_COMPACT_SENSITIVE_VALUE_SUFFIXES = (
+    "credential",
+    "credentials",
+    "hash",
+    "key",
+    "string",
+    "value",
+)
 
 
 def _assert_sanitizer_fixed_point(source: str, expected: str) -> None:
@@ -1570,6 +1586,101 @@ def test_previous_values_keep_compact_alias_fallback_for_the_next_label() -> Non
         )
 
 
+def test_compact_credential_value_prefixes_share_mapping_parity() -> None:
+    for core, suffix, space in product(
+        _COMPACT_VALUE_PREFIX_CORES,
+        _COMPACT_SENSITIVE_VALUE_SUFFIXES,
+        (*_UNICODE_ZS_SPACES, "\t"),
+    ):
+        label = f"{core}{space}{suffix}"
+        source = f"message={label}=secret-one"
+        expected = f"message={label}={SECRET_REDACTION}"
+
+        assert sanitize_diagnostic_value({label: "secret-one"}) == {
+            label: SECRET_REDACTION
+        }
+        _assert_sanitizer_fixed_point(source, expected)
+
+
+def test_compact_credential_value_prefixes_follow_prior_boundaries() -> None:
+    boundaries = (
+        *_UNICODE_ZS_SPACES,
+        "\t",
+        ";",
+        "; ",
+        "|",
+        " | ",
+        "\N{FULLWIDTH SEMICOLON}",
+        "\N{IDEOGRAPHIC COMMA}",
+    )
+    for core, suffix, boundary in product(
+        _COMPACT_VALUE_PREFIX_CORES,
+        _COMPACT_SENSITIVE_VALUE_SUFFIXES,
+        boundaries,
+    ):
+        source = f"safe=ok{boundary}{core} {suffix}=secret-one"
+        expected = source.replace("secret-one", SECRET_REDACTION)
+        _assert_sanitizer_fixed_point(source, expected)
+
+
+def test_compact_credential_value_prefixes_preserve_punctuation_forms() -> None:
+    for core, suffix, punctuation in product(
+        _COMPACT_VALUE_PREFIX_CORES,
+        _COMPACT_SENSITIVE_VALUE_SUFFIXES,
+        ("_", "-", ".", "$", "/", "@", "[", "]", "(", ")", "{", "}"),
+    ):
+        label = f"{core}{punctuation}{suffix}"
+        source = f"message={label}=secret-one"
+        expected = f"message={label}={SECRET_REDACTION}"
+        assert sanitize_diagnostic_value({label: "secret-one"}) == {
+            label: SECRET_REDACTION
+        }
+        _assert_sanitizer_fixed_point(source, expected)
+
+
+def test_quoted_compact_credential_value_prefixes_redact_inner_values() -> None:
+    for core, suffix, wrapper in product(
+        _COMPACT_VALUE_PREFIX_CORES,
+        _COMPACT_SENSITIVE_VALUE_SUFFIXES,
+        _QUOTED_STRUCTURAL_WRAPPERS,
+    ):
+        source = (
+            f"message={wrapper}{core} {suffix}=secret-one{wrapper} field=ok"
+        )
+        expected = source.replace("secret-one", SECRET_REDACTION)
+        _assert_sanitizer_fixed_point(source, expected)
+
+
+def test_token_shaped_safe_values_remain_field_isolated() -> None:
+    for safe_value in ("secret-one", "token-shaped", "api-key"):
+        source = f"message={safe_value} field=ok"
+        _assert_sanitizer_fixed_point(source, source)
+
+
+def test_many_compact_credential_value_prefixes_remain_linear() -> None:
+    labels = tuple(
+        f"{core} {suffix}"
+        for core, suffix in product(
+            _COMPACT_VALUE_PREFIX_CORES,
+            _COMPACT_SENSITIVE_VALUE_SUFFIXES,
+        )
+    )
+    sources: list[str] = []
+    expected: list[str] = []
+    for index in range(2_000):
+        label = labels[index % len(labels)]
+        sources.append(f"message={label}=secret-{index} field=ok")
+        expected.append(
+            f"message={label}={SECRET_REDACTION} field=ok"
+        )
+
+    source = "; ".join(sources)
+    sanitized = sanitize_diagnostic_value(source)
+
+    assert sanitized == "; ".join(expected)
+    assert sanitize_diagnostic_value(sanitized) == sanitized
+
+
 def test_quoted_safe_assignment_values_sanitize_embedded_credentials() -> None:
     separators = (*_UNICODE_ZS_SPACES, "\t")
     for wrapper, separator, label, later_token in product(
@@ -2088,7 +2199,9 @@ def test_trace_view_preserves_safe_urls_and_redacts_punctuation_labels() -> None
                     "Cookie: token count\r\n"
                     "message=cookie-newline-boundary-safe\r\n"
                     "headers.cookie=api key\n"
-                    "result=header-newline-boundary-safe"
+                    "result=header-newline-boundary-safe\n"
+                    f"message=sessiontoken value={VALUE_SECRET} "
+                    "field=compact-prefix-e2e"
                 ),
             }
         }
@@ -2126,6 +2239,7 @@ def test_trace_view_preserves_safe_urls_and_redacts_punctuation_labels() -> None
     assert "note-terminal-safe" in message
     assert "cookie-newline-boundary-safe" in message
     assert "header-newline-boundary-safe" in message
+    assert "compact-prefix-e2e" in message
     assert "secret-one" not in message
     assert f"api_key=\r\n{SECRET_REDACTION} field=newline-field-safe" in message
     assert sanitize_diagnostic_trace_view(view) == view
