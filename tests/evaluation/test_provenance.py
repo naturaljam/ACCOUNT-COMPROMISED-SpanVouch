@@ -161,6 +161,139 @@ def test_publish_removes_just_published_bundle_when_report_replace_fails(
     assert not tuple(tmp_path.glob(".*.rollback-*"))
 
 
+def test_owned_quarantine_deletion_never_calls_path_rmtree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "report.json"
+    real_rmtree = shutil.rmtree
+    rollback_rmtree_called = False
+    from spanvouch.evaluation.artifacts import _publish_no_replace as real_publish
+
+    def fail_primary(source: Path, destination: Path) -> None:
+        if destination == output:
+            raise OSError("replace failure")
+        real_publish(source, destination)
+
+    def reject_quarantine_rmtree(path: object, *args: object, **kwargs: object) -> None:
+        nonlocal rollback_rmtree_called
+        candidate = Path(path)
+        if ".rollback-" in candidate.name:
+            rollback_rmtree_called = True
+            real_rmtree(candidate)
+            candidate.mkdir()
+            (candidate / "foreign-evidence.txt").write_bytes(b"must survive\n")
+            real_rmtree(candidate)
+            return
+        real_rmtree(candidate, *args, **kwargs)
+
+    monkeypatch.setattr("spanvouch.evaluation.provenance._publish_no_replace", fail_primary)
+    monkeypatch.setattr("spanvouch.evaluation.provenance.shutil.rmtree", reject_quarantine_rmtree)
+
+    with pytest.raises(OSError, match="replace failure"):
+        publish_report_and_bundle(
+            output=output,
+            render_report=lambda path: path.write_bytes(b'{"status":"complete"}\n'),
+            config={"schema_version": "1.0", "seed": 1, "allow_live_api": False},
+            command_name="spanvouch evaluate review",
+            artifact_kind="evaluation_bundle",
+            seed=1,
+            collector=FixedCollector(dirty=False),
+        )
+
+    assert rollback_rmtree_called is False
+    assert not manifest_path_for(output).parent.exists()
+    assert not tuple(tmp_path.glob(".*.rollback-*"))
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows handle-sharing probe")
+def test_windows_pinned_delete_blocks_quarantine_replacement_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "report.json"
+    foreign = tmp_path / "foreign-evidence"
+    foreign.mkdir()
+    marker = foreign / "marker.txt"
+    marker.write_bytes(b"foreign survives\n")
+    blocked = False
+    from spanvouch.evaluation.artifacts import _publish_no_replace as real_publish
+    from spanvouch.evaluation.provenance import _pin_windows_tree as real_pin
+
+    def fail_primary(source: Path, destination: Path) -> None:
+        if destination == output:
+            raise OSError("replace failure")
+        real_publish(source, destination)
+
+    def pin_then_attack(path: Path, kernel32: object) -> object:
+        nonlocal blocked
+        root = real_pin(path, kernel32)
+        try:
+            shutil.rmtree(path)
+        except OSError:
+            blocked = True
+        else:
+            path.mkdir()
+            (path / "foreign-evidence.txt").write_bytes(b"must survive\n")
+        return root
+
+    monkeypatch.setattr("spanvouch.evaluation.provenance._publish_no_replace", fail_primary)
+    monkeypatch.setattr(
+        "spanvouch.evaluation.provenance._pin_windows_tree", pin_then_attack
+    )
+
+    with pytest.raises(OSError, match="replace failure"):
+        publish_report_and_bundle(
+            output=output,
+            render_report=lambda path: path.write_bytes(b'{"status":"complete"}\n'),
+            config={"schema_version": "1.0", "seed": 1, "allow_live_api": False},
+            command_name="spanvouch evaluate review",
+            artifact_kind="evaluation_bundle",
+            seed=1,
+            collector=FixedCollector(dirty=False),
+        )
+
+    assert blocked is True
+    assert marker.read_bytes() == b"foreign survives\n"
+    assert not tuple(tmp_path.glob(".*.rollback-*"))
+
+
+def test_child_mutation_before_pinned_delete_is_restored_not_deleted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "report.json"
+    bundle = manifest_path_for(output).parent
+    mutated = b'{"foreign_mutation":true}\n'
+    from spanvouch.evaluation.artifacts import _publish_no_replace as real_publish
+    from spanvouch.evaluation.provenance import _delete_owned_quarantine as real_delete
+
+    def fail_primary(source: Path, destination: Path) -> None:
+        if destination == output:
+            raise OSError("replace failure")
+        real_publish(source, destination)
+
+    def mutate_then_delete(quarantine: Path, owner: object) -> bool:
+        (quarantine / "metrics.json").write_bytes(mutated)
+        return real_delete(quarantine, owner)
+
+    monkeypatch.setattr("spanvouch.evaluation.provenance._publish_no_replace", fail_primary)
+    monkeypatch.setattr(
+        "spanvouch.evaluation.provenance._delete_owned_quarantine", mutate_then_delete
+    )
+
+    with pytest.raises(OSError, match="replace failure"):
+        publish_report_and_bundle(
+            output=output,
+            render_report=lambda path: path.write_bytes(b'{"status":"complete"}\n'),
+            config={"schema_version": "1.0", "seed": 1, "allow_live_api": False},
+            command_name="spanvouch evaluate review",
+            artifact_kind="evaluation_bundle",
+            seed=1,
+            collector=FixedCollector(dirty=False),
+        )
+
+    assert (bundle / "metrics.json").read_bytes() == mutated
+    assert not tuple(tmp_path.glob(".*.rollback-*"))
+
+
 def test_rollback_restores_foreign_bundle_replacement_byte_exact(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
