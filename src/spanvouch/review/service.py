@@ -143,7 +143,7 @@ class ReviewService:
         self._diagnosis_service = diagnosis_service
         self._repository = repository
         self._workflow = workflow
-        if deterministic_verifier.kind is not VerifierKind.DETERMINISTIC:
+        if deterministic_verifier.kind != VerifierKind.DETERMINISTIC:
             raise ValueError("human correction requires the deterministic verifier")
         self._deterministic_verifier = deterministic_verifier
         self._id_factory = id_factory

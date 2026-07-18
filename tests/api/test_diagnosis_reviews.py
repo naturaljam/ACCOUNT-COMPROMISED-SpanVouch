@@ -24,15 +24,15 @@ from spanvouch.contracts.versioning import canonical_json
 from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.diagnosis.errors import ProviderProtocolError, ProviderRequestError
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
-from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.invariants.supportlab import supportlab_rules
 from spanvouch.review.commands import ClaimReviewWork, CreateReviewCase
-from spanvouch.review.evidence_verifier import EvidenceVerifier
 from spanvouch.review.reviser import DiagnosisReviser
 from spanvouch.review.service import ReviewService
 from spanvouch.review.sqlite_repository import SQLiteReviewRepository
 from spanvouch.review.workflow import ReviewWorkflow
 from spanvouch.trace.repository import InMemoryTraceRepository
+from spanvouch.verification.deterministic import DeterministicVerifier
+from spanvouch.verification.invariant_engine import InvariantEngine
 from tests.review.factories import NOW, make_review_snapshot, make_revision
 from tests.review.test_workflow import (
     FakeReviser,
@@ -120,7 +120,7 @@ def _real_workflow_app(
     repository = SQLiteReviewRepository(database)
     deterministic = RecordingVerifier(
         VerifierKind.DETERMINISTIC,
-        delegate=EvidenceVerifier(engine, policy_version="supportlab-review-v1"),
+        delegate=DeterministicVerifier(engine, policy_version="supportlab-review-v1"),
     )
     semantic = (
         RecordingVerifier(VerifierKind.SEMANTIC, error=semantic_error)

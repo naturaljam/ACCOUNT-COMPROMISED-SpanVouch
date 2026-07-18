@@ -23,13 +23,14 @@ from spanvouch.contracts.verification import (
     VerifierVerdict,
 )
 from spanvouch.contracts.versioning import (
+    canonical_bytes,
     canonical_json,
     canonical_sha256,
 )
-from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.invariants.supportlab import supportlab_rules
-from spanvouch.review.evidence_verifier import EvidenceVerifier
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
+from spanvouch.verification.deterministic import DeterministicVerifier
+from spanvouch.verification.invariant_engine import InvariantEngine
 from tests.review.factories import (
     make_diagnosis_report,
     make_review_snapshot,
@@ -176,8 +177,8 @@ def _critical_span_without_same_span_evidence(report: DiagnosisReport) -> Verifi
 
 
 @pytest.fixture
-def verifier() -> EvidenceVerifier:
-    return EvidenceVerifier(InvariantEngine(()), policy_version="review-policy-v1")
+def verifier() -> DeterministicVerifier:
+    return DeterministicVerifier(InvariantEngine(()), policy_version="review-policy-v1")
 
 
 @pytest.mark.parametrize(
@@ -205,7 +206,7 @@ def verifier() -> EvidenceVerifier:
     ),
 )
 async def test_integrity_defects_emit_exact_finding_code(
-    verifier: EvidenceVerifier,
+    verifier: DeterministicVerifier,
     mutate: Callable[[DiagnosisReport], VerificationInput],
     expected_code: FindingCode,
     revisable: bool,
@@ -221,7 +222,7 @@ async def test_integrity_defects_emit_exact_finding_code(
 
 
 async def test_valid_report_is_verified_without_findings_or_gaps(
-    verifier: EvidenceVerifier,
+    verifier: DeterministicVerifier,
 ) -> None:
     input_ = _verification_input(make_diagnosis_report())
 
@@ -234,7 +235,7 @@ async def test_valid_report_is_verified_without_findings_or_gaps(
 
 
 async def test_claim_referencing_only_noncritical_evidence_is_not_grounded(
-    verifier: EvidenceVerifier,
+    verifier: DeterministicVerifier,
 ) -> None:
     source = make_diagnosis_report()
     decoy = EvidenceCatalog.from_view(make_trace_view()).resolve(
@@ -272,7 +273,7 @@ async def test_claim_referencing_only_noncritical_evidence_is_not_grounded(
 
 
 async def test_tampered_snapshot_hash_is_non_revisable_integrity_failure(
-    verifier: EvidenceVerifier,
+    verifier: DeterministicVerifier,
 ) -> None:
     snapshot = make_review_snapshot()
     tampered = ReviewInputSnapshot.model_construct(
@@ -294,7 +295,7 @@ async def test_tampered_snapshot_hash_is_non_revisable_integrity_failure(
 
 
 async def test_duplicate_snapshot_span_ids_return_stable_integrity_failure(
-    verifier: EvidenceVerifier,
+    verifier: DeterministicVerifier,
 ) -> None:
     snapshot = make_review_snapshot()
     view = make_trace_view()
@@ -317,6 +318,8 @@ async def test_duplicate_snapshot_span_ids_return_stable_integrity_failure(
     second = await verifier.verify(input_)
 
     assert first == second
+    assert canonical_bytes(first) == canonical_bytes(second)
+    assert canonical_sha256(first) == canonical_sha256(second)
     assert tuple(finding.code for finding in first.findings) == (
         FindingCode.INVALID_VERIFIER_OUTPUT,
     )
@@ -326,7 +329,7 @@ async def test_duplicate_snapshot_span_ids_return_stable_integrity_failure(
 
 
 async def test_revisable_gaps_only_offer_locally_rebuilt_selectors(
-    verifier: EvidenceVerifier,
+    verifier: DeterministicVerifier,
 ) -> None:
     report = await verifier.verify(_unknown_selector(make_diagnosis_report()))
 
@@ -342,7 +345,7 @@ async def test_revisable_gaps_only_offer_locally_rebuilt_selectors(
 
 
 async def test_finding_and_gap_identity_is_deterministic(
-    verifier: EvidenceVerifier,
+    verifier: DeterministicVerifier,
 ) -> None:
     input_ = _unknown_claim_evidence(make_diagnosis_report())
 
@@ -355,7 +358,7 @@ async def test_finding_and_gap_identity_is_deterministic(
 
 
 async def test_all_applicable_findings_are_emitted_in_stable_order(
-    verifier: EvidenceVerifier,
+    verifier: DeterministicVerifier,
 ) -> None:
     report = make_diagnosis_report()
     unknown = _construct_evidence(
@@ -410,7 +413,7 @@ async def test_unsupported_abstention_preserves_separate_supported_hard_conflict
             ruleset_version="overlap-rules-v1",
         ),
     )
-    verifier = EvidenceVerifier(
+    verifier = DeterministicVerifier(
         InvariantEngine(supportlab_rules()),
         policy_version="review-policy-v1",
     )
@@ -481,7 +484,7 @@ async def test_unsupported_abstention_preserves_same_span_different_invariant() 
             ruleset_version="same-span-rules-v1",
         ),
     )
-    verifier = EvidenceVerifier(
+    verifier = DeterministicVerifier(
         InvariantEngine(supportlab_rules()),
         policy_version="review-policy-v1",
     )

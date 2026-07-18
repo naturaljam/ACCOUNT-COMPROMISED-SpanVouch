@@ -31,12 +31,12 @@ from spanvouch.diagnosis.protocols import (
     RevisionCapableDiagnoser,
 )
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
-from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.review.errors import ReviewConflictError
 from spanvouch.review.reviser import DiagnosisReviser
 from spanvouch.review.runtime import ReviewRuntimeBundle
 from spanvouch.trace.diagnostic_view import SECRET_REDACTION
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
+from spanvouch.verification.invariant_engine import InvariantEngine
 from tests.review.factories import (
     NOW,
     make_awaiting_human_case,

@@ -10,11 +10,11 @@ from spanvouch.diagnosis.errors import ProviderConfigurationError
 from spanvouch.evals.generate_review_dataset import DEFAULT_OUTPUT_DATASET, DEFAULT_SOURCE_DATASET
 from spanvouch.evals.review_labels import validate_review_dataset
 from spanvouch.evals.review_metrics import ReviewEvaluationReport, evaluate_review_candidates
-from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.invariants.supportlab import supportlab_rules
-from spanvouch.review.evidence_verifier import EvidenceVerifier
 from spanvouch.review.policy import DEFAULT_REVIEW_POLICY_VERSION as DEFAULT_POLICY_VERSION
 from spanvouch.review.semantic_verifier import SemanticVerifier
+from spanvouch.verification.deterministic import DeterministicVerifier
+from spanvouch.verification.invariant_engine import InvariantEngine
 from spanvouch.verification.protocols import Verifier
 
 
@@ -40,7 +40,9 @@ async def _run(
     semantic_candidate_ids: tuple[str, ...] = (),
 ) -> ReviewEvaluationReport:
     candidates, labels, _ = validate_review_dataset(dataset, source_dataset)
-    verifier = EvidenceVerifier(InvariantEngine(supportlab_rules()), policy_version=policy_version)
+    verifier = DeterministicVerifier(
+        InvariantEngine(supportlab_rules()), policy_version=policy_version
+    )
     return await evaluate_review_candidates(
         candidates=candidates,
         labels=labels,

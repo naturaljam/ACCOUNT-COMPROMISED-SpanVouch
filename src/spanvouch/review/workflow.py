@@ -51,8 +51,8 @@ from spanvouch.review.commands import (
 from spanvouch.review.errors import ReviewConflictError, ReviewError
 from spanvouch.review.protocols import ReviewRepository, ReviewReviser
 from spanvouch.review.runtime import ReviewRuntimeBundle
-from spanvouch.review.verdicts import MergedVerifierReports, merge_verifier_reports
 from spanvouch.verification.protocols import Verifier
+from spanvouch.verification.verdicts import MergedVerifierReports, merge_verifier_reports
 
 ProviderWorkResult = TypeVar("ProviderWorkResult")
 ProviderFinalizationResult = TypeVar("ProviderFinalizationResult")
@@ -128,9 +128,9 @@ class ReviewWorkflow:
         lease_token_factory: Callable[[], str] | None = None,
         lease_duration: timedelta,
     ) -> None:
-        if deterministic_verifier.kind is not VerifierKind.DETERMINISTIC:
+        if deterministic_verifier.kind != VerifierKind.DETERMINISTIC:
             raise ValueError("deterministic_verifier must be deterministic")
-        if semantic_verifier is not None and semantic_verifier.kind is not VerifierKind.SEMANTIC:
+        if semantic_verifier is not None and semantic_verifier.kind != VerifierKind.SEMANTIC:
             raise ValueError("semantic_verifier must be semantic")
         if not lease_owner:
             raise ValueError("lease_owner must not be empty")

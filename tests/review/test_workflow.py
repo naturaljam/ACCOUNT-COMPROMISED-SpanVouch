@@ -29,12 +29,12 @@ from spanvouch.contracts.verification import (
     VerifierVerdict,
 )
 from spanvouch.contracts.versioning import canonical_json, canonical_sha256
-from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.review.commands import CreateReviewCase, WorkflowEventType
-from spanvouch.review.evidence_verifier import EvidenceVerifier
 from spanvouch.review.sqlite_repository import SQLiteReviewRepository
 from spanvouch.review.workflow import ReviewWorkflow
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
+from spanvouch.verification.deterministic import DeterministicVerifier
+from spanvouch.verification.invariant_engine import InvariantEngine
 from tests.review.factories import (
     NOW,
     make_diagnosis_report,
@@ -448,7 +448,7 @@ async def test_identical_report_bytes_reverify_with_revision_safe_run_identity(
             created_at=NOW,
         )
     )
-    verifier = EvidenceVerifier(InvariantEngine(()), policy_version="review-policy-v1")
+    verifier = DeterministicVerifier(InvariantEngine(()), policy_version="review-policy-v1")
     reviser = FakeReviser(
         supported=(DiagnoserKind.DEEPSEEK,), outcomes=[same_report]
     )

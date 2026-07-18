@@ -21,11 +21,11 @@ from spanvouch.diagnosis.errors import (
     ProviderRequestError,
 )
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
-from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.review.errors import ReviewConflictError
 from spanvouch.review.service import ReviewService
 from spanvouch.review.sqlite_repository import SQLiteReviewRepository
 from spanvouch.review.workflow import ReviewWorkflow, ReviewWorkflowProviderError
+from spanvouch.verification.invariant_engine import InvariantEngine
 from tests.review.test_workflow import (
     FakeReviser,
     FakeVerifier,

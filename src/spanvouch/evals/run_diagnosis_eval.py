@@ -14,8 +14,8 @@ from spanvouch.diagnosis.llm_diagnoser import LlmDiagnoser
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
 from spanvouch.evals.diagnosis_labels import DiagnosisGoldLabel, load_diagnosis_labels
 from spanvouch.evals.diagnosis_metrics import DiagnosisEvaluationReport, evaluate_diagnoser
-from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.invariants.supportlab import supportlab_rules
+from spanvouch.verification.invariant_engine import InvariantEngine
 
 DEFAULT_DATASET = Path("evals/datasets/supportlab-v1")
 DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"

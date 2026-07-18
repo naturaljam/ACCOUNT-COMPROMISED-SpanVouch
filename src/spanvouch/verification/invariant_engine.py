@@ -1,6 +1,6 @@
 from hashlib import sha256
 
-from spanvouch.invariants.models import InvariantResult, InvariantRule, RuleContext
+from spanvouch.verification.invariants import InvariantResult, InvariantRule, RuleContext
 
 
 class InvariantEngine:

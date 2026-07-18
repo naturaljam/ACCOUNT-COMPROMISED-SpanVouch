@@ -13,9 +13,14 @@ from spanvouch.contracts.diagnosis import (
 )
 from spanvouch.contracts.trace import DiagnosticContext
 from spanvouch.failure_types import SUPPORTED_DIAGNOSIS_FAILURE_TYPES, FailureType
-from spanvouch.invariants.engine import InvariantEngine
-from spanvouch.invariants.models import InvariantResult, InvariantStatus, RuleContext, RuleScope
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
+from spanvouch.verification.invariant_engine import InvariantEngine
+from spanvouch.verification.invariants import (
+    InvariantResult,
+    InvariantStatus,
+    RuleContext,
+    RuleScope,
+)
 
 
 def _unique_evidence(findings: tuple[InvariantResult, ...]) -> tuple[EvidenceRef, ...]:

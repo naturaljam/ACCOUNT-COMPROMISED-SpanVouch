@@ -3,7 +3,7 @@ from decimal import Decimal, InvalidOperation
 from spanvouch.contracts.diagnosis import EvidenceRef, EvidenceSelector
 from spanvouch.contracts.trace import DiagnosticSpan
 from spanvouch.failure_types import FailureType
-from spanvouch.invariants.models import (
+from spanvouch.verification.invariants import (
     InvariantResult,
     InvariantRule,
     InvariantStatus,

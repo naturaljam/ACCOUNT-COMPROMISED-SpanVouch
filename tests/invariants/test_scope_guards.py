@@ -4,10 +4,10 @@ import pytest
 
 from spanvouch.contracts.diagnosis import DiagnosisStatus
 from spanvouch.evals.diagnosis_labels import load_diagnosis_labels
-from spanvouch.invariants.models import InvariantStatus, RuleContext, RuleScope
 from spanvouch.invariants.supportlab import unsupported_guards
 from spanvouch.trace.diagnostic_view import TraceProjector
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
+from spanvouch.verification.invariants import InvariantStatus, RuleContext, RuleScope
 from tests.trace.test_diagnostic_view import load_trace
 
 LABELS = Path("evals/datasets/supportlab-v1/diagnosis-labels-v1.jsonl")

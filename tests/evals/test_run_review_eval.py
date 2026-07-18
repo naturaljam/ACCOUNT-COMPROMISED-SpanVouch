@@ -111,7 +111,7 @@ def test_default_deterministic_cli_does_not_construct_live_provider(
 def test_default_deterministic_cli_fails_a_stable_degraded_report(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    original = review_eval_module.EvidenceVerifier
+    original = review_eval_module.DeterministicVerifier
 
     class DegradedVerifier:
         def __init__(self, *args: object, **kwargs: object) -> None:
@@ -124,7 +124,7 @@ def test_default_deterministic_cli_fails_a_stable_degraded_report(
                 return report.model_copy(update={"verdict": VerifierVerdict.REVIEW_REQUIRED})
             return report
 
-    monkeypatch.setattr(review_eval_module, "EvidenceVerifier", DegradedVerifier)
+    monkeypatch.setattr(review_eval_module, "DeterministicVerifier", DegradedVerifier)
     output = tmp_path / "degraded.json"
 
     assert main(["--output", str(output)]) == 1

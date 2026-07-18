@@ -27,9 +27,7 @@ from spanvouch.contracts.verification import (
 from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.diagnosis.errors import ProviderProtocolError
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
-from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.invariants.supportlab import supportlab_rules
-from spanvouch.review.evidence_verifier import EvidenceVerifier
 from spanvouch.review.reviser import DiagnosisReviser
 from spanvouch.review.semantic_verifier import SemanticVerifier
 from spanvouch.review.service import ReviewService
@@ -38,6 +36,8 @@ from spanvouch.review.workflow import ReviewWorkflow, ReviewWorkflowProviderErro
 from spanvouch.trace.diagnostic_view import SECRET_REDACTION, TraceProjector
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
 from spanvouch.trace.repository import InMemoryTraceRepository
+from spanvouch.verification.deterministic import DeterministicVerifier
+from spanvouch.verification.invariant_engine import InvariantEngine
 
 ROOT = Path(__file__).resolve().parents[2]
 SENTINEL_KEY = "sentinel" + "-private-deepseek-key"
@@ -244,7 +244,7 @@ def _review_runtime(
     diagnoser = RuleDiagnoser(engine)
     diagnosis_service = DiagnosisEngine({DiagnoserKind.RULES: diagnoser})
     repository = SQLiteReviewRepository(database)
-    deterministic = EvidenceVerifier(engine, policy_version="supportlab-review-v1")
+    deterministic = DeterministicVerifier(engine, policy_version="supportlab-review-v1")
     semantic = FailingSemanticVerifier()
     workflow = ReviewWorkflow(
         repository=repository,

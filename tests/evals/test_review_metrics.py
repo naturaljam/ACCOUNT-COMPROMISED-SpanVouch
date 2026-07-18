@@ -6,9 +6,9 @@ from spanvouch.contracts.trace import TraceIR
 from spanvouch.evals.generate_review_dataset import MutationKind
 from spanvouch.evals.review_labels import validate_review_dataset
 from spanvouch.evals.review_metrics import evaluate_review_candidates
-from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.invariants.supportlab import supportlab_rules
-from spanvouch.review.evidence_verifier import EvidenceVerifier
+from spanvouch.verification.deterministic import DeterministicVerifier
+from spanvouch.verification.invariant_engine import InvariantEngine
 
 DATASET = Path("evals/datasets/supportlab-review-v1")
 SOURCE_DATASET = Path("evals/datasets/supportlab-v1")
@@ -24,7 +24,7 @@ def _traces() -> tuple[TraceIR, ...]:
 
 async def test_deterministic_verifier_meets_frozen_review_hard_gate() -> None:
     candidates, labels, _ = validate_review_dataset(DATASET, SOURCE_DATASET)
-    verifier = EvidenceVerifier(
+    verifier = DeterministicVerifier(
         InvariantEngine(supportlab_rules()), policy_version="review-policy-v1"
     )
 
@@ -58,7 +58,7 @@ async def test_all_sixteen_mutations_have_exact_expected_findings() -> None:
         candidates=candidates,
         labels=labels,
         traces=_traces(),
-        verifier=EvidenceVerifier(
+        verifier=DeterministicVerifier(
             InvariantEngine(supportlab_rules()), policy_version="review-policy-v1"
         ),
         policy_version="review-policy-v1",
@@ -82,7 +82,7 @@ async def test_twenty_valid_reports_pass_without_false_blocks_or_findings() -> N
         candidates=candidates,
         labels=labels,
         traces=_traces(),
-        verifier=EvidenceVerifier(
+        verifier=DeterministicVerifier(
             InvariantEngine(supportlab_rules()), policy_version="review-policy-v1"
         ),
         policy_version="review-policy-v1",
@@ -105,7 +105,7 @@ async def test_evaluation_report_samples_do_not_embed_gold_labels() -> None:
         candidates=candidates,
         labels=labels,
         traces=_traces(),
-        verifier=EvidenceVerifier(
+        verifier=DeterministicVerifier(
             InvariantEngine(supportlab_rules()), policy_version="review-policy-v1"
         ),
         policy_version="review-policy-v1",
@@ -147,7 +147,7 @@ async def test_direct_evaluation_rejects_misleading_family_denominators() -> Non
             candidates=reshaped_candidates,
             labels=reshaped_labels,
             traces=_traces(),
-            verifier=EvidenceVerifier(
+            verifier=DeterministicVerifier(
                 InvariantEngine(supportlab_rules()), policy_version="review-policy-v1"
             ),
             policy_version="review-policy-v1",
@@ -179,7 +179,7 @@ async def test_direct_evaluation_rejects_duplicate_candidate_and_label_ids() -> 
             candidates=duplicated_candidates,
             labels=duplicated_labels,
             traces=_traces(),
-            verifier=EvidenceVerifier(
+            verifier=DeterministicVerifier(
                 InvariantEngine(supportlab_rules()), policy_version="review-policy-v1"
             ),
             policy_version="review-policy-v1",
@@ -224,7 +224,7 @@ async def test_direct_evaluation_rejects_swapped_unsupported_source_ids() -> Non
             candidates=tuple(reshaped_candidates),
             labels=reshaped_labels,
             traces=_traces(),
-            verifier=EvidenceVerifier(
+            verifier=DeterministicVerifier(
                 InvariantEngine(supportlab_rules()), policy_version="review-policy-v1"
             ),
             policy_version="review-policy-v1",
@@ -257,7 +257,7 @@ async def test_direct_evaluation_rejects_report_bound_to_another_trace_id() -> N
             candidates=reshaped,
             labels=labels,
             traces=traces,
-            verifier=EvidenceVerifier(
+            verifier=DeterministicVerifier(
                 InvariantEngine(supportlab_rules()), policy_version="review-policy-v1"
             ),
             policy_version="review-policy-v1",

@@ -6,17 +6,17 @@ from spanvouch.contracts.diagnosis import AbstainReason, DiagnosisStatus, Eviden
 from spanvouch.contracts.trace import DiagnosticContext
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
 from spanvouch.failure_types import FailureType
-from spanvouch.invariants.engine import InvariantEngine
-from spanvouch.invariants.models import (
+from spanvouch.invariants.supportlab import supportlab_rules
+from spanvouch.trace.diagnostic_view import TraceProjector
+from spanvouch.trace.evidence_catalog import EvidenceCatalog
+from spanvouch.verification.invariant_engine import InvariantEngine
+from spanvouch.verification.invariants import (
     InvariantResult,
     InvariantStatus,
     RuleContext,
     RuleScope,
     Severity,
 )
-from spanvouch.invariants.supportlab import supportlab_rules
-from spanvouch.trace.diagnostic_view import TraceProjector
-from spanvouch.trace.evidence_catalog import EvidenceCatalog
 from tests.trace.test_diagnostic_view import load_trace
 
 

@@ -2,16 +2,16 @@ from dataclasses import dataclass
 
 import pytest
 
-from spanvouch.invariants.engine import InvariantEngine
-from spanvouch.invariants.models import (
+from spanvouch.trace.diagnostic_view import TraceProjector
+from spanvouch.trace.evidence_catalog import EvidenceCatalog
+from spanvouch.verification.invariant_engine import InvariantEngine
+from spanvouch.verification.invariants import (
     InvariantResult,
     InvariantStatus,
     RuleContext,
     RuleScope,
     Severity,
 )
-from spanvouch.trace.diagnostic_view import TraceProjector
-from spanvouch.trace.evidence_catalog import EvidenceCatalog
 from tests.trace.test_diagnostic_view import load_trace
 
 

@@ -19,7 +19,6 @@ from spanvouch.contracts.verification import (
     FindingSeverity,
     VerificationFinding,
     VerificationInput,
-    VerifierKind,
     VerifierProvenance,
     VerifierReport,
     VerifierVerdict,
@@ -29,10 +28,15 @@ from spanvouch.contracts.versioning import (
     canonical_sha256,
 )
 from spanvouch.failure_types import FailureType
-from spanvouch.invariants.engine import InvariantEngine
-from spanvouch.invariants.models import InvariantResult, InvariantStatus, RuleContext, RuleScope
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
 from spanvouch.trace.evidence_catalog import canonical_json as evidence_json
+from spanvouch.verification.invariant_engine import InvariantEngine
+from spanvouch.verification.invariants import (
+    InvariantResult,
+    InvariantStatus,
+    RuleContext,
+    RuleScope,
+)
 
 _FINDING_ORDER = {
     FindingCode.INVALID_VERIFIER_OUTPUT: 0,
@@ -272,8 +276,8 @@ def _unique_gaps(gaps: Iterable[EvidenceGap]) -> tuple[EvidenceGap, ...]:
     return tuple(sorted(by_id.values(), key=lambda gap: gap.gap_id))
 
 
-class EvidenceVerifier:
-    kind: str = VerifierKind.DETERMINISTIC
+class DeterministicVerifier:
+    kind: str = "deterministic"
 
     def __init__(self, engine: InvariantEngine, *, policy_version: str) -> None:
         self._engine = engine
@@ -281,8 +285,8 @@ class EvidenceVerifier:
         version_source = f"evidence-verifier-v1:{policy_version}:{engine.ruleset_version}"
         self.version_fingerprint = sha256(version_source.encode("utf-8")).hexdigest()
 
-    async def verify(self, input_: VerificationInput) -> VerifierReport:
-        report_hash = canonical_sha256(input_.report)
+    async def verify(self, request: VerificationInput) -> VerifierReport:
+        report_hash = canonical_sha256(request.report)
         findings: dict[FindingCode, tuple[bool, set[str], set[str]]] = {}
         gaps: list[EvidenceGap] = []
 
@@ -308,22 +312,22 @@ class EvidenceVerifier:
 
         binding_valid = True
         if (
-            report_hash != input_.report_sha256
-            or input_.report.trace_id != input_.snapshot.trace_id
-            or input_.report.run_id != input_.snapshot.run_id
-            or not _provenance_is_complete(input_.report)
+            report_hash != request.report_sha256
+            or request.report.trace_id != request.snapshot.trace_id
+            or request.report.run_id != request.snapshot.run_id
+            or not _provenance_is_complete(request.report)
         ):
             binding_valid = False
             add_finding(FindingCode.INVALID_VERIFIER_OUTPUT, revisable=False)
 
         view: DiagnosticTraceView | None = None
         try:
-            parsed_view = json.loads(input_.snapshot.view_json)
+            parsed_view = json.loads(request.snapshot.view_json)
             view = DiagnosticTraceView.model_validate(parsed_view)
             snapshot_hash = canonical_sha256(view)
             if (
-                snapshot_hash != input_.snapshot.input_sha256
-                or input_.snapshot.view_json != canonical_json(view)
+                snapshot_hash != request.snapshot.input_sha256
+                or request.snapshot.view_json != canonical_json(view)
             ):
                 binding_valid = False
                 view = None
@@ -332,7 +336,7 @@ class EvidenceVerifier:
             binding_valid = False
             add_finding(FindingCode.INVALID_VERIFIER_OUTPUT, revisable=False)
 
-        report = input_.report
+        report = request.report
         evidence_ids = tuple(evidence.evidence_id for evidence in report.evidence)
         selectors = tuple(evidence.canonical for evidence in report.evidence)
         duplicate_references = (
@@ -726,13 +730,13 @@ class EvidenceVerifier:
             verdict = VerifierVerdict.REVIEW_REQUIRED
 
         run_source = (
-            f"{self.version_fingerprint}:{report_hash}:{input_.snapshot.input_sha256}:"
-            f"{input_.revision_number}"
+            f"{self.version_fingerprint}:{report_hash}:{request.snapshot.input_sha256}:"
+            f"{request.revision_number}"
         )
         verifier_run_id = f"verifier-{sha256(run_source.encode('utf-8')).hexdigest()}"
         return VerifierReport(
             verifier_run_id=verifier_run_id,
-            revision_number=input_.revision_number,
+            revision_number=request.revision_number,
             report_sha256=report_hash,
             verifier_kind=self.kind,
             verdict=verdict,
@@ -743,6 +747,6 @@ class EvidenceVerifier:
                 verifier_version=self.version_fingerprint,
                 policy_version=self._policy_version,
             ),
-            started_at=input_.snapshot.created_at,
-            completed_at=input_.snapshot.created_at,
+            started_at=request.snapshot.created_at,
+            completed_at=request.snapshot.created_at,
         )

@@ -15,9 +15,9 @@ from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
 from spanvouch.evals.diagnosis_labels import load_diagnosis_labels
 from spanvouch.evals.diagnosis_metrics import evaluate_diagnoser
-from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.invariants.supportlab import supportlab_rules
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
+from spanvouch.verification.invariant_engine import InvariantEngine
 
 DATASET = Path("evals/datasets/supportlab-v1")
 

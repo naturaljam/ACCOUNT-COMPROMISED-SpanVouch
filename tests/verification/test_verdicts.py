@@ -10,7 +10,7 @@ from spanvouch.contracts.verification import (
     VerifierKind,
     VerifierVerdict,
 )
-from spanvouch.review.verdicts import (
+from spanvouch.verification.verdicts import (
     assert_revision_request_allowed,
     assert_transition,
     merge_verifier_reports,

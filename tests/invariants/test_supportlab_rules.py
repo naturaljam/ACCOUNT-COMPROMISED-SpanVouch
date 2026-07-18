@@ -1,7 +1,6 @@
 import pytest
 
 from spanvouch.failure_types import FailureType
-from spanvouch.invariants.models import InvariantRule, InvariantStatus, RuleContext
 from spanvouch.invariants.supportlab import (
     FinalStateRule,
     KnownToolRule,
@@ -12,6 +11,7 @@ from spanvouch.invariants.supportlab import (
 )
 from spanvouch.trace.diagnostic_view import TraceProjector
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
+from spanvouch.verification.invariants import InvariantRule, InvariantStatus, RuleContext
 from tests.trace.test_diagnostic_view import load_trace
 
 

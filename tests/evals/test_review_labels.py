@@ -24,9 +24,9 @@ from spanvouch.evals.review_labels import (
     validate_review_join,
     validate_source_run_ids,
 )
-from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.invariants.supportlab import supportlab_rules
-from spanvouch.review.evidence_verifier import EvidenceVerifier
+from spanvouch.verification.deterministic import DeterministicVerifier
+from spanvouch.verification.invariant_engine import InvariantEngine
 from tests.trace.test_diagnostic_view import project_trace
 
 DATASET = Path("evals/datasets/supportlab-review-v1")
@@ -283,7 +283,7 @@ async def test_generation_and_verification_do_not_load_gold_labels(
         catalog_version="evidence-catalog-v1",
         created_at=datetime(2026, 7, 17, tzinfo=UTC),
     )
-    verifier = EvidenceVerifier(
+    verifier = DeterministicVerifier(
         InvariantEngine(supportlab_rules()), policy_version="review-policy-v1"
     )
 

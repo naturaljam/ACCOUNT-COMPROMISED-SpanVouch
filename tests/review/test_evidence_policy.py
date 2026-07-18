@@ -33,10 +33,10 @@ from spanvouch.contracts.versioning import (
 )
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
 from spanvouch.failure_types import FailureType
-from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.invariants.supportlab import supportlab_rules
-from spanvouch.review.evidence_verifier import EvidenceVerifier
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
+from spanvouch.verification.deterministic import DeterministicVerifier
+from spanvouch.verification.invariant_engine import InvariantEngine
 from tests.trace.test_diagnostic_view import load_trace, project_trace
 
 NOW = datetime(2026, 7, 17, 8, 0, tzinfo=UTC)
@@ -191,8 +191,8 @@ def _input(view: DiagnosticTraceView, report: DiagnosisReport) -> VerificationIn
     )
 
 
-def _verifier() -> EvidenceVerifier:
-    return EvidenceVerifier(
+def _verifier() -> DeterministicVerifier:
+    return DeterministicVerifier(
         InvariantEngine(supportlab_rules()),
         policy_version="review-policy-v1",
     )
