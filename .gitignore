@@ -36,6 +36,7 @@ tmp/
 postgres_data/
 redis_data/
 phoenix_data/
+evals/reports/generated/
 
 # Editors and operating systems
 .idea/

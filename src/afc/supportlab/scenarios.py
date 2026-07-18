@@ -1,19 +1,8 @@
-from enum import StrEnum
 from random import Random
 
 from pydantic import BaseModel, ConfigDict
 
-
-class FailureType(StrEnum):
-    NO_FAILURE = "no_failure"
-    WRONG_TOOL = "wrong_tool"
-    INVALID_ARGUMENT = "invalid_argument"
-    MISSING_PRECONDITION = "missing_precondition"
-    IGNORED_TOOL_ERROR = "ignored_tool_error"
-    CONTEXT_CORRUPTION = "context_corruption"
-    POLICY_VIOLATION = "policy_violation"
-    LOOP_OR_BUDGET_EXHAUSTION = "loop_or_budget_exhaustion"
-    INVALID_FINAL_STATE = "invalid_final_state"
+from afc.failure_types import FailureType
 
 
 class FaultProfile(BaseModel):

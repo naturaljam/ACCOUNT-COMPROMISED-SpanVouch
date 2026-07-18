@@ -25,6 +25,7 @@ dev = [
 
 [project.scripts]
 afc-generate-dataset = "afc.evals.generate_dataset:main"
+afc-evaluate-diagnosis = "afc.evals.run_diagnosis_eval:main"
 
 [build-system]
 requires = ["hatchling==1.27.0"]
