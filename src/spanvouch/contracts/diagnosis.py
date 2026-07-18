@@ -1,9 +1,14 @@
 from enum import StrEnum
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
+from pydantic import Field, JsonValue, model_validator
 
-from spanvouch.failure_types import SUPPORTED_DIAGNOSIS_FAILURE_TYPES, FailureType
+from spanvouch.contracts.versioning import (
+    IDENTIFIER_PATTERN,
+    SHA256_PATTERN,
+    ContractModel,
+    ContractRoot,
+)
 
 
 class DiagnosisStatus(StrEnum):
@@ -31,9 +36,7 @@ class ClaimStage(StrEnum):
     OUTCOME = "outcome"
 
 
-class EvidenceSelector(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
+class EvidenceSelector(ContractModel):
     span_id: str = Field(min_length=1)
     field_path: str = Field(min_length=1)
 
@@ -45,23 +48,42 @@ class EvidenceSelector(BaseModel):
 class EvidenceRef(EvidenceSelector):
     evidence_id: str = Field(min_length=1)
     observed_value: JsonValue
-    value_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    value_sha256: str = Field(pattern=SHA256_PATTERN)
     description: str = Field(min_length=1)
 
 
-class DiagnosisClaim(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
+class DiagnosisClaim(ContractModel):
     stage: ClaimStage
     statement: str = Field(min_length=1)
     evidence_ids: tuple[str, ...] = Field(min_length=1)
 
 
-class DiagnosisDecision(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
+class TaxonomyRef(ContractModel):
+    taxonomy_id: str = Field(min_length=1, pattern=IDENTIFIER_PATTERN)
+    taxonomy_version: str = Field(min_length=1)
 
+
+class DiagnosisProvenance(ContractModel):
+    taxonomy: TaxonomyRef
+    diagnoser_version: str = Field(min_length=1)
+    ruleset_version: str | None = None
+    prompt_version: str | None = None
+    prompt_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
+    model: str | None = None
+    provider: str | None = None
+
+
+class ProviderUsage(ContractModel):
+    input_tokens: int = Field(ge=0)
+    output_tokens: int = Field(ge=0)
+    total_tokens: int = Field(ge=0)
+    latency_ms: float = Field(ge=0.0)
+    request_id: str | None = None
+
+
+class DiagnosisDecision(ContractModel):
     status: DiagnosisStatus
-    failure_type: FailureType | None = None
+    failure_type: str | None = Field(default=None, min_length=1)
     critical_span_ids: tuple[str, ...] = ()
     causal_chain: tuple[DiagnosisClaim, ...] = Field(default=(), max_length=3)
     evidence: tuple[EvidenceRef, ...] = ()
@@ -85,14 +107,14 @@ class DiagnosisDecision(BaseModel):
             raise ValueError("claim references unknown evidence")
 
         if self.status is DiagnosisStatus.DIAGNOSED:
-            if self.failure_type not in SUPPORTED_DIAGNOSIS_FAILURE_TYPES:
-                raise ValueError("diagnosed status requires a supported failure type")
+            if self.failure_type is None:
+                raise ValueError("diagnosed status requires a failure type")
             if not self.critical_span_ids or not self.causal_chain or not self.evidence:
                 raise ValueError("diagnosed status requires critical spans, claims, and evidence")
             if self.abstain_reason is not None:
                 raise ValueError("diagnosed status forbids abstain_reason")
         elif self.status is DiagnosisStatus.NO_FAILURE:
-            if self.failure_type is not FailureType.NO_FAILURE:
+            if self.failure_type != "no_failure":
                 raise ValueError("no_failure status requires no_failure type")
             if self.critical_span_ids or self.causal_chain or self.abstain_reason is not None:
                 raise ValueError("no_failure status forbids failure details")
@@ -106,40 +128,35 @@ class DiagnosisDecision(BaseModel):
         return self
 
 
-class DiagnosisProvenance(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    taxonomy_version: str = Field(min_length=1)
-    diagnoser_version: str = Field(min_length=1)
-    ruleset_version: str | None = None
-    prompt_version: str | None = None
-    prompt_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
-    model: str | None = None
-    provider: str | None = None
-
-
-class ProviderUsage(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    input_tokens: int = Field(ge=0)
-    output_tokens: int = Field(ge=0)
-    total_tokens: int = Field(ge=0)
-    latency_ms: float = Field(ge=0.0)
-    request_id: str | None = None
-
-
-class DiagnosisExecution(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
+class DiagnosisExecution(ContractModel):
     decision: DiagnosisDecision
     provenance: DiagnosisProvenance
     usage: ProviderUsage | None = None
 
 
-class DiagnosisReport(DiagnosisDecision):
+class DiagnosisReport(DiagnosisDecision, ContractRoot):
+    schema_name: Literal["spanvouch.diagnosis"] = "spanvouch.diagnosis"
     schema_version: Literal["1.0"] = "1.0"
     trace_id: str = Field(min_length=1)
     run_id: str = Field(min_length=1)
-    diagnoser: DiagnoserKind
+    diagnoser: str = Field(min_length=1, pattern=IDENTIFIER_PATTERN)
     provenance: DiagnosisProvenance
     usage: ProviderUsage | None = None
+
+    @classmethod
+    def from_execution(
+        cls,
+        *,
+        trace_id: str,
+        run_id: str,
+        diagnoser: str,
+        execution: DiagnosisExecution,
+    ) -> "DiagnosisReport":
+        return cls(
+            trace_id=trace_id,
+            run_id=run_id,
+            diagnoser=diagnoser,
+            provenance=execution.provenance,
+            usage=execution.usage,
+            **execution.decision.model_dump(mode="python"),
+        )

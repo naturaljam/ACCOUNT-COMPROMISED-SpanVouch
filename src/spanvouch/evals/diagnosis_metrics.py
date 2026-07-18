@@ -2,15 +2,15 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from spanvouch.contracts.trace import TraceIR
-from spanvouch.diagnosis.errors import DiagnosisError
-from spanvouch.diagnosis.models import (
+from spanvouch.contracts.diagnosis import (
     AbstainReason,
     DiagnoserKind,
     DiagnosisReport,
     DiagnosisStatus,
 )
-from spanvouch.diagnosis.service import DiagnosisService
+from spanvouch.contracts.trace import TraceIR
+from spanvouch.diagnosis.engine import DiagnosisEngine
+from spanvouch.diagnosis.errors import DiagnosisError
 from spanvouch.evals.baselines import final_state_baseline, rule_only_baseline
 from spanvouch.evals.diagnosis_labels import DiagnosisGoldLabel, validate_dataset_join
 from spanvouch.failure_types import FailureType
@@ -113,7 +113,7 @@ async def evaluate_diagnoser(
     *,
     traces: tuple[TraceIR, ...],
     labels: tuple[DiagnosisGoldLabel, ...],
-    service: DiagnosisService,
+    service: DiagnosisEngine,
     kind: DiagnoserKind,
 ) -> DiagnosisEvaluationReport:
     validate_dataset_join(traces, labels)
@@ -224,7 +224,7 @@ def _compute_metrics(
         return bool(
             report
             and report.status is label.expected_status
-            and report.failure_type is label.failure_type
+            and report.failure_type == label.failure_type
         )
 
     def has_status(label: DiagnosisGoldLabel, status: DiagnosisStatus) -> bool:

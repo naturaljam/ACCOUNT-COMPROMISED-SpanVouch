@@ -2,8 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from spanvouch.contracts.trace import DiagnosticSpan, DiagnosticTraceView, SpanKind, SpanStatus
-from spanvouch.diagnosis.models import (
+from spanvouch.contracts.diagnosis import (
     AbstainReason,
     ClaimStage,
     DiagnoserKind,
@@ -13,6 +12,14 @@ from spanvouch.diagnosis.models import (
     DiagnosisStatus,
     EvidenceRef,
     EvidenceSelector,
+    TaxonomyRef,
+)
+from spanvouch.contracts.trace import (
+    DiagnosticContext,
+    DiagnosticSpan,
+    DiagnosticTraceView,
+    SpanKind,
+    SpanStatus,
 )
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
 from spanvouch.failure_types import FailureType
@@ -151,7 +158,7 @@ def _diagnosed_report(
         evidence=evidence,
         confidence=1.0,
         provenance=DiagnosisProvenance(
-            taxonomy_version="1.0",
+            taxonomy=TaxonomyRef(taxonomy_id="supportlab", taxonomy_version="1.0"),
             diagnoser_version="review-test-rules-v1",
             ruleset_version="review-test-rules-v1",
         ),
@@ -167,7 +174,7 @@ def _no_failure_report() -> DiagnosisReport:
         failure_type=FailureType.NO_FAILURE,
         confidence=1.0,
         provenance=DiagnosisProvenance(
-            taxonomy_version="1.0",
+            taxonomy=TaxonomyRef(taxonomy_id="supportlab", taxonomy_version="1.0"),
             diagnoser_version="review-test-rules-v1",
             ruleset_version="review-test-rules-v1",
         ),
@@ -192,17 +199,17 @@ def _verifier() -> EvidenceVerifier:
 async def _rules_report(run_id: str) -> tuple[DiagnosticTraceView, DiagnosisReport]:
     trace = load_trace(run_id)
     view = project_trace(trace)
-    catalog = EvidenceCatalog.from_view(view)
+    context = DiagnosticContext(trace_id=trace.trace_id, run_id=trace.run_id, view=view)
+    catalog = EvidenceCatalog.from_context(context)
     execution = await RuleDiagnoser(InvariantEngine(supportlab_rules())).diagnose(
-        view,
+        context,
         catalog,
     )
-    report = DiagnosisReport(
+    report = DiagnosisReport.from_execution(
         trace_id=trace.trace_id,
         run_id=trace.run_id,
         diagnoser=DiagnoserKind.RULES,
-        provenance=execution.provenance,
-        **execution.decision.model_dump(),
+        execution=execution,
     )
     return view, report
 
@@ -295,7 +302,7 @@ async def test_successful_root_with_supported_failure_is_not_deterministically_c
 
     report = await _verifier().verify(_input(view, diagnosis))
 
-    assert diagnosis.failure_type is FailureType.INVALID_FINAL_STATE
+    assert diagnosis.failure_type == FailureType.INVALID_FINAL_STATE
     assert report.verdict is VerifierVerdict.VERIFIED
     assert FindingCode.CLEAN_TRACE_CONFLICT not in {
         finding.code for finding in report.findings
@@ -358,7 +365,7 @@ async def test_no_failure_conflicts_with_supported_hard_failure() -> None:
         failure_type=FailureType.NO_FAILURE,
         confidence=1.0,
         provenance=DiagnosisProvenance(
-            taxonomy_version="1.0",
+            taxonomy=TaxonomyRef(taxonomy_id="supportlab", taxonomy_version="1.0"),
             diagnoser_version="review-test-rules-v1",
             ruleset_version="review-test-rules-v1",
         ),
@@ -385,7 +392,7 @@ async def test_abstention_conflicts_with_supported_hard_failure() -> None:
         confidence=0.0,
         abstain_reason=AbstainReason.INSUFFICIENT_EVIDENCE,
         provenance=DiagnosisProvenance(
-            taxonomy_version="1.0",
+            taxonomy=TaxonomyRef(taxonomy_id="supportlab", taxonomy_version="1.0"),
             diagnoser_version="review-test-rules-v1",
             ruleset_version="review-test-rules-v1",
         ),
@@ -486,7 +493,7 @@ async def test_supported_unsupported_abstention_is_accepted() -> None:
         confidence=0.0,
         abstain_reason=AbstainReason.UNSUPPORTED_FAILURE_TYPE,
         provenance=DiagnosisProvenance(
-            taxonomy_version="1.0",
+            taxonomy=TaxonomyRef(taxonomy_id="supportlab", taxonomy_version="1.0"),
             diagnoser_version="review-test-rules-v1",
             ruleset_version="review-test-rules-v1",
         ),

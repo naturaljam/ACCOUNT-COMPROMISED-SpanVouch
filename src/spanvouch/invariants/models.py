@@ -4,8 +4,8 @@ from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from spanvouch.contracts.diagnosis import EvidenceRef
 from spanvouch.contracts.trace import DiagnosticTraceView
-from spanvouch.diagnosis.models import EvidenceRef
 from spanvouch.failure_types import FailureType
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
 

@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Protocol
 
-from spanvouch.diagnosis.models import DiagnoserKind, DiagnosisReport
+from spanvouch.contracts.diagnosis import DiagnoserKind, DiagnosisReport
 from spanvouch.review.commands import (
     AppendDiagnosisRevision,
     AppendVerifierRun,

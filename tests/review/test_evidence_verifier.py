@@ -2,8 +2,7 @@ from collections.abc import Callable
 
 import pytest
 
-from spanvouch.contracts.trace import DiagnosticTraceView, SpanStatus
-from spanvouch.diagnosis.models import (
+from spanvouch.contracts.diagnosis import (
     AbstainReason,
     ClaimStage,
     DiagnoserKind,
@@ -13,7 +12,9 @@ from spanvouch.diagnosis.models import (
     DiagnosisStatus,
     EvidenceRef,
     EvidenceSelector,
+    TaxonomyRef,
 )
+from spanvouch.contracts.trace import DiagnosticTraceView, SpanStatus
 from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.invariants.supportlab import supportlab_rules
 from spanvouch.review.evidence_verifier import EvidenceVerifier
@@ -81,7 +82,7 @@ def _stale_report_fingerprint(report: DiagnosisReport) -> VerificationInput:
 
 def _missing_provenance_version(report: DiagnosisReport) -> VerificationInput:
     provenance = DiagnosisProvenance(
-        taxonomy_version=report.provenance.taxonomy_version,
+        taxonomy=report.provenance.taxonomy,
         diagnoser_version=report.provenance.diagnoser_version,
         ruleset_version=None,
     )
@@ -402,7 +403,7 @@ async def test_unsupported_abstention_preserves_separate_supported_hard_conflict
         confidence=1.0,
         abstain_reason=AbstainReason.UNSUPPORTED_FAILURE_TYPE,
         provenance=DiagnosisProvenance(
-            taxonomy_version="1.0",
+            taxonomy=TaxonomyRef(taxonomy_id="supportlab", taxonomy_version="1.0"),
             diagnoser_version="overlap-rules-v1",
             ruleset_version="overlap-rules-v1",
         ),
@@ -473,7 +474,7 @@ async def test_unsupported_abstention_preserves_same_span_different_invariant() 
         confidence=1.0,
         abstain_reason=AbstainReason.UNSUPPORTED_FAILURE_TYPE,
         provenance=DiagnosisProvenance(
-            taxonomy_version="1.0",
+            taxonomy=TaxonomyRef(taxonomy_id="supportlab", taxonomy_version="1.0"),
             diagnoser_version="same-span-rules-v1",
             ruleset_version="same-span-rules-v1",
         ),

@@ -4,8 +4,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from spanvouch.contracts.trace import DiagnosticTraceView
-from spanvouch.diagnosis.models import (
+from spanvouch.contracts.diagnosis import (
     AbstainReason,
     ClaimStage,
     DiagnosisClaim,
@@ -17,7 +16,9 @@ from spanvouch.diagnosis.models import (
     EvidenceRef,
     EvidenceSelector,
     ProviderUsage,
+    TaxonomyRef,
 )
+from spanvouch.contracts.trace import DiagnosticContext, DiagnosticTraceView
 from spanvouch.diagnosis.protocols import (
     ChatMessage,
     GenerationConfig,
@@ -51,6 +52,8 @@ class _DiagnosisDraft(BaseModel):
 
 
 class LlmDiagnoser:
+    kind = "deepseek"
+
     def __init__(
         self,
         provider: ModelProvider,
@@ -70,8 +73,9 @@ class LlmDiagnoser:
         ).hexdigest()
 
     async def diagnose(
-        self, view: DiagnosticTraceView, evidence: EvidenceCatalog
+        self, context: DiagnosticContext, evidence: EvidenceCatalog
     ) -> DiagnosisExecution:
+        view = context.view
         view = sanitize_diagnostic_trace_view(view)
         evidence = EvidenceCatalog.from_view(view)
         messages = self._messages(view, evidence)
@@ -85,11 +89,12 @@ class LlmDiagnoser:
 
     async def revise(
         self,
-        view: DiagnosticTraceView,
+        context: DiagnosticContext,
         evidence: EvidenceCatalog,
         previous_report: DiagnosisReport,
         evidence_gaps: tuple["EvidenceGap", ...],
     ) -> DiagnosisExecution:
+        view = context.view
         view = sanitize_diagnostic_trace_view(view)
         evidence = EvidenceCatalog.from_view(view)
         self._validate_evidence_gaps(view, evidence, evidence_gaps)
@@ -140,7 +145,9 @@ class LlmDiagnoser:
         ).hexdigest()
         response = await self._provider.complete(messages, self._generation)
         provenance = DiagnosisProvenance(
-            taxonomy_version="1.0",
+            taxonomy=TaxonomyRef(
+                taxonomy_id="supportlab", taxonomy_version="1.0"
+            ),
             diagnoser_version=diagnoser_version,
             prompt_version=prompt_version,
             prompt_sha256=prompt_sha256,

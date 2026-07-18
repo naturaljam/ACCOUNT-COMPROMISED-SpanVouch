@@ -16,11 +16,11 @@ from fastapi.testclient import TestClient
 
 from spanvouch.api.app import create_app
 from spanvouch.cli import review as review_cli
+from spanvouch.contracts.diagnosis import DiagnoserKind, EvidenceSelector
 from spanvouch.contracts.trace import TraceIR
+from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.diagnosis.errors import ProviderProtocolError
-from spanvouch.diagnosis.models import DiagnoserKind, EvidenceSelector
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
-from spanvouch.diagnosis.service import DiagnosisService
 from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.invariants.supportlab import supportlab_rules
 from spanvouch.review.evidence_verifier import EvidenceVerifier
@@ -242,7 +242,7 @@ def _review_runtime(
 ) -> tuple[ReviewService, SQLiteReviewRepository, FailingSemanticVerifier]:
     engine = InvariantEngine(supportlab_rules())
     diagnoser = RuleDiagnoser(engine)
-    diagnosis_service = DiagnosisService({DiagnoserKind.RULES: diagnoser})
+    diagnosis_service = DiagnosisEngine({DiagnoserKind.RULES: diagnoser})
     repository = SQLiteReviewRepository(database)
     deterministic = EvidenceVerifier(engine, policy_version="supportlab-review-v1")
     semantic = FailingSemanticVerifier()
@@ -446,7 +446,7 @@ def test_allowed_trace_value_secrets_never_reach_sqlite_or_public_aggregate(
 
 @pytest.mark.asyncio
 async def test_invalid_semantic_provider_body_is_not_copied_into_verifier_report() -> None:
-    from spanvouch.diagnosis.models import ProviderUsage
+    from spanvouch.contracts.diagnosis import ProviderUsage
     from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig, ProviderResponse
     from spanvouch.review.models import VerificationInput, canonical_sha256
     from tests.review.factories import make_diagnosis_report, make_review_snapshot

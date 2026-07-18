@@ -6,12 +6,12 @@ from time import perf_counter
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
 
+from spanvouch.contracts.diagnosis import ProviderUsage
 from spanvouch.diagnosis.errors import (
     ProviderConfigurationError,
     ProviderProtocolError,
     ProviderRequestError,
 )
-from spanvouch.diagnosis.models import ProviderUsage
 from spanvouch.diagnosis.protocols import (
     ChatMessage,
     GenerationConfig,

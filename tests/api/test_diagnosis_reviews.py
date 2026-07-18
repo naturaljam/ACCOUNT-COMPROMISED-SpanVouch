@@ -8,10 +8,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from spanvouch.api.app import create_app
+from spanvouch.contracts.diagnosis import DiagnoserKind
+from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.diagnosis.errors import ProviderProtocolError, ProviderRequestError
-from spanvouch.diagnosis.models import DiagnoserKind
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
-from spanvouch.diagnosis.service import DiagnosisService
 from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.invariants.supportlab import supportlab_rules
 from spanvouch.review.commands import ClaimReviewWork, CreateReviewCase
@@ -114,7 +114,7 @@ def _real_workflow_app(
     engine = InvariantEngine(supportlab_rules())
     rule_diagnoser = RuleDiagnoser(engine)
     diagnosers = {DiagnoserKind.RULES: rule_diagnoser}
-    diagnosis_service = DiagnosisService(diagnosers)
+    diagnosis_service = DiagnosisEngine(diagnosers)
     repository = SQLiteReviewRepository(database)
     deterministic = RecordingVerifier(
         VerifierKind.DETERMINISTIC,

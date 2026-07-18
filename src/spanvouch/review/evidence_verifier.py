@@ -4,8 +4,7 @@ from hashlib import sha256
 
 from pydantic import JsonValue, ValidationError
 
-from spanvouch.contracts.trace import DiagnosticTraceView
-from spanvouch.diagnosis.models import (
+from spanvouch.contracts.diagnosis import (
     AbstainReason,
     ClaimStage,
     DiagnoserKind,
@@ -13,6 +12,7 @@ from spanvouch.diagnosis.models import (
     DiagnosisStatus,
     EvidenceSelector,
 )
+from spanvouch.contracts.trace import DiagnosticTraceView
 from spanvouch.failure_types import FailureType
 from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.invariants.models import InvariantResult, InvariantStatus, RuleContext, RuleScope
@@ -253,9 +253,9 @@ def _ungrounded_critical_spans(report: DiagnosisReport) -> tuple[str, ...]:
 
 def _provenance_is_complete(report: DiagnosisReport) -> bool:
     provenance = report.provenance
-    if not provenance.taxonomy_version or not provenance.diagnoser_version:
+    if not provenance.taxonomy.taxonomy_version or not provenance.diagnoser_version:
         return False
-    if report.diagnoser is DiagnoserKind.RULES:
+    if report.diagnoser == DiagnoserKind.RULES:
         return bool(provenance.ruleset_version)
     return bool(provenance.prompt_version and provenance.prompt_sha256)
 
@@ -641,7 +641,7 @@ class EvidenceVerifier:
                 conflicts = tuple(
                     result
                     for result in supported_failures
-                    if result.failure_type is not report.failure_type
+                    if result.failure_type != report.failure_type
                 )
             else:
                 conflicts = supported_failures
@@ -661,7 +661,7 @@ class EvidenceVerifier:
                     and result.evidence
                 )
                 if (
-                    report.failure_type is FailureType.LOOP_OR_BUDGET_EXHAUSTION
+                    report.failure_type == FailureType.LOOP_OR_BUDGET_EXHAUSTION
                     and loop_failures
                 ):
                     expected_span = loop_failures[0].evidence[0].span_id

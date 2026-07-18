@@ -4,7 +4,7 @@ from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from spanvouch.diagnosis.models import DiagnoserKind
+from spanvouch.contracts.diagnosis import DiagnoserKind
 from spanvouch.review.models import (
     DecisionAction,
     DiagnosisRevision,
@@ -110,7 +110,7 @@ class CreateReviewCase(EventCommand):
             raise ValueError("initial report trace_id must match snapshot")
         if self.initial_revision.report.run_id != self.snapshot.run_id:
             raise ValueError("initial report run_id must match snapshot")
-        if self.initial_revision.report.diagnoser is not self.diagnoser:
+        if self.initial_revision.report.diagnoser != self.diagnoser:
             raise ValueError("initial report diagnoser must match command")
         for field_name, timestamp in (
             ("snapshot.created_at", self.snapshot.created_at),

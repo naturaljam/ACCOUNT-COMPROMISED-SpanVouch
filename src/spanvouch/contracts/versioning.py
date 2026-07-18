@@ -9,6 +9,8 @@ from typing import cast
 from pydantic import BaseModel, ConfigDict, JsonValue
 
 _PYDANTIC_CIRCULAR_REFERENCE_ERROR = "Circular reference detected (id repeated)"
+IDENTIFIER_PATTERN = r"^[a-z][a-z0-9_.-]*$"
+SHA256_PATTERN = r"^[0-9a-f]{64}$"
 
 
 class ContractError(ValueError):

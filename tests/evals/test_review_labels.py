@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from spanvouch.contracts.diagnosis import DiagnosisReport
 from spanvouch.contracts.trace import TraceIR
-from spanvouch.diagnosis.models import DiagnosisReport
 from spanvouch.evals.generate_review_dataset import generate_review_dataset
 from spanvouch.evals.review_labels import (
     load_review_candidates,

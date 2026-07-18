@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from spanvouch.diagnosis.models import DiagnoserKind, DiagnosisReport
+from spanvouch.contracts.diagnosis import DiagnoserKind, DiagnosisReport
+from spanvouch.contracts.trace import DiagnosticContext
 from spanvouch.diagnosis.protocols import Diagnoser, RevisionCapableDiagnoser
 from spanvouch.review.errors import ReviewConflictError
 from spanvouch.review.models import EvidenceGap, ReviewRuntimeBundle
@@ -58,24 +59,27 @@ class DiagnosisReviser:
             raise ReviewConflictError(
                 "current diagnosis report has invalid run binding"
             )
-        if previous_report.diagnoser is not diagnoser_kind:
+        if previous_report.diagnoser != diagnoser_kind:
             raise ReviewConflictError(
                 "current diagnosis report has invalid diagnoser binding"
             )
 
         view = runtime_bundle.snapshot.trace_view()
-        evidence = EvidenceCatalog.from_view(view)
+        context = DiagnosticContext(
+            trace_id=runtime_bundle.snapshot.trace_id,
+            run_id=runtime_bundle.snapshot.run_id,
+            view=view,
+        )
+        evidence = EvidenceCatalog.from_context(context)
         execution = await diagnoser.revise(
-            view,
+            context,
             evidence,
             previous_report,
             evidence_gaps,
         )
-        return DiagnosisReport(
-            **execution.decision.model_dump(),
+        return DiagnosisReport.from_execution(
             trace_id=runtime_bundle.snapshot.trace_id,
             run_id=runtime_bundle.snapshot.run_id,
             diagnoser=diagnoser_kind,
-            provenance=execution.provenance,
-            usage=execution.usage,
+            execution=execution,
         )

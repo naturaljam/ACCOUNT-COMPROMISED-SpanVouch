@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from spanvouch.diagnosis.models import DiagnosisStatus
+from spanvouch.contracts.diagnosis import DiagnosisStatus
 from spanvouch.evals.diagnosis_labels import load_diagnosis_labels
 from spanvouch.invariants.models import InvariantStatus, RuleContext, RuleScope
 from spanvouch.invariants.supportlab import unsupported_guards

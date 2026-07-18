@@ -212,9 +212,9 @@ def test_shared_reference_without_cycle_remains_valid() -> None:
     )
 
 
-def test_existing_phase3_diagnosis_fixture_hash_is_unchanged() -> None:
+def test_phase4_diagnosis_fixture_hash_is_stable() -> None:
     from tests.review.factories import make_diagnosis_report
 
     assert canonical_sha256(make_diagnosis_report()) == (
-        "21683b3b792dff3dce0570a54c694577be27d010b59062480c6dc3a40e4d3c87"
+        "f2527eb1e9940d2338d80766ee5dbd765f0c4e74d4bf5d12b973a9fa58c3b9b3"
     )

@@ -13,13 +13,13 @@ from spanvouch.api.routes.diagnoses import build_diagnosis_router
 from spanvouch.api.routes.diagnosis_reviews import build_diagnosis_review_router
 from spanvouch.api.routes.health import router as health_router
 from spanvouch.api.routes.traces import build_trace_router
+from spanvouch.contracts.diagnosis import DiagnoserKind
 from spanvouch.diagnosis.deepseek import DeepSeekConfig, DeepSeekProvider
+from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.diagnosis.errors import ProviderConfigurationError
 from spanvouch.diagnosis.llm_diagnoser import LlmDiagnoser
-from spanvouch.diagnosis.models import DiagnoserKind
 from spanvouch.diagnosis.protocols import Diagnoser
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
-from spanvouch.diagnosis.service import DiagnosisService
 from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.invariants.supportlab import supportlab_rules
 from spanvouch.review.evidence_verifier import EvidenceVerifier
@@ -75,14 +75,14 @@ def _ensure_database_parent(database: str | Path) -> None:
     Path(database).expanduser().parent.mkdir(parents=True, exist_ok=True)
 
 
-def build_default_diagnosis_service() -> DiagnosisService:
+def build_default_diagnosis_service() -> DiagnosisEngine:
     diagnosers, _, _ = _default_runtime()
-    return DiagnosisService(diagnosers)
+    return DiagnosisEngine(diagnosers)
 
 
 def _build_review_service(
     *,
-    diagnosis_service: DiagnosisService,
+    diagnosis_service: DiagnosisEngine,
     repository: ReviewRepository,
     diagnosers: Mapping[DiagnoserKind, Diagnoser],
     deterministic_verifier: Verifier,
@@ -111,7 +111,7 @@ def _build_review_service(
 
 def create_app(
     trace_repository: TraceRepository | None = None,
-    diagnosis_service: DiagnosisService | None = None,
+    diagnosis_service: DiagnosisEngine | None = None,
     *,
     review_repository: ReviewRepository | None = None,
     review_service: ReviewService | None = None,
@@ -131,7 +131,7 @@ def create_app(
 
     if diagnosis_service is None:
         diagnosers, deterministic_verifier, semantic_verifier = _default_runtime()
-        diagnosis = DiagnosisService(diagnosers)
+        diagnosis = DiagnosisEngine(diagnosers)
     else:
         diagnosers = {}
         _, deterministic_verifier = _deterministic_runtime()

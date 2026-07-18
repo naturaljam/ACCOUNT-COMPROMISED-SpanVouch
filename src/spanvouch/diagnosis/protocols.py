@@ -4,8 +4,8 @@ from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from spanvouch.contracts.trace import DiagnosticTraceView
-from spanvouch.diagnosis.models import DiagnosisExecution, DiagnosisReport, ProviderUsage
+from spanvouch.contracts.diagnosis import DiagnosisExecution, DiagnosisReport, ProviderUsage
+from spanvouch.contracts.trace import DiagnosticContext
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
 
 if TYPE_CHECKING:
@@ -13,10 +13,11 @@ if TYPE_CHECKING:
 
 
 class Diagnoser(Protocol):
+    kind: str
     version_fingerprint: str
 
     async def diagnose(
-        self, view: DiagnosticTraceView, evidence: EvidenceCatalog
+        self, context: DiagnosticContext, evidence: EvidenceCatalog
     ) -> DiagnosisExecution:
         raise NotImplementedError
 
@@ -25,7 +26,7 @@ class Diagnoser(Protocol):
 class RevisionCapableDiagnoser(Diagnoser, Protocol):
     async def revise(
         self,
-        view: DiagnosticTraceView,
+        context: DiagnosticContext,
         evidence: EvidenceCatalog,
         previous_report: DiagnosisReport,
         evidence_gaps: tuple[EvidenceGap, ...],

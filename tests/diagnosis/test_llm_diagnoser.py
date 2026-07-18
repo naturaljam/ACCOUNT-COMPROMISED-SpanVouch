@@ -2,9 +2,9 @@ import json
 
 import pytest
 
-from spanvouch.contracts.trace import DiagnosticTraceView
+from spanvouch.contracts.diagnosis import AbstainReason, DiagnosisStatus, ProviderUsage
+from spanvouch.contracts.trace import DiagnosticContext
 from spanvouch.diagnosis.llm_diagnoser import LlmDiagnoser
-from spanvouch.diagnosis.models import AbstainReason, DiagnosisStatus, ProviderUsage
 from spanvouch.diagnosis.protocols import (
     ChatMessage,
     GenerationConfig,
@@ -43,9 +43,9 @@ class RecordingProvider:
         )
 
 
-def inputs() -> tuple[DiagnosticTraceView, EvidenceCatalog]:
+def inputs() -> tuple[DiagnosticContext, EvidenceCatalog]:
     context = TraceProjector().project(load_trace("invalid_argument-01"))
-    return context.view, EvidenceCatalog.from_context(context)
+    return context, EvidenceCatalog.from_context(context)
 
 
 @pytest.mark.asyncio
@@ -132,7 +132,7 @@ async def test_valid_draft_resolves_selector_from_local_catalog() -> None:
     execution = await LlmDiagnoser(provider).diagnose(view, evidence)
 
     assert execution.decision.status is DiagnosisStatus.DIAGNOSED
-    assert execution.decision.failure_type is FailureType.INVALID_ARGUMENT
+    assert execution.decision.failure_type == FailureType.INVALID_ARGUMENT
     assert execution.decision.evidence[0].observed_value == (
         "amount_exceeds_calculation,amount_exceeds_policy"
     )

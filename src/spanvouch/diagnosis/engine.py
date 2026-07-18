@@ -3,15 +3,15 @@ import json
 from collections.abc import Mapping
 from hashlib import sha256
 
+from spanvouch.contracts.diagnosis import DiagnoserKind, DiagnosisReport
 from spanvouch.contracts.trace import TraceIR
 from spanvouch.diagnosis.errors import DiagnosisConflictError, DiagnosisUnavailableError
-from spanvouch.diagnosis.models import DiagnoserKind, DiagnosisReport
 from spanvouch.diagnosis.protocols import Diagnoser
 from spanvouch.trace.diagnostic_view import TraceProjector
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
 
 
-class DiagnosisService:
+class DiagnosisEngine:
     def __init__(self, diagnosers: Mapping[DiagnoserKind, Diagnoser]) -> None:
         self._diagnosers = dict(diagnosers)
         self._completed: dict[str, DiagnosisReport] = {}
@@ -66,14 +66,12 @@ class DiagnosisService:
         try:
             context = TraceProjector().project(trace)
             evidence = EvidenceCatalog.from_context(context)
-            execution = await diagnoser.diagnose(context.view, evidence)
-            report = DiagnosisReport(
-                **execution.decision.model_dump(),
+            execution = await diagnoser.diagnose(context, evidence)
+            report = DiagnosisReport.from_execution(
                 trace_id=trace.trace_id,
                 run_id=trace.run_id,
                 diagnoser=kind,
-                provenance=execution.provenance,
-                usage=execution.usage,
+                execution=execution,
             )
         except BaseException:
             async with self._lock:

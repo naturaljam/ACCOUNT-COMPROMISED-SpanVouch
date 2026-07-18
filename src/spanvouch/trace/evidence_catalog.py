@@ -4,6 +4,7 @@ from types import MappingProxyType
 
 from pydantic import JsonValue
 
+from spanvouch.contracts.diagnosis import EvidenceRef, EvidenceSelector
 from spanvouch.contracts.trace import DiagnosticContext, DiagnosticTraceView
 from spanvouch.contracts.versioning import (
     canonical_json as canonical_json,
@@ -11,7 +12,6 @@ from spanvouch.contracts.versioning import (
 from spanvouch.contracts.versioning import (
     canonical_sha256 as canonical_sha256,
 )
-from spanvouch.diagnosis.models import EvidenceRef, EvidenceSelector
 
 
 class EvidenceCatalog:

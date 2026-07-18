@@ -5,13 +5,13 @@ import os
 from collections.abc import Sequence
 from pathlib import Path
 
+from spanvouch.contracts.diagnosis import DiagnoserKind
 from spanvouch.contracts.trace import TraceIR
 from spanvouch.diagnosis.deepseek import DeepSeekConfig, DeepSeekProvider
+from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.diagnosis.errors import ProviderConfigurationError
 from spanvouch.diagnosis.llm_diagnoser import LlmDiagnoser
-from spanvouch.diagnosis.models import DiagnoserKind
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
-from spanvouch.diagnosis.service import DiagnosisService
 from spanvouch.evals.diagnosis_labels import DiagnosisGoldLabel, load_diagnosis_labels
 from spanvouch.evals.diagnosis_metrics import DiagnosisEvaluationReport, evaluate_diagnoser
 from spanvouch.invariants.engine import InvariantEngine
@@ -72,11 +72,11 @@ async def _run(
     model: str = DEFAULT_DEEPSEEK_MODEL,
 ) -> DiagnosisEvaluationReport:
     if kind is DiagnoserKind.RULES:
-        service = DiagnosisService(
+        service = DiagnosisEngine(
             {DiagnoserKind.RULES: RuleDiagnoser(InvariantEngine(supportlab_rules()))}
         )
     else:
-        service = DiagnosisService(
+        service = DiagnosisEngine(
             {
                 DiagnoserKind.DEEPSEEK: LlmDiagnoser(
                     DeepSeekProvider(DeepSeekConfig.from_env()),

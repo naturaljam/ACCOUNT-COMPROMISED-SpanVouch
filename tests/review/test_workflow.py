@@ -3,13 +3,14 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from spanvouch.diagnosis.models import (
+from spanvouch.contracts.diagnosis import (
     ClaimStage,
     DiagnoserKind,
     DiagnosisClaim,
     DiagnosisProvenance,
     DiagnosisReport,
     EvidenceSelector,
+    TaxonomyRef,
 )
 from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.review.commands import CreateReviewCase, WorkflowEventType
@@ -115,7 +116,7 @@ class FakeReviser:
 def _deepseek_report() -> DiagnosisReport:
     report = make_diagnosis_report()
     provenance = DiagnosisProvenance(
-        taxonomy_version="1.0",
+        taxonomy=TaxonomyRef(taxonomy_id="supportlab", taxonomy_version="1.0"),
         diagnoser_version="fake-deepseek-v1",
         prompt_version="fake-prompt-v1",
         prompt_sha256="a" * 64,

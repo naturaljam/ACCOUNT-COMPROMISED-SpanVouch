@@ -12,14 +12,7 @@ from pydantic import (
     model_validator,
 )
 
-from spanvouch.contracts.trace import DiagnosticTraceView
-from spanvouch.contracts.versioning import (
-    canonical_json as canonical_json,
-)
-from spanvouch.contracts.versioning import (
-    canonical_sha256 as canonical_sha256,
-)
-from spanvouch.diagnosis.models import (
+from spanvouch.contracts.diagnosis import (
     AbstainReason,
     ClaimStage,
     DiagnoserKind,
@@ -28,6 +21,13 @@ from spanvouch.diagnosis.models import (
     DiagnosisStatus,
     EvidenceSelector,
     ProviderUsage,
+)
+from spanvouch.contracts.trace import DiagnosticTraceView
+from spanvouch.contracts.versioning import (
+    canonical_json as canonical_json,
+)
+from spanvouch.contracts.versioning import (
+    canonical_sha256 as canonical_sha256,
 )
 from spanvouch.failure_types import SUPPORTED_DIAGNOSIS_FAILURE_TYPES, FailureType
 from spanvouch.trace.diagnostic_view import sanitize_diagnostic_trace_view

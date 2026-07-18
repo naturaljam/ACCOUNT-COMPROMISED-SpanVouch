@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from spanvouch.diagnosis.models import DiagnosisReport
+from spanvouch.contracts.diagnosis import DiagnosisReport
 from spanvouch.evals.generate_review_dataset import (
     CANDIDATES_FILENAME,
     LABELS_FILENAME,
@@ -137,8 +137,28 @@ async def test_generation_is_ordered_deterministic_lf_and_source_read_only(
 
 
 @pytest.mark.asyncio
-async def test_committed_review_dataset_matches_seeded_generation(tmp_path: Path) -> None:
+async def test_phase4_generation_does_not_rewrite_frozen_phase3_dataset(
+    tmp_path: Path,
+) -> None:
     await generate_review_dataset(tmp_path, seed=20260717)
 
-    for filename in (CANDIDATES_FILENAME, LABELS_FILENAME, MANIFEST_FILENAME):
-        assert (tmp_path / filename).read_bytes() == (COMMITTED_DATASET / filename).read_bytes()
+    frozen_hashes = {
+        CANDIDATES_FILENAME: "ee04d8d0f1e608fd81c202fca39eeb799f764b3099cfb03d7d94a4ab7eb73bd2",
+        LABELS_FILENAME: "d41a87247456264863d70f807256a5d1b6f24ab84422dc406a92ef867e36b305",
+        MANIFEST_FILENAME: "677e0075f5b4149db73538411376bf994caa5ba0fdb8ff29b33b487a5fe02076",
+    }
+    for filename, expected in frozen_hashes.items():
+        assert hashlib.sha256((COMMITTED_DATASET / filename).read_bytes()).hexdigest() == expected
+
+    generated = tuple(
+        ReviewCandidate.model_validate_json(line)
+        for line in (tmp_path / CANDIDATES_FILENAME).read_text(encoding="utf-8").splitlines()
+    )
+    assert all(candidate.report.schema_name == "spanvouch.diagnosis" for candidate in generated)
+    assert all(
+        candidate.report.provenance.taxonomy.taxonomy_id == "supportlab"
+        for candidate in generated
+    )
+    assert (tmp_path / LABELS_FILENAME).read_bytes() == (
+        COMMITTED_DATASET / LABELS_FILENAME
+    ).read_bytes()

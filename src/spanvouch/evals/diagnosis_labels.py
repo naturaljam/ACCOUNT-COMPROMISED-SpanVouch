@@ -4,8 +4,8 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from spanvouch.contracts.diagnosis import DiagnosisStatus, EvidenceSelector
 from spanvouch.contracts.trace import TraceIR
-from spanvouch.diagnosis.models import DiagnosisStatus, EvidenceSelector
 from spanvouch.failure_types import SUPPORTED_DIAGNOSIS_FAILURE_TYPES, FailureType
 from spanvouch.trace.diagnostic_view import TraceProjector
 from spanvouch.trace.evidence_catalog import EvidenceCatalog

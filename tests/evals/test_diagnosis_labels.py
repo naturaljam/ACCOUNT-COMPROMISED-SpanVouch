@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
+from spanvouch.contracts.diagnosis import DiagnosisStatus, EvidenceSelector
 from spanvouch.contracts.trace import TraceIR
-from spanvouch.diagnosis.models import DiagnosisStatus, EvidenceSelector
 from spanvouch.evals.diagnosis_labels import (
     DiagnosisDatasetManifest,
     build_diagnosis_manifest,

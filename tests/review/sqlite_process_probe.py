@@ -5,7 +5,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from spanvouch.diagnosis.models import DiagnoserKind
+from spanvouch.contracts.diagnosis import DiagnoserKind
 from spanvouch.review.commands import CreateReviewCase, WorkflowEventType
 from spanvouch.review.models import ReviewStatus, VerificationMode, canonical_json
 from spanvouch.review.sqlite_repository import SQLiteReviewRepository

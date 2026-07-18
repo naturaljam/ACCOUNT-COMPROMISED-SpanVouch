@@ -1,6 +1,8 @@
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 
+from spanvouch.contracts.diagnosis import DiagnoserKind, DiagnosisReport
+from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.diagnosis.errors import (
     DiagnosisConflictError,
     DiagnosisUnavailableError,
@@ -8,8 +10,6 @@ from spanvouch.diagnosis.errors import (
     ProviderProtocolError,
     ProviderRequestError,
 )
-from spanvouch.diagnosis.models import DiagnoserKind, DiagnosisReport
-from spanvouch.diagnosis.service import DiagnosisService
 from spanvouch.trace.repository import TraceRepository
 
 
@@ -21,7 +21,7 @@ class DiagnosisRequest(BaseModel):
 
 
 def build_diagnosis_router(
-    repository: TraceRepository, service: DiagnosisService
+    repository: TraceRepository, service: DiagnosisEngine
 ) -> APIRouter:
     router = APIRouter(prefix="/v1/traces", tags=["diagnoses"])
 

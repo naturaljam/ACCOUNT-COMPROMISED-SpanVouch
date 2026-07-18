@@ -3,12 +3,12 @@ from typing import Any
 
 import pytest
 
+from spanvouch.contracts.diagnosis import DiagnosisReport, ProviderUsage
 from spanvouch.diagnosis.errors import (
     ProviderConfigurationError,
     ProviderProtocolError,
     ProviderRequestError,
 )
-from spanvouch.diagnosis.models import DiagnosisReport, ProviderUsage
 from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig, ProviderResponse
 from spanvouch.review.models import (
     FindingCode,

@@ -1,7 +1,6 @@
 from pathlib import Path
 
-from spanvouch.contracts.trace import DiagnosticTraceView, TraceIR
-from spanvouch.diagnosis.models import (
+from spanvouch.contracts.diagnosis import (
     AbstainReason,
     DiagnoserKind,
     DiagnosisDecision,
@@ -9,9 +8,11 @@ from spanvouch.diagnosis.models import (
     DiagnosisProvenance,
     DiagnosisStatus,
     ProviderUsage,
+    TaxonomyRef,
 )
+from spanvouch.contracts.trace import DiagnosticTraceView, TraceIR
+from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
-from spanvouch.diagnosis.service import DiagnosisService
 from spanvouch.evals.diagnosis_labels import load_diagnosis_labels
 from spanvouch.evals.diagnosis_metrics import evaluate_diagnoser
 from spanvouch.invariants.engine import InvariantEngine
@@ -30,7 +31,7 @@ def traces() -> tuple[TraceIR, ...]:
 
 
 async def test_rule_diagnoser_meets_twenty_trace_hard_gate() -> None:
-    service = DiagnosisService(
+    service = DiagnosisEngine(
         {
             DiagnoserKind.RULES: RuleDiagnoser(
                 InvariantEngine(supportlab_rules())
@@ -84,7 +85,7 @@ class _UsageDiagnoser:
                 confidence=1.0,
             ),
             provenance=DiagnosisProvenance(
-                taxonomy_version="1.0",
+                taxonomy=TaxonomyRef(taxonomy_id="supportlab", taxonomy_version="1.0"),
                 diagnoser_version="usage-test-v1",
                 model="test-model",
                 provider="test-provider",
@@ -109,7 +110,7 @@ async def test_evaluation_aggregates_provider_usage_and_latency_percentiles() ->
     report = await evaluate_diagnoser(
         traces=selected_traces,
         labels=selected_labels,
-        service=DiagnosisService({DiagnoserKind.DEEPSEEK: _UsageDiagnoser()}),
+        service=DiagnosisEngine({DiagnoserKind.DEEPSEEK: _UsageDiagnoser()}),
         kind=DiagnoserKind.DEEPSEEK,
     )
 
@@ -135,7 +136,7 @@ class _InvalidOutputDiagnoser:
                 abstain_reason=AbstainReason.INVALID_MODEL_OUTPUT,
             ),
             provenance=DiagnosisProvenance(
-                taxonomy_version="1.0",
+                taxonomy=TaxonomyRef(taxonomy_id="supportlab", taxonomy_version="1.0"),
                 diagnoser_version="invalid-output-v1",
                 model="test-model",
                 provider="test-provider",
@@ -154,7 +155,7 @@ async def test_invalid_model_output_is_not_counted_as_structured_success() -> No
     report = await evaluate_diagnoser(
         traces=selected_trace,
         labels=selected_label,
-        service=DiagnosisService(
+        service=DiagnosisEngine(
             {DiagnoserKind.DEEPSEEK: _InvalidOutputDiagnoser()}
         ),
         kind=DiagnoserKind.DEEPSEEK,

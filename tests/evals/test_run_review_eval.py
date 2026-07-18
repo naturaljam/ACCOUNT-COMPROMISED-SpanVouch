@@ -4,8 +4,8 @@ from pathlib import Path
 import pytest
 
 import spanvouch.evals.run_review_eval as review_eval_module
+from spanvouch.contracts.diagnosis import ProviderUsage
 from spanvouch.diagnosis.errors import ProviderRequestError
-from spanvouch.diagnosis.models import ProviderUsage
 from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig, ProviderResponse
 from spanvouch.evals.review_labels import load_review_candidates
 from spanvouch.evals.review_metrics import ReviewEvaluationReport

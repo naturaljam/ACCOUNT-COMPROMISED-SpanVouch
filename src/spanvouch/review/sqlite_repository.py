@@ -10,12 +10,13 @@ from typing import TypeVar, cast
 
 from pydantic import BaseModel, ValidationError
 
-from spanvouch.diagnosis.models import (
+from spanvouch.contracts.diagnosis import (
     DiagnoserKind,
     DiagnosisProvenance,
     DiagnosisReport,
     EvidenceSelector,
 )
+from spanvouch.failure_types import FailureType
 from spanvouch.review.commands import (
     AppendDiagnosisRevision,
     AppendVerifierRun,
@@ -1552,7 +1553,11 @@ class SQLiteReviewRepository:
         )
         return DiagnosisCorrectionDraft(
             status=revision.report.status,
-            failure_type=revision.report.failure_type,
+            failure_type=(
+                FailureType(revision.report.failure_type)
+                if revision.report.failure_type is not None
+                else None
+            ),
             critical_span_ids=revision.report.critical_span_ids,
             causal_chain=claims,
             confidence=revision.report.confidence,

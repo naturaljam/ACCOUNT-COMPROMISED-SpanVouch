@@ -2,14 +2,16 @@ import json
 
 import pytest
 
-from spanvouch.diagnosis.llm_diagnoser import LlmDiagnoser
-from spanvouch.diagnosis.models import (
+from spanvouch.contracts.diagnosis import (
     AbstainReason,
     DiagnoserKind,
     DiagnosisProvenance,
     DiagnosisStatus,
     ProviderUsage,
+    TaxonomyRef,
 )
+from spanvouch.contracts.trace import DiagnosticContext
+from spanvouch.diagnosis.llm_diagnoser import LlmDiagnoser
 from spanvouch.diagnosis.protocols import (
     ChatMessage,
     GenerationConfig,
@@ -99,7 +101,7 @@ def _deepseek_runtime() -> ReviewRuntimeBundle:
         update={
             "diagnoser": DiagnoserKind.DEEPSEEK,
             "provenance": DiagnosisProvenance(
-                taxonomy_version="1.0",
+                taxonomy=TaxonomyRef(taxonomy_id="supportlab", taxonomy_version="1.0"),
                 diagnoser_version="evidence-llm-v1",
                 prompt_version="diagnosis-v1",
                 prompt_sha256="a" * 64,
@@ -157,6 +159,14 @@ def _gap() -> EvidenceGap:
         allowed_selectors=("span-tool::attributes.tool.error.type",),
         related_span_ids=("span-tool",),
         instruction="Ground the cause claim.",
+    )
+
+
+def _context(runtime: ReviewRuntimeBundle) -> DiagnosticContext:
+    return DiagnosticContext(
+        trace_id=runtime.snapshot.trace_id,
+        run_id=runtime.snapshot.run_id,
+        view=runtime.snapshot.trace_view(),
     )
 
 
@@ -283,7 +293,7 @@ async def test_reviser_uses_only_persisted_runtime_bundle_after_restart() -> Non
 
     assert report.trace_id == runtime.snapshot.trace_id
     assert report.run_id == runtime.snapshot.run_id
-    assert report.diagnoser is DiagnoserKind.DEEPSEEK
+    assert report.diagnoser == DiagnoserKind.DEEPSEEK
     assert report.provenance.diagnoser_version == "evidence-llm-revision-v1"
     assert report.provenance.prompt_version != (
         runtime.revisions[-1].report.provenance.prompt_version
@@ -440,7 +450,12 @@ async def test_revision_prompt_is_a_canonical_sanitized_boundary() -> None:
         _gap().model_copy(update={"gap_id": "gap-1"}),
     )
 
-    execution = await diagnoser.revise(view, catalog, previous, gaps)
+    context = DiagnosticContext(
+        trace_id=previous.trace_id,
+        run_id=previous.run_id,
+        view=view,
+    )
+    execution = await diagnoser.revise(context, catalog, previous, gaps)
 
     assert execution.decision.status is DiagnosisStatus.DIAGNOSED
     assert provider.calls == 1
@@ -506,13 +521,13 @@ async def test_revision_uses_distinct_provenance_and_shared_strict_parser() -> N
     provider = CaptureProvider(_valid_draft())
     diagnoser = LlmDiagnoser(provider)
     runtime = _deepseek_runtime()
-    view = runtime.snapshot.trace_view()
-    catalog = EvidenceCatalog.from_view(view)
+    context = _context(runtime)
+    catalog = EvidenceCatalog.from_context(context)
 
-    initial = await diagnoser.diagnose(view, catalog)
+    initial = await diagnoser.diagnose(context, catalog)
     initial_prompt_sha256 = initial.provenance.prompt_sha256
     revision = await diagnoser.revise(
-        view,
+        context,
         catalog,
         runtime.revisions[-1].report,
         (_gap(),),
@@ -529,11 +544,11 @@ async def test_invalid_revision_output_abstains_without_a_repair_loop() -> None:
     provider = CaptureProvider("not-json")
     diagnoser = LlmDiagnoser(provider)
     runtime = _deepseek_runtime()
-    view = runtime.snapshot.trace_view()
+    context = _context(runtime)
 
     execution = await diagnoser.revise(
-        view,
-        EvidenceCatalog.from_view(view),
+        context,
+        EvidenceCatalog.from_context(context),
         runtime.revisions[-1].report,
         (_gap(),),
     )
@@ -551,15 +566,15 @@ async def test_revision_rejects_unknown_gap_selector_before_provider_call() -> N
     provider = CaptureProvider(_valid_draft())
     diagnoser = LlmDiagnoser(provider)
     runtime = _deepseek_runtime()
-    view = runtime.snapshot.trace_view()
+    context = _context(runtime)
     gap = _gap().model_copy(
         update={"allowed_selectors": ("span-tool::attributes.secret",)}
     )
 
     with pytest.raises(ValueError, match="evidence gap references unknown selector"):
         await diagnoser.revise(
-            view,
-            EvidenceCatalog.from_view(view),
+            context,
+            EvidenceCatalog.from_context(context),
             runtime.revisions[-1].report,
             (gap,),
         )
@@ -572,13 +587,13 @@ async def test_revision_rejects_unknown_gap_span_before_provider_call() -> None:
     provider = CaptureProvider(_valid_draft())
     diagnoser = LlmDiagnoser(provider)
     runtime = _deepseek_runtime()
-    view = runtime.snapshot.trace_view()
+    context = _context(runtime)
     gap = _gap().model_copy(update={"related_span_ids": ("span-secret",)})
 
     with pytest.raises(ValueError, match="evidence gap references unknown span"):
         await diagnoser.revise(
-            view,
-            EvidenceCatalog.from_view(view),
+            context,
+            EvidenceCatalog.from_context(context),
             runtime.revisions[-1].report,
             (gap,),
         )

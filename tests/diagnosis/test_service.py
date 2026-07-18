@@ -2,14 +2,16 @@ import asyncio
 
 import pytest
 
-from spanvouch.diagnosis.models import (
+from spanvouch.contracts.diagnosis import (
     DiagnoserKind,
     DiagnosisDecision,
     DiagnosisExecution,
     DiagnosisProvenance,
     DiagnosisStatus,
+    TaxonomyRef,
 )
-from spanvouch.diagnosis.service import DiagnosisConflictError, DiagnosisService
+from spanvouch.diagnosis.engine import DiagnosisEngine
+from spanvouch.diagnosis.errors import DiagnosisConflictError
 from spanvouch.failure_types import FailureType
 from tests.trace.test_diagnostic_view import load_trace
 
@@ -31,7 +33,7 @@ class RecordingDiagnoser:
                 confidence=1.0,
             ),
             provenance=DiagnosisProvenance(
-                taxonomy_version="1.0",
+                taxonomy=TaxonomyRef(taxonomy_id="supportlab", taxonomy_version="1.0"),
                 diagnoser_version="fake-v1",
             ),
         )
@@ -64,22 +66,22 @@ class FailOnceDiagnoser(RecordingDiagnoser):
         return await super().diagnose(view, evidence)
 
 
-async def test_service_hides_identity_then_attaches_it_to_report() -> None:
+async def test_engine_passes_bound_context_then_attaches_identity_to_report() -> None:
     diagnoser = RecordingDiagnoser()
-    service = DiagnosisService({DiagnoserKind.RULES: diagnoser})
+    service = DiagnosisEngine({DiagnoserKind.RULES: diagnoser})
     trace = load_trace("clean-01")
 
     report = await service.diagnose(trace, DiagnoserKind.RULES)
 
-    assert diagnoser.seen_identity is False
+    assert diagnoser.seen_identity is True
     assert report.trace_id == trace.trace_id
     assert report.run_id == trace.run_id
-    assert report.diagnoser is DiagnoserKind.RULES
+    assert report.diagnoser == DiagnoserKind.RULES
 
 
 async def test_service_caches_same_completed_fingerprint() -> None:
     diagnoser = RecordingDiagnoser()
-    service = DiagnosisService({DiagnoserKind.RULES: diagnoser})
+    service = DiagnosisEngine({DiagnoserKind.RULES: diagnoser})
     trace = load_trace("clean-01")
 
     first = await service.diagnose(trace, DiagnoserKind.RULES, idempotency_key="same")
@@ -91,7 +93,7 @@ async def test_service_caches_same_completed_fingerprint() -> None:
 
 async def test_service_rejects_idempotency_key_reuse_for_different_trace() -> None:
     diagnoser = RecordingDiagnoser()
-    service = DiagnosisService({DiagnoserKind.RULES: diagnoser})
+    service = DiagnosisEngine({DiagnoserKind.RULES: diagnoser})
     await service.diagnose(
         load_trace("clean-01"), DiagnoserKind.RULES, idempotency_key="collision"
     )
@@ -110,7 +112,7 @@ async def test_service_rejects_idempotency_key_reuse_for_different_trace() -> No
 
 async def test_different_fingerprints_run_without_waiting_for_each_other() -> None:
     diagnoser = FirstCallBlockingDiagnoser()
-    service = DiagnosisService({DiagnoserKind.RULES: diagnoser})
+    service = DiagnosisEngine({DiagnoserKind.RULES: diagnoser})
     blocked = asyncio.create_task(
         service.diagnose(load_trace("clean-01"), DiagnoserKind.RULES)
     )
@@ -131,7 +133,7 @@ async def test_different_fingerprints_run_without_waiting_for_each_other() -> No
 
 async def test_identical_fingerprints_share_one_inflight_result() -> None:
     diagnoser = FirstCallBlockingDiagnoser()
-    service = DiagnosisService({DiagnoserKind.RULES: diagnoser})
+    service = DiagnosisEngine({DiagnoserKind.RULES: diagnoser})
     trace = load_trace("clean-01")
     first = asyncio.create_task(service.diagnose(trace, DiagnoserKind.RULES))
     await asyncio.wait_for(diagnoser.entered.wait(), timeout=0.5)
@@ -148,7 +150,7 @@ async def test_identical_fingerprints_share_one_inflight_result() -> None:
 
 async def test_cancelling_one_waiter_does_not_cancel_shared_diagnosis() -> None:
     diagnoser = FirstCallBlockingDiagnoser()
-    service = DiagnosisService({DiagnoserKind.RULES: diagnoser})
+    service = DiagnosisEngine({DiagnoserKind.RULES: diagnoser})
     trace = load_trace("clean-01")
     cancelled_waiter = asyncio.create_task(service.diagnose(trace, DiagnoserKind.RULES))
     await asyncio.wait_for(diagnoser.entered.wait(), timeout=0.5)
@@ -168,7 +170,7 @@ async def test_cancelling_one_waiter_does_not_cancel_shared_diagnosis() -> None:
 
 async def test_failed_inflight_diagnosis_is_removed_and_retry_can_succeed() -> None:
     diagnoser = FailOnceDiagnoser()
-    service = DiagnosisService({DiagnoserKind.RULES: diagnoser})
+    service = DiagnosisEngine({DiagnoserKind.RULES: diagnoser})
     trace = load_trace("clean-01")
 
     with pytest.raises(RuntimeError, match="transient diagnosis failure"):

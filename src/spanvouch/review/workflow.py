@@ -10,13 +10,13 @@ from uuid import uuid4
 
 from langgraph.graph import END, START, StateGraph
 
+from spanvouch.contracts.diagnosis import DiagnosisReport
 from spanvouch.diagnosis.errors import (
     ProviderConfigurationError,
     ProviderError,
     ProviderProtocolError,
     ProviderRequestError,
 )
-from spanvouch.diagnosis.models import DiagnosisReport
 from spanvouch.review.commands import (
     AppendDiagnosisRevision,
     AppendVerifierRun,
@@ -794,7 +794,7 @@ class ReviewWorkflow:
         if (
             revised_report.trace_id != runtime.snapshot.trace_id
             or revised_report.run_id != runtime.snapshot.run_id
-            or revised_report.diagnoser is not runtime.case.diagnoser
+            or revised_report.diagnoser != runtime.case.diagnoser
         ):
             raise ReviewConflictError("revised diagnosis is not bound to the review input")
         now = self._now()

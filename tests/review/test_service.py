@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from spanvouch.diagnosis.models import (
+from spanvouch.contracts.diagnosis import (
     ClaimStage,
     DiagnoserKind,
     DiagnosisClaim,
@@ -20,8 +20,9 @@ from spanvouch.diagnosis.models import (
     DiagnosisProvenance,
     DiagnosisStatus,
     EvidenceSelector,
+    TaxonomyRef,
 )
-from spanvouch.diagnosis.service import DiagnosisService
+from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.failure_types import FailureType
 from spanvouch.review.commands import ApplyHumanDecision, CreateReviewCase
 from spanvouch.review.errors import ReviewConflictError, ReviewValidationError
@@ -77,7 +78,7 @@ class SelectorDiagnoser:
                 confidence=0.9,
             ),
             provenance=DiagnosisProvenance(
-                taxonomy_version="1.0",
+                taxonomy=TaxonomyRef(taxonomy_id="supportlab", taxonomy_version="1.0"),
                 diagnoser_version=self.version_fingerprint,
                 ruleset_version=self.version_fingerprint,
             ),
@@ -455,7 +456,7 @@ def make_service(
             field_path="attributes.tool.error.type",
         )
     )
-    diagnosis_service = DiagnosisService(
+    diagnosis_service = DiagnosisEngine(
         {DiagnoserKind.RULES: diagnoser, DiagnoserKind.DEEPSEEK: diagnoser}
     )
     workflow = RecordingWorkflow(repository)
@@ -495,7 +496,7 @@ async def test_blocked_live_diagnosis_does_not_delay_unrelated_rules_review_crea
     )
     blocked_diagnoser = BlockingDiagnoser(selector)
     rules_diagnoser = SelectorDiagnoser(selector)
-    diagnosis_service = DiagnosisService(
+    diagnosis_service = DiagnosisEngine(
         {
             DiagnoserKind.DEEPSEEK: blocked_diagnoser,
             DiagnoserKind.RULES: rules_diagnoser,
@@ -611,7 +612,7 @@ async def test_create_restart_preflight_replays_without_diagnosis_or_id_allocati
         raise AssertionError("id factory must not run during durable preflight")
 
     restarted = ReviewService(
-        diagnosis_service=DiagnosisService(
+        diagnosis_service=DiagnosisEngine(
             {
                 DiagnoserKind.RULES: FailingDiagnoser(),
                 DiagnoserKind.DEEPSEEK: FailingDiagnoser(),
@@ -647,7 +648,7 @@ async def test_create_changed_fingerprint_conflicts_before_any_diagnoser(
     service, _, _, _ = make_service(repository)
     await create_case(service, repository, key="preflight-conflict")
     restarted = ReviewService(
-        diagnosis_service=DiagnosisService(
+        diagnosis_service=DiagnosisEngine(
             {
                 DiagnoserKind.RULES: FailingDiagnoser(),
                 DiagnoserKind.DEEPSEEK: FailingDiagnoser(),
@@ -708,7 +709,7 @@ async def test_concurrent_create_reservation_blocks_duplicates_before_diagnosis(
     )
     diagnoser = BlockingDiagnoser(selector)
     service = ReviewService(
-        diagnosis_service=DiagnosisService({DiagnoserKind.RULES: diagnoser}),
+        diagnosis_service=DiagnosisEngine({DiagnoserKind.RULES: diagnoser}),
         repository=repository,
         workflow=NoopWorkflow(),
         deterministic_verifier=RecordingVerifier(),
@@ -775,7 +776,7 @@ async def test_active_create_heartbeat_prevents_takeover_after_original_expiry(
     )
     diagnoser = BlockingDiagnoser(selector)
     first = ReviewService(
-        diagnosis_service=DiagnosisService({DiagnoserKind.RULES: diagnoser}),
+        diagnosis_service=DiagnosisEngine({DiagnoserKind.RULES: diagnoser}),
         repository=repository,
         workflow=NoopWorkflow(),
         deterministic_verifier=RecordingVerifier(),
@@ -785,7 +786,7 @@ async def test_active_create_heartbeat_prevents_takeover_after_original_expiry(
         idempotency_heartbeat_interval=timedelta(milliseconds=10),
     )
     duplicate = ReviewService(
-        diagnosis_service=DiagnosisService({DiagnoserKind.RULES: diagnoser}),
+        diagnosis_service=DiagnosisEngine({DiagnoserKind.RULES: diagnoser}),
         repository=repository,
         workflow=NoopWorkflow(),
         deterministic_verifier=RecordingVerifier(),
@@ -848,7 +849,7 @@ async def test_active_create_heartbeat_continues_through_atomic_finalization(
         )
     )
     first = ReviewService(
-        diagnosis_service=DiagnosisService({DiagnoserKind.RULES: diagnoser}),
+        diagnosis_service=DiagnosisEngine({DiagnoserKind.RULES: diagnoser}),
         repository=repository,
         workflow=NoopWorkflow(),
         deterministic_verifier=RecordingVerifier(),
@@ -858,7 +859,7 @@ async def test_active_create_heartbeat_continues_through_atomic_finalization(
         idempotency_heartbeat_interval=timedelta(milliseconds=10),
     )
     duplicate = ReviewService(
-        diagnosis_service=DiagnosisService({DiagnoserKind.RULES: diagnoser}),
+        diagnosis_service=DiagnosisEngine({DiagnoserKind.RULES: diagnoser}),
         repository=repository,
         workflow=NoopWorkflow(),
         deterministic_verifier=RecordingVerifier(),
@@ -924,7 +925,7 @@ async def test_post_diagnosis_renewal_failure_cancels_finalization_and_joins_tas
         )
     )
     service = ReviewService(
-        diagnosis_service=DiagnosisService({DiagnoserKind.RULES: diagnoser}),
+        diagnosis_service=DiagnosisEngine({DiagnoserKind.RULES: diagnoser}),
         repository=repository,
         workflow=NoopWorkflow(),
         deterministic_verifier=RecordingVerifier(),
@@ -983,7 +984,7 @@ async def test_create_heartbeat_failure_stops_waiting_without_cancelling_shared_
             field_path="attributes.tool.error.type",
         )
     )
-    diagnosis_service = DiagnosisService({DiagnoserKind.RULES: diagnoser})
+    diagnosis_service = DiagnosisEngine({DiagnoserKind.RULES: diagnoser})
     service = ReviewService(
         diagnosis_service=diagnosis_service,
         repository=repository,
@@ -1061,7 +1062,7 @@ async def test_stale_create_reservation_allows_same_fingerprint_takeover_only(
     clock = NOW
     crashing = CrashingDiagnoser()
     first = ReviewService(
-        diagnosis_service=DiagnosisService({DiagnoserKind.RULES: crashing}),
+        diagnosis_service=DiagnosisEngine({DiagnoserKind.RULES: crashing}),
         repository=repository,
         workflow=NoopWorkflow(),
         deterministic_verifier=RecordingVerifier(),
@@ -1087,7 +1088,7 @@ async def test_stale_create_reservation_allows_same_fingerprint_takeover_only(
         )
     )
     recovered = ReviewService(
-        diagnosis_service=DiagnosisService({DiagnoserKind.RULES: recovered_diagnoser}),
+        diagnosis_service=DiagnosisEngine({DiagnoserKind.RULES: recovered_diagnoser}),
         repository=repository,
         workflow=NoopWorkflow(),
         deterministic_verifier=RecordingVerifier(),
@@ -1325,7 +1326,7 @@ async def test_correct_rebuilds_server_owned_evidence_and_verifies_deterministic
     assert revision is not None
     assert revision.report.trace_id == created.case.trace_id
     assert revision.report.run_id == created.case.run_id
-    assert revision.report.diagnoser is DiagnoserKind.RULES
+    assert revision.report.diagnoser == DiagnoserKind.RULES
     assert revision.provenance.diagnoser_version == "human-correction-v1"
     assert revision.origin.value == "human_correction"
     resolved = revision.report.evidence[0]
@@ -1359,7 +1360,7 @@ async def test_correction_and_idempotency_are_atomic_with_sqlite(tmp_path: Path)
     )
     verifier = RecordingVerifier()
     service = ReviewService(
-        diagnosis_service=DiagnosisService({DiagnoserKind.RULES: diagnoser}),
+        diagnosis_service=DiagnosisEngine({DiagnoserKind.RULES: diagnoser}),
         repository=repository,
         workflow=NoopWorkflow(),
         deterministic_verifier=verifier,
@@ -1380,7 +1381,7 @@ async def test_correction_and_idempotency_are_atomic_with_sqlite(tmp_path: Path)
     reopened = SQLiteReviewRepository(tmp_path / "reviews.sqlite3")
     await reopened.initialize()
     restarted = ReviewService(
-        diagnosis_service=DiagnosisService(
+        diagnosis_service=DiagnosisEngine(
             {
                 DiagnoserKind.RULES: FailingDiagnoser(),
                 DiagnoserKind.DEEPSEEK: FailingDiagnoser(),
@@ -1613,7 +1614,7 @@ def test_clock_must_return_aware_utc() -> None:
     )
     with pytest.raises(ValueError, match="aware UTC"):
         ReviewService(
-            diagnosis_service=DiagnosisService({DiagnoserKind.RULES: diagnoser}),
+            diagnosis_service=DiagnosisEngine({DiagnoserKind.RULES: diagnoser}),
             repository=repository,
             workflow=RecordingWorkflow(repository),
             deterministic_verifier=RecordingVerifier(),
@@ -1622,7 +1623,7 @@ def test_clock_must_return_aware_utc() -> None:
         )
     with pytest.raises(ValueError, match="aware UTC"):
         ReviewService(
-            diagnosis_service=DiagnosisService({DiagnoserKind.RULES: diagnoser}),
+            diagnosis_service=DiagnosisEngine({DiagnoserKind.RULES: diagnoser}),
             repository=repository,
             workflow=RecordingWorkflow(repository),
             deterministic_verifier=RecordingVerifier(),
@@ -1643,7 +1644,7 @@ def test_human_correction_dependency_cannot_be_a_semantic_verifier() -> None:
 
     with pytest.raises(ValueError, match="deterministic verifier"):
         ReviewService(
-            diagnosis_service=DiagnosisService({DiagnoserKind.RULES: diagnoser}),
+            diagnosis_service=DiagnosisEngine({DiagnoserKind.RULES: diagnoser}),
             repository=repository,
             workflow=RecordingWorkflow(repository),
             deterministic_verifier=verifier,

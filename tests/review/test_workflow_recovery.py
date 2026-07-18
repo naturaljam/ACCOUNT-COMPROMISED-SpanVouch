@@ -5,14 +5,14 @@ from pathlib import Path
 
 import pytest
 
+from spanvouch.contracts.diagnosis import DiagnoserKind
+from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.diagnosis.errors import (
     ProviderConfigurationError,
     ProviderProtocolError,
     ProviderRequestError,
 )
-from spanvouch.diagnosis.models import DiagnoserKind
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
-from spanvouch.diagnosis.service import DiagnosisService
 from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.review.errors import ReviewConflictError
 from spanvouch.review.models import (
@@ -92,7 +92,7 @@ def _resume_service(
     ids: SequenceIds,
 ) -> ReviewService:
     engine = InvariantEngine(())
-    diagnosis_service = DiagnosisService({DiagnoserKind.RULES: RuleDiagnoser(engine)})
+    diagnosis_service = DiagnosisEngine({DiagnoserKind.RULES: RuleDiagnoser(engine)})
     return ReviewService(
         diagnosis_service=diagnosis_service,
         repository=repository,

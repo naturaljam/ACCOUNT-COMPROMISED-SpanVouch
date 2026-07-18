@@ -13,7 +13,7 @@ from pydantic import (
     model_validator,
 )
 
-from spanvouch.diagnosis.models import ClaimStage, EvidenceSelector, ProviderUsage
+from spanvouch.contracts.diagnosis import ClaimStage, EvidenceSelector, ProviderUsage
 from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig, ModelProvider
 from spanvouch.failure_types import FailureType
 from spanvouch.review.models import (
@@ -275,7 +275,7 @@ class SemanticVerifier:
         diagnosis = {
             "status": report.status.value,
             "failure_type": (
-                report.failure_type.value if report.failure_type is not None else None
+                report.failure_type
             ),
             "critical_span_ids": report.critical_span_ids,
             "causal_chain": [

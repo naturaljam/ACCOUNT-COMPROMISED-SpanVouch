@@ -2,9 +2,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from spanvouch.api.app import create_app
+from spanvouch.contracts.diagnosis import DiagnoserKind
+from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.diagnosis.errors import ProviderRequestError
-from spanvouch.diagnosis.models import DiagnoserKind
-from spanvouch.diagnosis.service import DiagnosisService
 from spanvouch.trace.repository import InMemoryTraceRepository
 from tests.trace.test_diagnostic_view import load_trace
 
@@ -95,7 +95,7 @@ class FailingDiagnoser:
 @pytest.mark.parametrize(("retryable", "expected"), [(False, 502), (True, 503)])
 def test_provider_error_mapping(retryable: bool, expected: int) -> None:
     repository = InMemoryTraceRepository()
-    service = DiagnosisService(
+    service = DiagnosisEngine(
         {DiagnoserKind.DEEPSEEK: FailingDiagnoser(retryable=retryable)}  # type: ignore[dict-item]
     )
     client = TestClient(

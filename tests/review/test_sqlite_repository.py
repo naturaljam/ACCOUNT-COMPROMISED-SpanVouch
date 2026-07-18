@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from spanvouch.diagnosis.models import DiagnoserKind
+from spanvouch.contracts.diagnosis import DiagnoserKind
 from spanvouch.review import commands as review_commands
 from spanvouch.review.commands import (
     AppendDiagnosisRevision,

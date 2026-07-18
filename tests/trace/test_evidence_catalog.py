@@ -2,7 +2,7 @@ from hashlib import sha256
 
 import pytest
 
-from spanvouch.diagnosis.models import EvidenceSelector
+from spanvouch.contracts.diagnosis import EvidenceSelector
 from spanvouch.trace.diagnostic_view import TraceProjector
 from spanvouch.trace.evidence_catalog import EvidenceCatalog, canonical_json
 from tests.trace.test_diagnostic_view import load_trace

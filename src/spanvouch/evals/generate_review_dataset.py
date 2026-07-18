@@ -10,8 +10,7 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from spanvouch.contracts.trace import TraceIR
-from spanvouch.diagnosis.models import (
+from spanvouch.contracts.diagnosis import (
     ClaimStage,
     DiagnoserKind,
     DiagnosisClaim,
@@ -20,8 +19,9 @@ from spanvouch.diagnosis.models import (
     EvidenceRef,
     EvidenceSelector,
 )
+from spanvouch.contracts.trace import TraceIR
+from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
-from spanvouch.diagnosis.service import DiagnosisService
 from spanvouch.evals.generate_dataset import DatasetManifest
 from spanvouch.invariants.engine import InvariantEngine
 from spanvouch.invariants.supportlab import supportlab_rules
@@ -247,7 +247,7 @@ def mutate_diagnosis_conflict(report: DiagnosisReport, trace: TraceIR) -> Diagno
     del trace
     assert report.failure_type is not None
     replacement = (
-        "invalid_argument" if report.failure_type.value != "invalid_argument" else "wrong_tool"
+        "invalid_argument" if report.failure_type != "invalid_argument" else "wrong_tool"
     )
     return DiagnosisReport.model_validate(
         {**report.model_dump(mode="python"), "failure_type": replacement}
@@ -367,7 +367,7 @@ async def generate_review_dataset(
 ) -> ReviewDatasetManifest:
     validate_source_dataset(source_dataset)
     traces = _load_traces(source_dataset / "traces.jsonl")
-    service = DiagnosisService(
+    service = DiagnosisEngine(
         {DiagnoserKind.RULES: RuleDiagnoser(InvariantEngine(supportlab_rules()))}
     )
     candidates: list[ReviewCandidate] = []

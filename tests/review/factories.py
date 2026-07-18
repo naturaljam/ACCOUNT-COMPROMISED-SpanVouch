@@ -1,7 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
-from spanvouch.contracts.trace import DiagnosticSpan, DiagnosticTraceView, SpanKind, SpanStatus
-from spanvouch.diagnosis.models import (
+from spanvouch.contracts.diagnosis import (
     ClaimStage,
     DiagnoserKind,
     DiagnosisClaim,
@@ -9,7 +8,9 @@ from spanvouch.diagnosis.models import (
     DiagnosisReport,
     DiagnosisStatus,
     EvidenceSelector,
+    TaxonomyRef,
 )
+from spanvouch.contracts.trace import DiagnosticSpan, DiagnosticTraceView, SpanKind, SpanStatus
 from spanvouch.failure_types import FailureType
 from spanvouch.review.models import (
     CorrectionClaim,
@@ -91,7 +92,7 @@ def make_diagnosis_report() -> DiagnosisReport:
         evidence=(evidence,),
         confidence=1.0,
         provenance=DiagnosisProvenance(
-            taxonomy_version="1.0",
+            taxonomy=TaxonomyRef(taxonomy_id="supportlab", taxonomy_version="1.0"),
             diagnoser_version="review-test-rules-v1",
             ruleset_version="review-test-rules-v1",
         ),

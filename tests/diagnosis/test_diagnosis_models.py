@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from spanvouch.diagnosis.models import (
+from spanvouch.contracts.diagnosis import (
     AbstainReason,
     ClaimStage,
     DiagnoserKind,
@@ -11,6 +11,7 @@ from spanvouch.diagnosis.models import (
     DiagnosisReport,
     DiagnosisStatus,
     EvidenceRef,
+    TaxonomyRef,
 )
 from spanvouch.failure_types import FailureType
 
@@ -89,7 +90,7 @@ def test_report_round_trips_through_json() -> None:
         evidence=(EVIDENCE,),
         confidence=1.0,
         provenance=DiagnosisProvenance(
-            taxonomy_version="1.0",
+            taxonomy=TaxonomyRef(taxonomy_id="supportlab", taxonomy_version="1.0"),
             diagnoser_version="evidence-rules-v1",
             ruleset_version="rules-sha",
         ),

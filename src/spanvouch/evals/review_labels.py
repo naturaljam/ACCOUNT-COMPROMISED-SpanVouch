@@ -1,4 +1,5 @@
 import hashlib
+import json
 from collections import Counter
 from collections.abc import Mapping
 from pathlib import Path
@@ -6,8 +7,8 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
+from spanvouch.contracts.diagnosis import DiagnosisStatus
 from spanvouch.contracts.trace import TraceIR
-from spanvouch.diagnosis.models import DiagnosisStatus
 from spanvouch.evals.diagnosis_labels import (
     DiagnosisDatasetManifest,
     build_diagnosis_manifest,
@@ -70,11 +71,27 @@ def _read_lf(path: Path) -> tuple[str, ...]:
 
 
 def load_review_candidates(path: Path) -> tuple[ReviewCandidate, ...]:
-    candidates = tuple(ReviewCandidate.model_validate_json(line) for line in _read_lf(path))
+    candidates = tuple(_load_review_candidate(line) for line in _read_lf(path))
     candidate_ids = tuple(candidate.candidate_id for candidate in candidates)
     if len(candidate_ids) != len(set(candidate_ids)):
         raise ValueError("duplicate review candidate_id")
     return candidates
+
+
+def _load_review_candidate(line: str) -> ReviewCandidate:
+    """Upgrade frozen Phase 3 provenance at the evaluation file boundary."""
+    payload = json.loads(line)
+    report = payload.get("report")
+    if isinstance(report, dict):
+        provenance = report.get("provenance")
+        if isinstance(provenance, dict) and "taxonomy" not in provenance:
+            taxonomy_version = provenance.pop("taxonomy_version", None)
+            if isinstance(taxonomy_version, str):
+                provenance["taxonomy"] = {
+                    "taxonomy_id": "supportlab",
+                    "taxonomy_version": taxonomy_version,
+                }
+    return ReviewCandidate.model_validate(payload)
 
 
 def load_review_labels(path: Path) -> tuple[ReviewGoldLabel, ...]:

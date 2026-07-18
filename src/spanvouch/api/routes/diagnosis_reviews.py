@@ -4,13 +4,13 @@ from fastapi import APIRouter, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from spanvouch.contracts.diagnosis import DiagnoserKind
 from spanvouch.diagnosis.errors import (
     DiagnosisUnavailableError,
     ProviderConfigurationError,
     ProviderProtocolError,
     ProviderRequestError,
 )
-from spanvouch.diagnosis.models import DiagnoserKind
 from spanvouch.review.errors import (
     ReviewConflictError,
     ReviewNotFoundError,

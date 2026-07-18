@@ -5,15 +5,15 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from hashlib import sha256
 
-from spanvouch.contracts.trace import DiagnosticContext, TraceIR
-from spanvouch.diagnosis.models import (
+from spanvouch.contracts.diagnosis import (
     DiagnoserKind,
     DiagnosisClaim,
     DiagnosisProvenance,
     DiagnosisReport,
     EvidenceRef,
 )
-from spanvouch.diagnosis.service import DiagnosisService
+from spanvouch.contracts.trace import DiagnosticContext, TraceIR
+from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.review.commands import (
     ApplyHumanDecision,
     CreateReviewCase,
@@ -92,7 +92,7 @@ def _build_corrected_report(
             )
         )
 
-    if current_report.diagnoser is DiagnoserKind.RULES:
+    if current_report.diagnoser == DiagnoserKind.RULES:
         ruleset_version = HUMAN_CORRECTION_VERSION
         prompt_version = None
         prompt_sha256 = None
@@ -101,7 +101,7 @@ def _build_corrected_report(
         prompt_version = HUMAN_CORRECTION_VERSION
         prompt_sha256 = sha256(HUMAN_CORRECTION_VERSION.encode("utf-8")).hexdigest()
     provenance = DiagnosisProvenance(
-        taxonomy_version=current_report.provenance.taxonomy_version,
+        taxonomy=current_report.provenance.taxonomy,
         diagnoser_version=HUMAN_CORRECTION_VERSION,
         ruleset_version=ruleset_version,
         prompt_version=prompt_version,
@@ -129,7 +129,7 @@ class ReviewService:
     def __init__(
         self,
         *,
-        diagnosis_service: DiagnosisService,
+        diagnosis_service: DiagnosisEngine,
         repository: ReviewRepository,
         workflow: ReviewWorkflowRunner,
         deterministic_verifier: Verifier,

@@ -2,8 +2,8 @@ from dataclasses import dataclass
 
 import pytest
 
-from spanvouch.contracts.trace import DiagnosticTraceView
-from spanvouch.diagnosis.models import AbstainReason, DiagnosisStatus, EvidenceSelector
+from spanvouch.contracts.diagnosis import AbstainReason, DiagnosisStatus, EvidenceSelector
+from spanvouch.contracts.trace import DiagnosticContext
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
 from spanvouch.failure_types import FailureType
 from spanvouch.invariants.engine import InvariantEngine
@@ -20,9 +20,9 @@ from spanvouch.trace.evidence_catalog import EvidenceCatalog
 from tests.trace.test_diagnostic_view import load_trace
 
 
-def inputs(run_id: str) -> tuple[DiagnosticTraceView, EvidenceCatalog]:
+def inputs(run_id: str) -> tuple[DiagnosticContext, EvidenceCatalog]:
     context = TraceProjector().project(load_trace(run_id))
-    return context.view, EvidenceCatalog.from_context(context)
+    return context, EvidenceCatalog.from_context(context)
 
 
 @pytest.mark.asyncio
@@ -33,7 +33,7 @@ async def test_rule_diagnoser_returns_supported_failure_with_real_evidence() -> 
     )
 
     assert execution.decision.status is DiagnosisStatus.DIAGNOSED
-    assert execution.decision.failure_type is FailureType.INVALID_ARGUMENT
+    assert execution.decision.failure_type == FailureType.INVALID_ARGUMENT
     assert execution.decision.critical_span_ids[0] == "span-005"
     assert execution.decision.evidence
     assert execution.provenance.ruleset_version
@@ -58,7 +58,7 @@ async def test_rule_diagnoser_returns_no_failure_for_clean_trace() -> None:
     )
 
     assert execution.decision.status is DiagnosisStatus.NO_FAILURE
-    assert execution.decision.failure_type is FailureType.NO_FAILURE
+    assert execution.decision.failure_type == FailureType.NO_FAILURE
 
 
 @dataclass(frozen=True)
