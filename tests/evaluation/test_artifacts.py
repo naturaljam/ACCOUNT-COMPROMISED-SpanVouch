@@ -380,7 +380,7 @@ def test_bundle_writer_preserves_declared_safe_provenance_and_reproduction_text(
         "git_commit": "a" * 40,
         "report_sha256": "b" * 64,
         "version": "1.0",
-        "dataset": "evals/datasets/supportlab-v1",
+        "status": "complete",
     }
     environment = "python=3.12\ngit_commit=" + "a" * 40
     readme = "Run the offline evaluation from evals/datasets/supportlab-v1.\n"
@@ -414,4 +414,57 @@ def test_secret_classifier_rejects_url_userinfo_even_without_a_sensitive_key() -
     with pytest.raises(ValueError, match="unsafe artifact content"):
         artifacts_module.ArtifactSecretClassifier().require_safe(
             "https://user:password@example.invalid/report"
+        )
+
+
+@pytest.mark.parametrize("key", ("apiKey", "api_key", "api-key", "api_key_sha256"))
+def test_secret_classifier_rejects_sensitive_key_variants_with_short_values(key: str) -> None:
+    with pytest.raises(ValueError, match="unsafe artifact content"):
+        artifacts_module.ArtifactSecretClassifier().require_safe({key: "ok"})
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    (
+        (("config", "dataset"), "evals/ghp_0123456789abcdefghijklmnopqrstuv"),
+        (("metrics", "note"), "qwertyuiopasdfghjklzxcvbnmabcdef"),
+        (("readme",), "a lower-case opaque qwertyuiopasdfghjklzxcvbnmabcdef token"),
+    ),
+)
+def test_secret_classifier_rejects_credentials_before_context_exceptions(
+    path: tuple[str, ...], value: str
+) -> None:
+    with pytest.raises(ValueError, match="unsafe artifact content"):
+        artifacts_module.ArtifactSecretClassifier().require_safe(value, path=path)
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    (
+        (("manifest", "code", "git_commit"), "a" * 40),
+        (("manifest", "configuration", "sha256"), "b" * 64),
+        (("config", "schema_version"), "1.0"),
+        (("config", "dataset"), "evals/datasets/supportlab-v1"),
+        (("manifest", "outputs", "path"), "metrics.json"),
+        (("metrics", "status"), "complete"),
+        (("manifest", "configuration", "media_type"), "application/json"),
+    ),
+)
+def test_secret_classifier_allows_only_contextual_safe_values(
+    path: tuple[str, ...], value: str
+) -> None:
+    artifacts_module.ArtifactSecretClassifier().require_safe(value, path=path)
+
+
+def test_bundle_writer_rejects_path_embedded_credential_before_hashing(
+    tmp_path: Path, artifact_manifest: object
+) -> None:
+    with pytest.raises(ValueError, match="unsafe artifact content"):
+        ArtifactBundleWriter(tmp_path / "bundle").write(
+            manifest=artifact_manifest,
+            config={"dataset": "evals/ghp_0123456789abcdefghijklmnopqrstuv"},
+            metrics={"status": "complete"},
+            structured_events=(),
+            environment="python=3.12",
+            readme="# Reproduce\n",
         )

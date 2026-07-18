@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import errno
 import json
+import math
 import os
 import re
 import shutil
@@ -72,9 +73,49 @@ _TOKEN_PREFIX = re.compile(
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b")
 _PEM_PRIVATE_KEY = re.compile(r"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----")
 _OPAQUE_TOKEN = re.compile(r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-])")
-_HEX_DIGEST = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
+_GIT_COMMIT = re.compile(r"^[0-9a-f]{40}$")
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _VERSION = re.compile(r"^v?\d+(?:\.\d+){1,3}(?:[-+][A-Za-z0-9.-]+)?$")
-_KNOWN_PATH = re.compile(r"^(?:evals|schemas|tests|src|docs)/[A-Za-z0-9._/-]+$")
+_IDENTIFIER_VALUE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]*$")
+_RELATIVE_POSIX_PATH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
+_HASH_FIELDS = frozenset(
+    {
+        "dependencylocksha256",
+        "generationconfigsha256",
+        "manifestsha256",
+        "promptsha256",
+        "reportsha256",
+        "sha256",
+    }
+)
+_SAFE_IDENTIFIER_FIELDS = frozenset(
+    {
+        "architecture",
+        "artifact_id",
+        "artifact_kind",
+        "basis",
+        "command_name",
+        "dataset_id",
+        "endpoint_class",
+        "implementation",
+        "media_type",
+        "mode",
+        "model",
+        "name",
+        "os",
+        "package",
+        "policy_version",
+        "pricing_ref",
+        "provider",
+        "provider_status",
+        "repository_identity",
+        "schema_name",
+        "status",
+        "verifier",
+    }
+)
+_VERSION_FIELDS = frozenset({"package_version", "python", "schema_version", "version"})
+_CONFIG_DATASET_PATHS = frozenset({("config", "dataset"), ("config", "source_dataset")})
 
 
 def collect_git_provenance(repository: Path) -> CodeProvenance:
@@ -301,62 +342,67 @@ def _validate_environment(value: str) -> None:
 class ArtifactSecretClassifier:
     """Fail-closed recursive classifier for values safe to persist in artifacts."""
 
-    def require_safe(self, value: Any, *, key: str | None = None) -> None:
+    def require_safe(self, value: Any, *, path: tuple[str, ...] = ()) -> None:
         if isinstance(value, Mapping):
             for child_key, item in value.items():
                 if not isinstance(child_key, str) or self._is_sensitive_key(child_key):
                     _unsafe_artifact_content()
-                self.require_safe(item, key=child_key)
+                self.require_safe(item, path=(*path, child_key))
             return
         if isinstance(value, (tuple, list)):
             for item in value:
-                self.require_safe(item, key=key)
+                self.require_safe(item, path=path)
             return
-        if isinstance(value, str) and self._is_sensitive_string(value, key=key):
+        if isinstance(value, str) and self._is_sensitive_string(value, path=path):
             _unsafe_artifact_content()
 
     def _is_sensitive_key(self, key: str) -> bool:
         tokens = self._key_tokens(key)
         normalized = "".join(tokens)
-        if normalized.endswith("sha256") or normalized in {
+        if normalized in _HASH_FIELDS or normalized in {
             "gitcommit",
             "inputtokens",
             "outputtokens",
             "totaltokens",
-            "schema_name",
-            "schemaversion",
         }:
             return False
-        sensitive_tokens = {
+        sensitive_concepts = (
             "apikey",
-            "authorization",
-            "authentication",
-            "credential",
-            "password",
-            "prompt",
-            "reasoning",
-            "secret",
-            "token",
-        }
-        if any(token in sensitive_tokens for token in tokens):
+            "accesskey",
+            "privatekey",
+            "rawresponse",
+            "hiddenreasoning",
+            "chainofthought",
+        )
+        if any(concept in normalized for concept in sensitive_concepts):
             return True
-        if any(token in {"header", "headers", "raw", "response"} for token in tokens):
+        if any(
+            token
+            in {
+                "key",
+                "secret",
+                "credential",
+                "password",
+                "passwd",
+                "authentication",
+                "authorization",
+                "token",
+                "prompt",
+                "reasoning",
+                "header",
+                "headers",
+                "raw",
+                "response",
+            }
+            for token in tokens
+        ):
             return True
-        pairs = tuple(zip(tokens, tokens[1:], strict=False))
         return any(
-            pair in pairs
-            for pair in (
-                ("access", "key"),
-                ("private", "key"),
-                ("provider", "body"),
-                ("raw", "body"),
-                ("response", "body"),
-            )
+            pair in tuple(zip(tokens, tokens[1:], strict=False))
+            for pair in (("provider", "body"), ("raw", "body"), ("response", "body"))
         )
 
-    def _is_sensitive_string(self, value: str, *, key: str | None) -> bool:
-        if self._is_explicit_safe_value(value, key=key):
-            return False
+    def _is_sensitive_string(self, value: str, *, path: tuple[str, ...]) -> bool:
         try:
             parsed = urlsplit(value)
         except ValueError:
@@ -371,6 +417,8 @@ class ArtifactSecretClassifier:
             or _PEM_PRIVATE_KEY.search(value)
         ):
             return True
+        if self._is_explicit_safe_value(value, path=path):
+            return False
         return any(self._is_high_entropy(candidate) for candidate in _OPAQUE_TOKEN.findall(value))
 
     @staticmethod
@@ -381,34 +429,46 @@ class ArtifactSecretClassifier:
         )
 
     @staticmethod
-    def _is_explicit_safe_value(value: str, *, key: str | None) -> bool:
-        if (
-            _HEX_DIGEST.fullmatch(value)
-            or _VERSION.fullmatch(value)
-            or _KNOWN_PATH.fullmatch(value)
-        ):
-            return True
-        if key is None:
+    def _is_explicit_safe_value(value: str, *, path: tuple[str, ...]) -> bool:
+        if not path:
             return False
-        normalized = "".join(ArtifactSecretClassifier._key_tokens(key))
-        return normalized.endswith("sha256") and _HEX_DIGEST.fullmatch(value) is not None
+        field = path[-1]
+        normalized = "".join(ArtifactSecretClassifier._key_tokens(field))
+        if normalized in _HASH_FIELDS and _SHA256.fullmatch(value):
+            return True
+        if field == "git_commit" and _GIT_COMMIT.fullmatch(value):
+            return True
+        if field in _VERSION_FIELDS and _VERSION.fullmatch(value):
+            return True
+        if field in _SAFE_IDENTIFIER_FIELDS and _IDENTIFIER_VALUE.fullmatch(value):
+            return True
+        return ArtifactSecretClassifier._is_contextual_relative_path(value, path)
+
+    @staticmethod
+    def _is_contextual_relative_path(value: str, path: tuple[str, ...]) -> bool:
+        if not _RELATIVE_POSIX_PATH.fullmatch(value) or any(
+            segment in {"", ".", ".."} for segment in value.split("/")
+        ):
+            return False
+        if path in _CONFIG_DATASET_PATHS:
+            return True
+        return path[0] == "manifest" and (
+            path[-1] == "path" or path[-1].endswith("_ref")
+        )
 
     @staticmethod
     def _is_high_entropy(candidate: str) -> bool:
-        character_classes = sum(
-            (
-                any(character.islower() for character in candidate),
-                any(character.isupper() for character in candidate),
-                any(character.isdigit() for character in candidate),
-                "_" in candidate or "-" in candidate,
-            )
+        if len(candidate) < 32 or len(set(candidate)) < 10:
+            return False
+        entropy = -sum(
+            (count / len(candidate)) * math.log2(count / len(candidate))
+            for count in (candidate.count(character) for character in set(candidate))
         )
-        return character_classes >= 3 and len(set(candidate)) >= 12
+        return entropy >= 3.3
 
 
 _ARTIFACT_SECRET_CLASSIFIER = ArtifactSecretClassifier()
 
 
 def _require_safe(location: str, value: Any) -> None:
-    del location
-    _ARTIFACT_SECRET_CLASSIFIER.require_safe(value)
+    _ARTIFACT_SECRET_CLASSIFIER.require_safe(value, path=(location,))
