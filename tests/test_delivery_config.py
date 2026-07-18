@@ -456,6 +456,52 @@ def test_phase_4_acceptance_evidence_includes_a_clean_offline_reference_bundle()
     assert "POSIX exact-object directory unlink is unsupported" in report
 
 
+def test_phase_4_reference_bundle_limits_label_boundaries_to_metrics_analysis() -> None:
+    bundle = ROOT / "evals" / "reports" / "reference" / "phase4-offline-bundle"
+    bundle_text = {
+        path.name: path.read_text(encoding="utf-8")
+        for path in sorted(bundle.iterdir())
+        if path.is_file()
+    }
+
+    assert '"mutation_kind"' in bundle_text["metrics.json"]
+    assert all(
+        '"mutation_kind"' not in content
+        for name, content in bundle_text.items()
+        if name != "metrics.json"
+    )
+    forbidden_label_keys = ('"gold', '"expected', '"split')
+    assert all(
+        key not in content
+        for content in bundle_text.values()
+        for key in forbidden_label_keys
+    )
+
+    reproducibility = (ROOT / "docs" / "research" / "reproducibility.md").read_text(
+        encoding="utf-8"
+    )
+    normalized_reproducibility = " ".join(reproducibility.lower().split())
+    provider_boundary = "only from provider-visible, pre-call inputs/messages/snapshots"
+    metrics_boundary = "post-call `metrics.json` may include `mutation_kind`"
+    assert provider_boundary in normalized_reproducibility
+    assert metrics_boundary in normalized_reproducibility
+    assert (
+        "raw provider bodies, and local environment values are excluded from the entire bundle"
+        in normalized_reproducibility
+    )
+
+    acceptance = (ROOT / "docs" / "evaluation" / "phase4-research-foundation.md").read_text(
+        encoding="utf-8"
+    )
+    normalized_acceptance = " ".join(acceptance.split())
+    assert "Task 16 input/base: `197e94439e12e2365412d046c56473ba35f432d3`" in acceptance
+    assert (
+        "Original final acceptance evidence commit: `bbe811599e8086515591dcb1677e288dcbd2c510`"
+        in normalized_acceptance
+    )
+    assert "not a claim about this corrective commit's self-SHA" in acceptance
+
+
 def test_active_old_product_name_scan_has_no_literal_hits() -> None:
     legacy_product = "AF" + "C"
     legacy_import = legacy_product.lower()

@@ -2,15 +2,18 @@
 
 ## Evidence identity
 
+- Task 16 input/base: `197e94439e12e2365412d046c56473ba35f432d3`.
 - Branch: `feature/phase4-research-foundation`.
 - Frozen Phase 3 marker: `phase3-frozen-20260718` =
   `0d33812cc8b559bacc8df82fd5c0bcaeb6c03fb7`.
 - Clean release-candidate and code-under-test commit:
   `6f78f8205122262261ebf752bbbece79ef864f28`.
+- Original final acceptance evidence commit:
+  `bbe811599e8086515591dcb1677e288dcbd2c510`.
 - The offline reference bundle was generated from that clean candidate with
-  `dirty_worktree=false`; its manifest records the same commit. This report's
-  final evidence commit intentionally does not claim its own SHA. Audit the
-  report commit with `git log -1` and use the explicit code-under-test SHA above.
+  `dirty_worktree=false`; its manifest records the same commit. This corrective
+  revision changes evidence-boundary documentation and acceptance metadata only;
+  it is not a claim about this corrective commit's self-SHA.
 - The immutable frozen dataset tree and
   `docs/evaluation/phase3-verification-review.md` have no diff from the marker.
 

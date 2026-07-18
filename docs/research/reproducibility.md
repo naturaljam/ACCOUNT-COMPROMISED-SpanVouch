@@ -15,11 +15,19 @@ requests, zero input/output tokens, and no cost object. A live provider requires
 an explicit opt-in and must record sanitized provider metadata, never raw
 responses or credentials.
 
-Gold labels, mutation metadata, expected findings, split identity, API keys,
-authorization headers, prompt text, hidden reasoning, raw provider bodies, and
-local environment values are excluded from bundles. Provider-visible data and
-evaluator label joins use separate interfaces; the join occurs after verifier
-calls return.
+Gold labels, mutation metadata, expected findings, and split identity are
+excluded only from provider-visible, pre-call inputs/messages/snapshots.
+Provider-visible data and evaluator label joins use separate interfaces; the
+evaluator joins labels only after all verifier calls return. Post-call
+`metrics.json` may include `mutation_kind` and candidate ID for analysis, but it
+must not include gold labels, expected findings, or split secrets unless a later
+approval explicitly permits them. The checked-in reference contains mutation
+metadata only in `metrics.json`.
+
+API keys, authorization headers, prompt text, hidden reasoning, raw provider
+bodies, and local environment values are excluded from the entire bundle. Live
+provider metadata is sanitized before persistence; raw responses and credentials
+are never recorded.
 
 From a clean release candidate, reproduce the checked-in reference evidence:
 
