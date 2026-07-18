@@ -13,6 +13,7 @@ from collections.abc import Iterable, Mapping
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from pydantic import JsonValue
 
@@ -28,16 +29,6 @@ _REQUIRED_FILENAMES = frozenset(
         "environment.txt",
         "README.md",
     }
-)
-_SENSITIVE_KEY_PART = re.compile(
-    r"(?:api[_-]?key|authorization|auth[_-]?header|(?:raw|provider)[_-]?(?:body|response))",
-    re.IGNORECASE,
-)
-_SENSITIVE_VALUE = re.compile(r"(?:bearer\s+|sk-[A-Za-z0-9_-]{8,})", re.IGNORECASE)
-_SENSITIVE_ASSIGNMENT = re.compile(
-    r"(?:api[_\s-]?key|authorization|password|client[_\s-]?secret|"
-    r"access[_\s-]?token|credential)\s*(?:=|:)",
-    re.IGNORECASE,
 )
 _ENVIRONMENT_FIELDS = frozenset(
     {
@@ -66,6 +57,24 @@ _CONFIG_FIELDS = _CONFIG_STRING_FIELDS | {"seed", "allow_live_api"}
 _ENVIRONMENT_VALUE = re.compile(r"^[A-Za-z0-9._+:/ -]+$")
 _AT_FDCWD = -100
 _RENAME_NOREPLACE = 1
+_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_CREDENTIAL_ASSIGNMENT = re.compile(
+    r"(?:api[_\s-]?key|access[_\s-]?key|authorization|authentication|"
+    r"password|client[_\s-]?secret|session[_\s-]?token|credential)\s*(?:=|:)",
+    re.IGNORECASE,
+)
+_AUTH_SCHEME = re.compile(r"\b(?:basic|bearer|token)\s+\S+", re.IGNORECASE)
+_TOKEN_PREFIX = re.compile(
+    r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|"
+    r"glpat-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,}|"
+    r"sk-(?:proj-)?[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16})\b"
+)
+_JWT = re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b")
+_PEM_PRIVATE_KEY = re.compile(r"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----")
+_OPAQUE_TOKEN = re.compile(r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-])")
+_HEX_DIGEST = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
+_VERSION = re.compile(r"^v?\d+(?:\.\d+){1,3}(?:[-+][A-Za-z0-9.-]+)?$")
+_KNOWN_PATH = re.compile(r"^(?:evals|schemas|tests|src|docs)/[A-Za-z0-9._/-]+$")
 
 
 def collect_git_provenance(repository: Path) -> CodeProvenance:
@@ -257,6 +266,7 @@ def _unsafe_artifact_content() -> None:
 
 
 def _validate_config(value: Any) -> None:
+    _require_safe("config", value)
     if not isinstance(value, Mapping):
         _unsafe_artifact_content()
     for key, item in value.items():
@@ -270,7 +280,6 @@ def _validate_config(value: Any) -> None:
                 _unsafe_artifact_content()
         elif not isinstance(item, bool):
             _unsafe_artifact_content()
-        _require_safe("config", item)
 
 
 def _validate_environment(value: str) -> None:
@@ -286,46 +295,120 @@ def _validate_environment(value: str) -> None:
             or not _ENVIRONMENT_VALUE.fullmatch(item)
         ):
             _unsafe_artifact_content()
-        _require_safe("environment", item)
+        _require_safe("environment", {key: item})
 
 
-def _normalized_key(value: object) -> str:
-    return re.sub(r"[^a-z0-9]", "", str(value).casefold())
+class ArtifactSecretClassifier:
+    """Fail-closed recursive classifier for values safe to persist in artifacts."""
 
+    def require_safe(self, value: Any, *, key: str | None = None) -> None:
+        if isinstance(value, Mapping):
+            for child_key, item in value.items():
+                if not isinstance(child_key, str) or self._is_sensitive_key(child_key):
+                    _unsafe_artifact_content()
+                self.require_safe(item, key=child_key)
+            return
+        if isinstance(value, (tuple, list)):
+            for item in value:
+                self.require_safe(item, key=key)
+            return
+        if isinstance(value, str) and self._is_sensitive_string(value, key=key):
+            _unsafe_artifact_content()
 
-def _is_sensitive_key(key: object) -> bool:
-    normalized = _normalized_key(key)
-    if normalized.endswith("sha256"):
-        return False
-    if normalized in {"header", "headers", "raw", "response", "prompt", "reasoning"}:
-        return True
-    return normalized.endswith(
-        (
+    def _is_sensitive_key(self, key: str) -> bool:
+        tokens = self._key_tokens(key)
+        normalized = "".join(tokens)
+        if normalized.endswith("sha256") or normalized in {
+            "gitcommit",
+            "inputtokens",
+            "outputtokens",
+            "totaltokens",
+            "schema_name",
+            "schemaversion",
+        }:
+            return False
+        sensitive_tokens = {
             "apikey",
             "authorization",
+            "authentication",
             "credential",
             "password",
             "prompt",
-            "raw",
             "reasoning",
             "secret",
             "token",
+        }
+        if any(token in sensitive_tokens for token in tokens):
+            return True
+        if any(token in {"header", "headers", "raw", "response"} for token in tokens):
+            return True
+        pairs = tuple(zip(tokens, tokens[1:], strict=False))
+        return any(
+            pair in pairs
+            for pair in (
+                ("access", "key"),
+                ("private", "key"),
+                ("provider", "body"),
+                ("raw", "body"),
+                ("response", "body"),
+            )
         )
-    )
+
+    def _is_sensitive_string(self, value: str, *, key: str | None) -> bool:
+        if self._is_explicit_safe_value(value, key=key):
+            return False
+        try:
+            parsed = urlsplit(value)
+        except ValueError:
+            parsed = None
+        if parsed is not None and (parsed.username is not None or parsed.password is not None):
+            return True
+        if (
+            _CREDENTIAL_ASSIGNMENT.search(value)
+            or _AUTH_SCHEME.search(value)
+            or _TOKEN_PREFIX.search(value)
+            or _JWT.search(value)
+            or _PEM_PRIVATE_KEY.search(value)
+        ):
+            return True
+        return any(self._is_high_entropy(candidate) for candidate in _OPAQUE_TOKEN.findall(value))
+
+    @staticmethod
+    def _key_tokens(key: str) -> tuple[str, ...]:
+        camel_spaced = _CAMEL_BOUNDARY.sub(" ", key)
+        return tuple(
+            token for token in re.split(r"[^A-Za-z0-9]+", camel_spaced.casefold()) if token
+        )
+
+    @staticmethod
+    def _is_explicit_safe_value(value: str, *, key: str | None) -> bool:
+        if (
+            _HEX_DIGEST.fullmatch(value)
+            or _VERSION.fullmatch(value)
+            or _KNOWN_PATH.fullmatch(value)
+        ):
+            return True
+        if key is None:
+            return False
+        normalized = "".join(ArtifactSecretClassifier._key_tokens(key))
+        return normalized.endswith("sha256") and _HEX_DIGEST.fullmatch(value) is not None
+
+    @staticmethod
+    def _is_high_entropy(candidate: str) -> bool:
+        character_classes = sum(
+            (
+                any(character.islower() for character in candidate),
+                any(character.isupper() for character in candidate),
+                any(character.isdigit() for character in candidate),
+                "_" in candidate or "-" in candidate,
+            )
+        )
+        return character_classes >= 3 and len(set(candidate)) >= 12
+
+
+_ARTIFACT_SECRET_CLASSIFIER = ArtifactSecretClassifier()
 
 
 def _require_safe(location: str, value: Any) -> None:
-    if isinstance(value, Mapping):
-        for key, item in value.items():
-            if _SENSITIVE_KEY_PART.search(str(key)) or _is_sensitive_key(key):
-                _unsafe_artifact_content()
-            _require_safe(f"{location}.{key}", item)
-        return
-    if isinstance(value, (tuple, list)):
-        for index, item in enumerate(value):
-            _require_safe(f"{location}[{index}]", item)
-        return
-    if isinstance(value, str) and (
-        _SENSITIVE_VALUE.search(value) or _SENSITIVE_ASSIGNMENT.search(value)
-    ):
-        _unsafe_artifact_content()
+    del location
+    _ARTIFACT_SECRET_CLASSIFIER.require_safe(value)

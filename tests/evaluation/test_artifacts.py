@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -326,3 +327,91 @@ def test_publish_fails_closed_when_atomic_no_replace_is_unsupported(tmp_path: Pa
     source.mkdir()
     with pytest.raises(RuntimeError, match="atomic no-replace"):
         artifacts_module._publish_no_replace(source, tmp_path / "destination", platform="other")
+
+
+@pytest.mark.parametrize(
+    ("target", "value"),
+    (
+        ("environment", "repository_identity=ghp_0123456789abcdefghijklmnopqrstuv"),
+        ("metrics", {"credential_url": "https://user:password@example.invalid/report"}),
+        ("metrics", {"authentication": "Basic dXNlcjpwYXNzd29yZA=="}),
+        ("metrics", {"accessKey": "AKIAIOSFODNN7EXAMPLE"}),
+        ("events", ({"api-key": "sk-proj-0123456789abcdefghijklmnop"},)),
+        ("events", ({"sessionToken": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.signature"},)),
+        ("readme", "-----BEGIN PRIVATE KEY-----\nprivate\n-----END PRIVATE KEY-----"),
+        ("readme", "glpat-0123456789abcdefghijkl"),
+        ("readme", "xoxb-0123456789-abcdefghijklmnopqrst"),
+        ("readme", "opaque: aB3dE5fG7hJ9kLmNpQrStUvWxYz0123456789AbCdEfGhIjKlMn"),
+    ),
+)
+def test_bundle_writer_rejects_credential_shaped_values_in_every_surface(
+    tmp_path: Path, artifact_manifest: object, target: str, value: object
+) -> None:
+    config: object = {"mode": "deterministic"}
+    metrics: object = {"status": "complete"}
+    events: tuple[object, ...] = ()
+    environment = "python=3.12"
+    readme = "# Reproduce\n"
+    if target == "environment":
+        environment = str(value)
+    elif target == "metrics":
+        metrics = value
+    elif target == "events":
+        events = value
+    else:
+        readme = str(value)
+
+    with pytest.raises(ValueError, match="unsafe artifact content") as raised:
+        ArtifactBundleWriter(tmp_path / "bundle").write(
+            manifest=artifact_manifest,
+            config=config,
+            metrics=metrics,
+            structured_events=events,
+            environment=environment,
+            readme=readme,
+        )
+    assert str(value) not in str(raised.value)
+
+
+def test_bundle_writer_preserves_declared_safe_provenance_and_reproduction_text(
+    tmp_path: Path, artifact_manifest: object
+) -> None:
+    metrics = {
+        "git_commit": "a" * 40,
+        "report_sha256": "b" * 64,
+        "version": "1.0",
+        "dataset": "evals/datasets/supportlab-v1",
+    }
+    environment = "python=3.12\ngit_commit=" + "a" * 40
+    readme = "Run the offline evaluation from evals/datasets/supportlab-v1.\n"
+    digests = {
+        "metrics.json": canonical_sha256(metrics),
+        "environment.txt": sha256((environment + "\n").encode()).hexdigest(),
+        "README.md": sha256(readme.encode()).hexdigest(),
+    }
+    manifest = artifact_manifest.model_copy(
+        update={
+            "outputs": tuple(
+                reference.model_copy(update={"sha256": digests[reference.path]})
+                if reference.path in digests
+                else reference
+                for reference in artifact_manifest.outputs
+            )
+        }
+    )
+    written = ArtifactBundleWriter(tmp_path / "bundle").write(
+        manifest=manifest,
+        config={"mode": "deterministic"},
+        metrics=metrics,
+        structured_events=(),
+        environment=environment,
+        readme=readme,
+    )
+    assert (tmp_path / "bundle" / "README.md") in written
+
+
+def test_secret_classifier_rejects_url_userinfo_even_without_a_sensitive_key() -> None:
+    with pytest.raises(ValueError, match="unsafe artifact content"):
+        artifacts_module.ArtifactSecretClassifier().require_safe(
+            "https://user:password@example.invalid/report"
+        )
