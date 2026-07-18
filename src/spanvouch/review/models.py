@@ -1,19 +1,23 @@
 import json
 from datetime import datetime
 from enum import StrEnum
-from hashlib import sha256
-from typing import Any, Self, cast
+from typing import Any, Self
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    JsonValue,
     computed_field,
     field_validator,
     model_validator,
 )
 
+from spanvouch.contracts.versioning import (
+    canonical_json as canonical_json,
+)
+from spanvouch.contracts.versioning import (
+    canonical_sha256 as canonical_sha256,
+)
 from spanvouch.diagnosis.models import (
     AbstainReason,
     ClaimStage,
@@ -109,33 +113,6 @@ class WorkflowEventType(StrEnum):
 
 class ReviewModel(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
-
-
-def _json_value(value: BaseModel | JsonValue) -> JsonValue:
-    if isinstance(value, BaseModel):
-        return value.model_dump(mode="json")
-    if isinstance(value, str):
-        try:
-            parsed: Any = json.loads(value)
-        except json.JSONDecodeError:
-            return value
-        return cast(JsonValue, parsed)
-    return value
-
-
-def canonical_json(model_or_json: BaseModel | JsonValue) -> str:
-    """Serialize a model or JSON value using the review canonical form."""
-    return json.dumps(
-        _json_value(model_or_json),
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-
-
-def canonical_sha256(model_or_json: BaseModel | JsonValue) -> str:
-    """Hash UTF-8 canonical JSON for a model or JSON value."""
-    return sha256(canonical_json(model_or_json).encode("utf-8")).hexdigest()
 
 
 def _validate_sorted_unique(values: tuple[str, ...], field_name: str) -> tuple[str, ...]:

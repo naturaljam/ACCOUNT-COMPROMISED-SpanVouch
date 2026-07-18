@@ -1,21 +1,17 @@
-import json
 from collections.abc import Mapping
 from hashlib import sha256
 from types import MappingProxyType
 
 from pydantic import JsonValue
 
+from spanvouch.contracts.versioning import (
+    canonical_json as canonical_json,
+)
+from spanvouch.contracts.versioning import (
+    canonical_sha256 as canonical_sha256,
+)
 from spanvouch.diagnosis.models import EvidenceRef, EvidenceSelector
 from spanvouch.diagnosis.trace_view import DiagnosticTraceView
-
-
-def canonical_json(value: JsonValue) -> str:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
 
 
 class EvidenceCatalog:
@@ -57,6 +53,6 @@ class EvidenceCatalog:
             span_id=selector.span_id,
             field_path=selector.field_path,
             observed_value=value,
-            value_sha256=sha256(canonical_json(value).encode("utf-8")).hexdigest(),
+            value_sha256=canonical_sha256(value),
             description=description,
         )
