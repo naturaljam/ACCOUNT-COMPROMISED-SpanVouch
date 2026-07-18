@@ -3,6 +3,8 @@ import asyncio
 from collections.abc import Sequence
 from pathlib import Path
 
+from pydantic import JsonValue
+
 from spanvouch.adapters.models.deepseek import DeepSeekConfig, DeepSeekProvider
 from spanvouch.contracts.trace import TraceIR
 from spanvouch.contracts.versioning import canonical_json
@@ -10,6 +12,13 @@ from spanvouch.diagnosis.errors import ProviderConfigurationError
 from spanvouch.evaluation.generate_review_dataset import (
     DEFAULT_OUTPUT_DATASET,
     DEFAULT_SOURCE_DATASET,
+)
+from spanvouch.evaluation.provenance import (
+    ProvenanceCollector,
+    dataset_provenance,
+    default_collector,
+    publish_report_and_bundle,
+    require_release_eligible,
 )
 from spanvouch.evaluation.review_labels import validate_review_dataset
 from spanvouch.evaluation.review_metrics import ReviewEvaluationReport, evaluate_review_candidates
@@ -57,7 +66,7 @@ async def _run(
     )
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None, *, collector: ProvenanceCollector | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Evaluate SpanVouch diagnosis review verification."
     )
@@ -68,17 +77,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--candidate-id", action="append", default=[])
     parser.add_argument("--model", default="deepseek-v4-flash")
     parser.add_argument("--allow-live-api", action="store_true")
+    parser.add_argument("--bundle-dir", type=Path)
+    parser.add_argument("--artifact-id")
+    parser.add_argument("--allow-dirty-artifact", action="store_true")
     arguments = parser.parse_args(argv)
     if arguments.verifier == "hybrid" and not arguments.allow_live_api:
         parser.error("hybrid verifier requires --allow-live-api")
+    provenance = collector or default_collector()
+    try:
+        require_release_eligible(provenance, allow_dirty=arguments.allow_dirty_artifact)
+    except ValueError as exc:
+        parser.error(str(exc))
     semantic_verifier: Verifier | None = None
     if arguments.verifier == "hybrid":
         try:
-            config = DeepSeekConfig.from_env()
+            deepseek_config = DeepSeekConfig.from_env()
         except ProviderConfigurationError as exc:
             parser.error(str(exc))
         semantic_verifier = SemanticVerifier(
-            DeepSeekProvider(config),
+            DeepSeekProvider(deepseek_config),
             provider_id="deepseek",
             model=arguments.model,
         )
@@ -93,7 +110,42 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     except ValueError as exc:
         parser.error(str(exc))
-    write_report(report, arguments.output)
+    bundle_config: dict[str, JsonValue] = {
+        "schema_version": "1.0",
+        "dataset": arguments.dataset_dir.as_posix(),
+        "source_dataset": arguments.source_dataset_dir.as_posix(),
+        "verifier": arguments.verifier,
+        "policy_version": DEFAULT_POLICY_VERSION,
+        "seed": 20260717,
+        "allow_live_api": arguments.allow_live_api,
+    }
+    try:
+        publish_report_and_bundle(
+            output=arguments.output,
+            render_report=lambda staged: write_report(report, staged),
+            config=bundle_config,
+            command_name="spanvouch evaluate review",
+            artifact_kind="evaluation_bundle",
+            seed=20260717,
+            datasets=(
+                dataset_provenance(
+                    arguments.dataset_dir,
+                    dataset_id="supportlab-review-v1",
+                    payloads=("review-candidates-v1.jsonl", "review-labels-v1.jsonl"),
+                ),
+                dataset_provenance(
+                    arguments.source_dataset_dir,
+                    dataset_id="supportlab-v1",
+                    payloads=("traces.jsonl", "labels.jsonl"),
+                ),
+            ),
+            bundle_dir=arguments.bundle_dir,
+            artifact_id=arguments.artifact_id,
+            allow_dirty=arguments.allow_dirty_artifact,
+            collector=provenance,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
     return 0 if report.status == "complete" else 1
 
 

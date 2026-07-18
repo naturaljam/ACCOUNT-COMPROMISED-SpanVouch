@@ -9,12 +9,19 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from spanvouch.contracts.trace import TraceIR, TraceSpan
+from spanvouch.evaluation.provenance import (
+    ProvenanceCollector,
+    default_collector,
+    require_release_eligible,
+    write_bound_bundle,
+)
 from spanvouch.labs.supportlab.decision import ScriptedDecisionModel
 from spanvouch.labs.supportlab.graph import run_support_scenario
 from spanvouch.labs.supportlab.repository import build_seed_repository
 from spanvouch.labs.supportlab.scenarios import build_scenarios
 from spanvouch.labs.supportlab.tools import SupportTools
 from spanvouch.observability.tracing import build_test_tracer
+from spanvouch.review.policy import DEFAULT_REVIEW_POLICY_VERSION
 from spanvouch.trace.mapper import map_spans
 
 
@@ -159,12 +166,39 @@ async def generate_dataset(output_dir: Path, seed: int = 20260715) -> DatasetMan
     return manifest
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None, *, collector: ProvenanceCollector | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, default=Path("evals/datasets/supportlab-v1"))
     parser.add_argument("--seed", type=int, default=20260715)
+    parser.add_argument("--bundle-dir", type=Path)
+    parser.add_argument("--artifact-id")
+    parser.add_argument("--allow-dirty-artifact", action="store_true")
     arguments = parser.parse_args(argv)
-    asyncio.run(generate_dataset(arguments.output, arguments.seed))
+    provenance = collector or default_collector()
+    try:
+        require_release_eligible(provenance, allow_dirty=arguments.allow_dirty_artifact)
+        manifest = asyncio.run(generate_dataset(arguments.output, arguments.seed))
+        write_bound_bundle(
+            output=arguments.output,
+            report=manifest.model_dump(mode="json"),
+            config={
+                "schema_version": "1.0",
+                "dataset": arguments.output.as_posix(),
+                "verifier": "deterministic",
+                "policy_version": DEFAULT_REVIEW_POLICY_VERSION,
+                "seed": arguments.seed,
+                "allow_live_api": False,
+            },
+            command_name="spanvouch dataset generate",
+            artifact_kind="dataset_generation",
+            seed=arguments.seed,
+            bundle_dir=arguments.bundle_dir,
+            artifact_id=arguments.artifact_id,
+            allow_dirty=arguments.allow_dirty_artifact,
+            collector=provenance,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
     return 0
 
 

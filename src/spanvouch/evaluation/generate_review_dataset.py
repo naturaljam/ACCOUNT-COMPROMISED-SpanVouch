@@ -24,7 +24,15 @@ from spanvouch.contracts.verification import FindingCode, VerifierVerdict
 from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
 from spanvouch.evaluation.generate_dataset import DatasetManifest
+from spanvouch.evaluation.provenance import (
+    ProvenanceCollector,
+    dataset_provenance,
+    default_collector,
+    require_release_eligible,
+    write_bound_bundle,
+)
 from spanvouch.labs.supportlab.invariants import supportlab_rules
+from spanvouch.review.policy import DEFAULT_REVIEW_POLICY_VERSION
 from spanvouch.trace.diagnostic_view import TraceProjector
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
 from spanvouch.verification.invariant_engine import InvariantEngine
@@ -191,14 +199,10 @@ def mutate_invalid_selector(report: DiagnosisReport, trace: TraceIR) -> Diagnosi
     return _with_evidence(report, (changed, *report.evidence[1:]))
 
 
-def mutate_evidence_value_hash_mismatch(
-    report: DiagnosisReport, trace: TraceIR
-) -> DiagnosisReport:
+def mutate_evidence_value_hash_mismatch(report: DiagnosisReport, trace: TraceIR) -> DiagnosisReport:
     del trace
     first = report.evidence[0]
-    changed = first.model_copy(
-        update={"observed_value": "mutated-value", "value_sha256": "0" * 64}
-    )
+    changed = first.model_copy(update={"observed_value": "mutated-value", "value_sha256": "0" * 64})
     return _with_evidence(report, (changed, *report.evidence[1:]))
 
 
@@ -230,9 +234,7 @@ def mutate_claim_not_grounded(report: DiagnosisReport, trace: TraceIR) -> Diagno
     )
 
 
-def mutate_critical_span_not_grounded(
-    report: DiagnosisReport, trace: TraceIR
-) -> DiagnosisReport:
+def mutate_critical_span_not_grounded(report: DiagnosisReport, trace: TraceIR) -> DiagnosisReport:
     grounded = {item.span_id for item in report.evidence}
     replacement = next(span.span_id for span in trace.spans if span.span_id not in grounded)
     return DiagnosisReport.model_validate(
@@ -246,9 +248,7 @@ def mutate_critical_span_not_grounded(
 def mutate_diagnosis_conflict(report: DiagnosisReport, trace: TraceIR) -> DiagnosisReport:
     del trace
     assert report.failure_type is not None
-    replacement = (
-        "invalid_argument" if report.failure_type != "invalid_argument" else "wrong_tool"
-    )
+    replacement = "invalid_argument" if report.failure_type != "invalid_argument" else "wrong_tool"
     return DiagnosisReport.model_validate(
         {**report.model_dump(mode="python"), "failure_type": replacement}
     )
@@ -395,9 +395,7 @@ async def generate_review_dataset(
     ordered = tuple(
         sorted(candidates, key=lambda item: (item.source_run_id, item.mutation_kind.value))
     )
-    if Counter(item.mutation_kind for item in ordered) != Counter(
-        EXPECTED_MUTATION_COUNTS
-    ):
+    if Counter(item.mutation_kind for item in ordered) != Counter(EXPECTED_MUTATION_COUNTS):
         raise ValueError("review cohort mutation family counts do not match contract")
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -423,14 +421,56 @@ async def generate_review_dataset(
     return manifest
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None, *, collector: ProvenanceCollector | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_DATASET)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    parser.add_argument("--source-dataset-dir", type=Path, default=DEFAULT_SOURCE_DATASET)
+    parser.add_argument("--bundle-dir", type=Path)
+    parser.add_argument("--artifact-id")
+    parser.add_argument("--allow-dirty-artifact", action="store_true")
     arguments = parser.parse_args(argv)
     import asyncio
 
-    asyncio.run(generate_review_dataset(arguments.output, arguments.seed))
+    provenance = collector or default_collector()
+    try:
+        require_release_eligible(provenance, allow_dirty=arguments.allow_dirty_artifact)
+        manifest = asyncio.run(
+            generate_review_dataset(
+                arguments.output,
+                arguments.seed,
+                source_dataset=arguments.source_dataset_dir,
+            )
+        )
+        write_bound_bundle(
+            output=arguments.output,
+            report=manifest.model_dump(mode="json"),
+            config={
+                "schema_version": "1.0",
+                "dataset": arguments.output.as_posix(),
+                "source_dataset": arguments.source_dataset_dir.as_posix(),
+                "verifier": "deterministic",
+                "policy_version": DEFAULT_REVIEW_POLICY_VERSION,
+                "seed": arguments.seed,
+                "allow_live_api": False,
+            },
+            command_name="spanvouch dataset generate-review",
+            artifact_kind="dataset_generation",
+            seed=arguments.seed,
+            datasets=(
+                dataset_provenance(
+                    arguments.source_dataset_dir,
+                    dataset_id="supportlab-v1",
+                    payloads=("traces.jsonl", "labels.jsonl"),
+                ),
+            ),
+            bundle_dir=arguments.bundle_dir,
+            artifact_id=arguments.artifact_id,
+            allow_dirty=arguments.allow_dirty_artifact,
+            collector=provenance,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
     return 0
 
 

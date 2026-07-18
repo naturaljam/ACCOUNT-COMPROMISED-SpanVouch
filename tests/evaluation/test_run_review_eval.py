@@ -28,8 +28,8 @@ def test_default_offline_cli_writes_byte_exact_canonical_one_line_json(
     first = tmp_path / "first.json"
     second = tmp_path / "second.json"
 
-    assert main(["--output", str(first)]) == 0
-    assert main(["--output", str(second)]) == 0
+    assert main(["--output", str(first), "--allow-dirty-artifact"]) == 0
+    assert main(["--output", str(second), "--allow-dirty-artifact"]) == 0
 
     content = first.read_bytes()
     assert content == second.read_bytes()
@@ -45,7 +45,7 @@ def test_default_cli_detects_all_injected_defects_without_external_usage(
 ) -> None:
     output = tmp_path / "report.json"
 
-    assert main(["--output", str(output)]) == 0
+    assert main(["--output", str(output), "--allow-dirty-artifact"]) == 0
 
     report = ReviewEvaluationReport.model_validate_json(output.read_text(encoding="utf-8"))
     assert report.candidate_count == 36
@@ -58,7 +58,7 @@ def test_default_cli_detects_all_injected_defects_without_external_usage(
 
 def test_write_report_excludes_gold_label_fields(tmp_path: Path) -> None:
     output = tmp_path / "report.json"
-    assert main(["--output", str(output)]) == 0
+    assert main(["--output", str(output), "--allow-dirty-artifact"]) == 0
     report = ReviewEvaluationReport.model_validate_json(output.read_text(encoding="utf-8"))
 
     rewritten = tmp_path / "rewritten.json"
@@ -107,7 +107,7 @@ def test_default_deterministic_cli_does_not_construct_live_provider(
 
     monkeypatch.setattr("spanvouch.evaluation.run_review_eval.DeepSeekProvider", forbidden_provider)
 
-    assert main(["--output", str(tmp_path / "report.json")]) == 0
+    assert main(["--output", str(tmp_path / "report.json"), "--allow-dirty-artifact"]) == 0
 
 
 def test_default_deterministic_cli_fails_a_stable_degraded_report(
@@ -129,7 +129,7 @@ def test_default_deterministic_cli_fails_a_stable_degraded_report(
     monkeypatch.setattr(review_eval_module, "DeterministicVerifier", DegradedVerifier)
     output = tmp_path / "degraded.json"
 
-    assert main(["--output", str(output)]) == 1
+    assert main(["--output", str(output), "--allow-dirty-artifact"]) == 1
     report = ReviewEvaluationReport.model_validate_json(output.read_text(encoding="utf-8"))
     assert report.status == "failed"
     assert report.metrics.valid_report_pass_rate < 1.0
@@ -197,8 +197,9 @@ def test_hybrid_cli_runs_only_allowlisted_candidates_and_reports_semantic_metric
             "clean-01--unmodified",
             "--candidate-id",
             "clean-02--unmodified",
-            "--model",
-            "deepseek-test-model",
+                "--model",
+                "deepseek-test-model",
+                "--allow-dirty-artifact",
         ]
     )
 

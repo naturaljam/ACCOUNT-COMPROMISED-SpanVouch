@@ -5,6 +5,8 @@ import os
 from collections.abc import Sequence
 from pathlib import Path
 
+from pydantic import JsonValue
+
 from spanvouch.adapters.models.deepseek import DeepSeekConfig, DeepSeekProvider
 from spanvouch.contracts.diagnosis import DiagnoserKind
 from spanvouch.contracts.trace import TraceIR
@@ -14,7 +16,15 @@ from spanvouch.diagnosis.llm_diagnoser import LlmDiagnoser
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
 from spanvouch.evaluation.diagnosis_labels import DiagnosisGoldLabel, load_diagnosis_labels
 from spanvouch.evaluation.diagnosis_metrics import DiagnosisEvaluationReport, evaluate_diagnoser
+from spanvouch.evaluation.provenance import (
+    ProvenanceCollector,
+    dataset_provenance,
+    default_collector,
+    publish_report_and_bundle,
+    require_release_eligible,
+)
 from spanvouch.labs.supportlab.invariants import supportlab_rules
+from spanvouch.review.policy import DEFAULT_REVIEW_POLICY_VERSION
 from spanvouch.verification.invariant_engine import InvariantEngine
 
 DEFAULT_DATASET = Path("evals/datasets/supportlab-v1")
@@ -41,9 +51,7 @@ def _select_run_ids(
     traces_by_run = {trace.run_id: trace for trace in traces}
     labels_by_run = {label.run_id: label for label in labels}
     unknown = [
-        run_id
-        for run_id in run_ids
-        if run_id not in traces_by_run or run_id not in labels_by_run
+        run_id for run_id in run_ids if run_id not in traces_by_run or run_id not in labels_by_run
     ]
     if unknown:
         raise ValueError(f"unknown run IDs: {', '.join(unknown)}")
@@ -97,7 +105,7 @@ async def _run(
     )
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None, *, collector: ProvenanceCollector | None = None) -> int:
     parser = argparse.ArgumentParser(description="Evaluate SpanVouch evidence diagnosis.")
     parser.add_argument("--dataset-dir", type=Path, default=DEFAULT_DATASET)
     parser.add_argument("--output", type=Path, required=True)
@@ -106,6 +114,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         choices=tuple(kind.value for kind in DiagnoserKind),
         default=DiagnoserKind.RULES.value,
     )
+    parser.add_argument("--bundle-dir", type=Path)
+    parser.add_argument("--artifact-id")
+    parser.add_argument("--allow-dirty-artifact", action="store_true")
     parser.add_argument("--run-id", action="append", default=[])
     parser.add_argument(
         "--model",
@@ -120,6 +131,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     kind = DiagnoserKind(args.diagnoser)
     if kind is DiagnoserKind.DEEPSEEK and not args.allow_live_api:
         parser.error("--diagnoser deepseek requires --allow-live-api")
+    provenance = collector or default_collector()
+    try:
+        require_release_eligible(provenance, allow_dirty=args.allow_dirty_artifact)
+    except ValueError as exc:
+        parser.error(str(exc))
     try:
         report = asyncio.run(
             _run(
@@ -131,7 +147,37 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     except (ProviderConfigurationError, ValueError) as exc:
         parser.error(str(exc))
-    write_report(report, args.output)
+    config: dict[str, JsonValue] = {
+        "schema_version": "1.0",
+        "dataset": args.dataset_dir.as_posix(),
+        "source_dataset": args.dataset_dir.as_posix(),
+        "verifier": kind.value,
+        "policy_version": DEFAULT_REVIEW_POLICY_VERSION,
+        "seed": 20260715,
+        "allow_live_api": args.allow_live_api,
+    }
+    try:
+        publish_report_and_bundle(
+            output=args.output,
+            render_report=lambda staged: write_report(report, staged),
+            config=config,
+            command_name="spanvouch evaluate diagnosis",
+            artifact_kind="evaluation_bundle",
+            seed=20260715,
+            datasets=(
+                dataset_provenance(
+                    args.dataset_dir,
+                    dataset_id="supportlab-v1",
+                    payloads=("traces.jsonl", "labels.jsonl", "diagnosis-labels-v1.jsonl"),
+                ),
+            ),
+            bundle_dir=args.bundle_dir,
+            artifact_id=args.artifact_id,
+            allow_dirty=args.allow_dirty_artifact,
+            collector=provenance,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
     return 0 if report.status == "complete" else 1
 
 

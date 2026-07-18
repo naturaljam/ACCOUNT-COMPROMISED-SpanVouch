@@ -1,0 +1,9 @@
+{
+  "schema_version": "1.0",
+  "dataset": "evals/datasets/supportlab-review-v1",
+  "source_dataset": "evals/datasets/supportlab-v1",
+  "verifier": "deterministic",
+  "policy_version": "supportlab-review-policy-v1",
+  "seed": 20260717,
+  "allow_live_api": false
+}

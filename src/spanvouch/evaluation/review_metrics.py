@@ -1,6 +1,5 @@
 from collections import Counter
 from collections.abc import Mapping
-from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Literal, Protocol
 
@@ -9,24 +8,21 @@ from pydantic import BaseModel, ConfigDict, Field
 from spanvouch.contracts.trace import TraceIR
 from spanvouch.contracts.verification import (
     FindingCode,
-    ReviewInputSnapshot,
     VerificationInput,
     VerifierReport,
     VerifierVerdict,
 )
-from spanvouch.contracts.versioning import (
-    canonical_json,
-    canonical_sha256,
-)
 from spanvouch.diagnosis.errors import ProviderError
-from spanvouch.evaluation.generate_review_dataset import MutationKind, ReviewCandidate
+from spanvouch.evaluation.generate_review_dataset import (
+    EXPECTED_UNSUPPORTED_SOURCE_RUN_IDS,
+    MutationKind,
+    ReviewCandidate,
+)
+from spanvouch.evaluation.provider_view import build_verifier_provider_view
 from spanvouch.evaluation.review_labels import (
     ReviewGoldLabel,
     validate_review_cohort,
 )
-from spanvouch.trace.diagnostic_view import TraceProjector
-
-_SNAPSHOT_TIME = datetime(2026, 7, 17, tzinfo=UTC)
 
 
 class ReviewVerifier(Protocol):
@@ -260,18 +256,6 @@ def _compute_metrics(
     )
 
 
-def _snapshot(trace: TraceIR) -> ReviewInputSnapshot:
-    view = TraceProjector().project(trace).view
-    return ReviewInputSnapshot(
-        trace_id=trace.trace_id,
-        run_id=trace.run_id,
-        view_json=canonical_json(view),
-        input_sha256=canonical_sha256(view),
-        catalog_version="evidence-catalog-v1",
-        created_at=_SNAPSHOT_TIME,
-    )
-
-
 async def evaluate_review_candidates(
     *,
     candidates: tuple[ReviewCandidate, ...],
@@ -285,7 +269,13 @@ async def evaluate_review_candidates(
     source_run_ids = tuple(trace.run_id for trace in traces)
     if len(source_run_ids) != len(set(source_run_ids)):
         raise ValueError("duplicate Phase 2 source run_id")
-    validate_review_cohort(candidates, labels, {trace.run_id: trace.trace_id for trace in traces})
+    unsupported_sources = frozenset(
+        candidate.source_run_id
+        for candidate in candidates
+        if candidate.mutation_kind is MutationKind.UNSUPPORTED_SCOPE
+    )
+    if unsupported_sources != EXPECTED_UNSUPPORTED_SOURCE_RUN_IDS:
+        raise ValueError("review unsupported source run IDs do not match frozen contract")
     selected_ids = set(semantic_candidate_ids)
     if len(selected_ids) != len(semantic_candidate_ids):
         raise ValueError("duplicate semantic candidate_id")
@@ -300,10 +290,8 @@ async def evaluate_review_candidates(
     for candidate in sorted(
         candidates, key=lambda item: (item.source_run_id, item.mutation_kind.value)
     ):
-        input_ = VerificationInput(
-            snapshot=_snapshot(traces_by_run[candidate.source_run_id]),
-            report=candidate.report,
-            report_sha256=canonical_sha256(candidate.report),
+        input_ = build_verifier_provider_view(candidate).bind_trace(
+            traces_by_run[candidate.source_run_id]
         )
         try:
             verifier_report = await verifier.verify(input_)
@@ -335,14 +323,16 @@ async def evaluate_review_candidates(
                 )
             )
     ordered_samples = tuple(samples)
+    # Label identity and expected findings remain evaluator-only until every
+    # verifier call has returned.
+    validate_review_cohort(candidates, labels, {trace.run_id: trace.trace_id for trace in traces})
     metrics = _compute_metrics(candidates, labels, ordered_samples)
     valid_count = sum(
         candidate.mutation_kind is MutationKind.UNMODIFIED for candidate in candidates
     )
     defect_count = len(candidates) - valid_count
     unsupported_count = sum(
-        candidate.mutation_kind is MutationKind.UNSUPPORTED_SCOPE
-        for candidate in candidates
+        candidate.mutation_kind is MutationKind.UNSUPPORTED_SCOPE for candidate in candidates
     )
     deterministic_accepted = (
         len(candidates) == 36
@@ -362,7 +352,9 @@ async def evaluate_review_candidates(
         status=(
             "failed"
             if not deterministic_accepted
-            else "partial" if semantic_operational_failure else "complete"
+            else "partial"
+            if semantic_operational_failure
+            else "complete"
         ),
         candidate_count=len(candidates),
         samples=ordered_samples,

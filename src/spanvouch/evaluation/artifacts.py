@@ -75,13 +75,22 @@ _PEM_PRIVATE_KEY = re.compile(r"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----")
 _LEXICAL_ATOM = re.compile(r"[A-Za-z0-9_-]+")
 _GIT_COMMIT = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_EVALUATION_IDENTIFIER = re.compile(r"^(?:verifier|finding|gap)-[0-9a-f]{64}$")
+_EVALUATION_CANDIDATE = re.compile(r"^[a-z0-9_-]+(?:--[a-z0-9_-]+)?$")
 _HASH_FIELDS = frozenset(
     {
         "dependencylocksha256",
         "generationconfigsha256",
         "manifestsha256",
+        "policysha256",
+        "rulesetversion",
         "promptsha256",
         "reportsha256",
+        "valuesha256",
+        "tracessha256",
+        "labelssha256",
+        "candidatessha256",
+        "sourcemanifestsha256",
         "sha256",
     }
 )
@@ -185,9 +194,7 @@ class ArtifactBundleWriter:
             "manifest.json": canonical_bytes(manifest) + b"\n",
             "config.json": canonical_bytes(config) + b"\n",
             "metrics.json": canonical_bytes(metrics) + b"\n",
-            "structured-events.jsonl": b"".join(
-                canonical_bytes(event) + b"\n" for event in events
-            ),
+            "structured-events.jsonl": b"".join(canonical_bytes(event) + b"\n" for event in events),
             "environment.txt": _normalized_text(environment),
             "README.md": _normalized_text(readme),
         }
@@ -223,9 +230,7 @@ def _artifact_digest(path: str, content: bytes) -> str:
 
 
 def _normalized_text(value: str) -> bytes:
-    return (value.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n") + "\n").encode(
-        "utf-8"
-    )
+    return (value.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n") + "\n").encode("utf-8")
 
 
 def _publish_no_replace(source: Path, destination: Path, *, platform: str | None = None) -> None:
@@ -314,7 +319,10 @@ class ArtifactSecretClassifier:
     def require_safe(self, value: Any, *, path: tuple[str, ...] = ()) -> None:
         if isinstance(value, Mapping):
             for child_key, item in value.items():
-                if not isinstance(child_key, str) or self._is_sensitive_key(child_key):
+                if not isinstance(child_key, str) or (
+                    self._is_sensitive_key(child_key)
+                    and not self._is_explicit_safe_key(child_key, path)
+                ):
                     _unsafe_artifact_content()
                 self.require_safe(item, path=(*path, child_key))
             return
@@ -371,10 +379,28 @@ class ArtifactSecretClassifier:
             for pair in (("provider", "body"), ("raw", "body"), ("response", "body"))
         )
 
+    @staticmethod
+    def _is_explicit_safe_key(key: str, path: tuple[str, ...]) -> bool:
+        """Permit only verifier provenance metadata in the metrics payload."""
+        return (
+            key in {"prompt_version", "prompt_sha256"}
+            and path[-2:]
+            in {
+                ("verifier_report", "provenance"),
+                ("semantic_verifier_report", "provenance"),
+                ("report", "provenance"),
+            }
+            and "metrics" in path
+        )
+
     def _is_sensitive_string(self, value: str, *, path: tuple[str, ...]) -> bool:
         """Run non-bypassable credential and opaque-atom scans before field shapes."""
         if self._has_credential_signature(value):
             return True
+        if path[-2:] == ("evidence", "observed_value") and "metrics" in path:
+            # This field is a typed, sanitized EvidenceRef value emitted by the
+            # diagnostic contract; UUID-like business values are not secrets.
+            return False
         if self._is_cryptographic_bypass(value, path=path):
             return False
         return any(self._is_high_entropy(atom) for atom in _LEXICAL_ATOM.findall(value))
@@ -410,7 +436,15 @@ class ArtifactSecretClassifier:
         normalized = "".join(ArtifactSecretClassifier._key_tokens(field))
         if normalized in _HASH_FIELDS and _SHA256.fullmatch(value):
             return True
-        return field == "git_commit" and _GIT_COMMIT.fullmatch(value) is not None
+        if field == "git_commit" and _GIT_COMMIT.fullmatch(value) is not None:
+            return True
+        if field in {"verifier_run_id", "finding_id", "gap_id"}:
+            return _EVALUATION_IDENTIFIER.fullmatch(value) is not None
+        if field == "verifier_version":
+            return _SHA256.fullmatch(value) is not None
+        return field in {"candidate_id", "source_run_id", "run_id"} and (
+            _EVALUATION_CANDIDATE.fullmatch(value) is not None
+        )
 
     @staticmethod
     def _is_high_entropy(candidate: str) -> bool:
