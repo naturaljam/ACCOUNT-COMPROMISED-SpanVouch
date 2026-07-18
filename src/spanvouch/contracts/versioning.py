@@ -38,22 +38,51 @@ class ContractRoot(ContractModel):
     schema_version: str
 
 
-def _canonical_value(value: object) -> JsonValue:
+def _enter_container(value: object, active_container_ids: set[int]) -> int:
+    container_id = id(value)
+    if container_id in active_container_ids:
+        raise ContractError("cyclic references are not canonical JSON")
+    active_container_ids.add(container_id)
+    return container_id
+
+
+def _canonical_value(value: object, active_container_ids: set[int]) -> JsonValue:
     if isinstance(value, BaseModel):
-        return _canonical_value(value.model_dump(mode="python"))
+        container_id = _enter_container(value, active_container_ids)
+        try:
+            try:
+                dumped = value.model_dump(mode="python")
+            except ValueError as error:
+                if not str(error).startswith("Circular reference detected"):
+                    raise
+                raise ContractError("cyclic references are not canonical JSON") from error
+            return _canonical_value(
+                dumped,
+                active_container_ids,
+            )
+        finally:
+            active_container_ids.remove(container_id)
     if isinstance(value, datetime):
         if value.tzinfo is None or value.utcoffset() is None:
             raise ContractError("canonical timestamps must be timezone-aware")
         return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
     if isinstance(value, dict):
-        canonical: dict[str, JsonValue] = {}
-        for key, item in value.items():
-            if not isinstance(key, str):
-                raise ContractError("canonical JSON objects require string keys")
-            canonical[key] = _canonical_value(item)
-        return canonical
+        container_id = _enter_container(value, active_container_ids)
+        try:
+            canonical: dict[str, JsonValue] = {}
+            for key, item in value.items():
+                if not isinstance(key, str):
+                    raise ContractError("canonical JSON objects require string keys")
+                canonical[key] = _canonical_value(item, active_container_ids)
+            return canonical
+        finally:
+            active_container_ids.remove(container_id)
     if isinstance(value, (list, tuple)):
-        return [_canonical_value(item) for item in value]
+        container_id = _enter_container(value, active_container_ids)
+        try:
+            return [_canonical_value(item, active_container_ids) for item in value]
+        finally:
+            active_container_ids.remove(container_id)
     if isinstance(value, float):
         if value != value or value in (float("inf"), float("-inf")):
             raise ContractError("NaN and Infinity are not canonical JSON")
@@ -69,18 +98,22 @@ def _canonical_root(value: BaseModel | JsonValue) -> JsonValue:
         # while evidence values may legitimately be JSON-looking scalar strings.
         with suppress(json.JSONDecodeError):
             value = cast(JsonValue, json.loads(value))
-    return _canonical_value(value)
+    return _canonical_value(value, set())
 
 
 def canonical_bytes(value: BaseModel | JsonValue) -> bytes:
     """Return deterministic UTF-8 JSON bytes for a model or JSON value."""
-    return json.dumps(
+    canonical = json.dumps(
         _canonical_root(value),
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
         allow_nan=False,
-    ).encode("utf-8")
+    )
+    try:
+        return canonical.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise ContractError("canonical JSON strings must contain valid UTF-8") from error
 
 
 def canonical_json(value: BaseModel | JsonValue) -> str:

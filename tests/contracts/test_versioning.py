@@ -1,8 +1,8 @@
 from datetime import UTC, datetime, timedelta, timezone
-from typing import Literal
+from typing import Literal, cast
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, JsonValue, ValidationError
 
 from spanvouch.contracts import (
     ContractError,
@@ -23,6 +23,10 @@ class ExampleContract(ContractRoot):
     schema_version: Literal["1.0"] = "1.0"
     happened_at: datetime
     value: str
+
+
+class RecursiveModel(BaseModel):
+    child: "RecursiveModel | None" = None
 
 
 def test_canonical_bytes_are_utf8_sorted_compact_and_utc_z() -> None:
@@ -131,6 +135,64 @@ def test_plain_string_is_encoded_as_a_json_string() -> None:
 def test_json_like_scalar_string_retains_phase3_evidence_hash_semantics() -> None:
     assert canonical_sha256("200.00") == (
         "2722d098b83d496e226a50ebd1ba44a47714943aff35a8d94b12df4dc504467c"
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["\ud800", {"nested": ["\udfff"]}, {"\ud800": "nested-key"}],
+)
+def test_non_utf8_strings_raise_typed_error_with_cause(value: JsonValue) -> None:
+    with pytest.raises(ContractError, match="valid UTF-8") as captured:
+        canonical_bytes(value)
+
+    assert isinstance(captured.value.__cause__, UnicodeEncodeError)
+
+
+def test_direct_container_cycles_raise_typed_error() -> None:
+    cyclic_list: list[object] = []
+    cyclic_list.append(cyclic_list)
+    cyclic_dict: dict[str, object] = {}
+    cyclic_dict["self"] = cyclic_dict
+
+    for value in (cyclic_list, cyclic_dict):
+        with pytest.raises(ContractError, match="cyclic"):
+            canonical_bytes(cast(JsonValue, value))
+
+
+def test_nested_container_cycle_raises_typed_error() -> None:
+    outer: list[object] = []
+    inner: dict[str, object] = {"back": outer}
+    outer.append(inner)
+
+    with pytest.raises(ContractError, match="cyclic"):
+        canonical_bytes(cast(JsonValue, outer))
+
+
+def test_tuple_in_active_container_cycle_raises_typed_error() -> None:
+    outer: list[object] = []
+    inner = (outer,)
+    outer.append(inner)
+
+    with pytest.raises(ContractError, match="cyclic"):
+        canonical_bytes(cast(JsonValue, inner))
+
+
+def test_cyclic_base_model_raises_typed_error() -> None:
+    model = RecursiveModel()
+    model.child = model
+
+    with pytest.raises(ContractError, match="cyclic") as captured:
+        canonical_bytes(model)
+
+    assert isinstance(captured.value.__cause__, ValueError)
+
+
+def test_shared_reference_without_cycle_remains_valid() -> None:
+    shared: dict[str, JsonValue] = {"value": "same"}
+
+    assert canonical_json({"left": shared, "right": shared}) == (
+        '{"left":{"value":"same"},"right":{"value":"same"}}'
     )
 
 
