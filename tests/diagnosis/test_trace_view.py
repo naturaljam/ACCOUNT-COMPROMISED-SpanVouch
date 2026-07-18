@@ -779,6 +779,37 @@ _COMPACT_SENSITIVE_VALUE_SUFFIXES = (
     "string",
     "value",
 )
+_NORMALIZED_COMPACT_BASE_PARTS = (
+    ("api", "key"),
+    ("access", "key"),
+    ("private", "key"),
+    ("user", "password"),
+    ("client", "secret"),
+    ("session", "token"),
+)
+_NORMALIZED_COMPACT_SENSITIVE_SUFFIXES = (
+    "credential",
+    "hash",
+    "key",
+    "string",
+    "value",
+)
+
+
+def _normalized_compact_spellings(parts: tuple[str, str]) -> tuple[str, ...]:
+    first, second = parts
+    return (
+        f"{first}{second}",
+        f"{first}_{second}",
+        f"{first}-{second}",
+        f"{first}.{second}",
+        f"{first}/{second}",
+        f"{first}${second}",
+        f"{first}@{second}",
+        f"{first}{second.title()}",
+        f"{first.title()}{second.title()}",
+        f"{first}[{second}]",
+    )
 
 
 def _assert_sanitizer_fixed_point(source: str, expected: str) -> None:
@@ -1681,6 +1712,108 @@ def test_many_compact_credential_value_prefixes_remain_linear() -> None:
     assert sanitize_diagnostic_value(sanitized) == sanitized
 
 
+def test_normalized_compact_prefixes_share_structural_mapping_parity() -> None:
+    separators = (*_UNICODE_ZS_SPACES, "\t")
+    case_count = 0
+    for parts, suffix, separator in product(
+        _NORMALIZED_COMPACT_BASE_PARTS,
+        _NORMALIZED_COMPACT_SENSITIVE_SUFFIXES,
+        separators,
+    ):
+        for spelling in _normalized_compact_spellings(parts):
+            label = f"{spelling}{separator}{suffix}"
+            source = f"message={label}=secret-one"
+            expected = f"message={label}={SECRET_REDACTION}"
+
+            assert sanitize_diagnostic_value({label: "secret-one"}) == {
+                label: SECRET_REDACTION
+            }
+            assert sanitize_diagnostic_value(source) == expected
+            assert sanitize_diagnostic_value(expected) == expected
+            case_count += 1
+
+    assert case_count == 5_400
+
+
+def test_normalized_compact_prefixes_work_top_level_and_after_assignments() -> None:
+    boundaries = (
+        " ",
+        "\t",
+        ";",
+        " | ",
+        "\N{FULLWIDTH SEMICOLON}",
+        "\N{IDEOGRAPHIC COMMA}",
+    )
+    for parts, suffix, boundary in product(
+        _NORMALIZED_COMPACT_BASE_PARTS,
+        _NORMALIZED_COMPACT_SENSITIVE_SUFFIXES,
+        boundaries,
+    ):
+        for spelling in _normalized_compact_spellings(parts):
+            label = f"{spelling} {suffix}"
+            top_level = f"{label}=secret-one"
+            prior_assignment = f"safe=ok{boundary}{label}=secret-one"
+            _assert_sanitizer_fixed_point(
+                top_level,
+                f"{label}={SECRET_REDACTION}",
+            )
+            _assert_sanitizer_fixed_point(
+                prior_assignment,
+                prior_assignment.replace("secret-one", SECRET_REDACTION),
+            )
+
+
+def test_camel_case_compact_prefixes_redact_nested_quoted_values() -> None:
+    case_count = 0
+    for parts, suffix, wrapper in product(
+        _NORMALIZED_COMPACT_BASE_PARTS,
+        _NORMALIZED_COMPACT_SENSITIVE_SUFFIXES,
+        _QUOTED_STRUCTURAL_WRAPPERS,
+    ):
+        first, second = parts
+        camel_case = f"{first}{second.title()}"
+        source = (
+            f"message={wrapper}{camel_case} {suffix}=secret-one"
+            f"{wrapper} field=ok"
+        )
+        expected = source.replace("secret-one", SECRET_REDACTION)
+        _assert_sanitizer_fixed_point(source, expected)
+        case_count += 1
+
+    assert case_count == 120
+
+
+def test_normalized_compact_prefixes_keep_token_shaped_values_safe() -> None:
+    for safe_value, following_field in product(
+        ("secret-one", "token-shaped", "api-key"),
+        ("field", "note"),
+    ):
+        source = f"message={safe_value} {following_field}=ok"
+        _assert_sanitizer_fixed_point(source, source)
+
+
+def test_many_normalized_compact_prefixes_remain_idempotent() -> None:
+    labels = tuple(
+        f"{spelling} value"
+        for parts in _NORMALIZED_COMPACT_BASE_PARTS
+        for spelling in _normalized_compact_spellings(parts)
+    )
+    sources: list[str] = []
+    expected: list[str] = []
+    for index in range(2_000):
+        label = labels[index % len(labels)]
+        sources.append(f"message={label}=secret-{index} field=ok")
+        expected.append(
+            f"message={label}={SECRET_REDACTION} field=ok"
+        )
+
+    source = "; ".join(sources)
+    sanitized = sanitize_diagnostic_value(source)
+
+    assert sanitized == "; ".join(expected)
+    assert sanitize_diagnostic_value(sanitized) == sanitized
+
+
 def test_quoted_safe_assignment_values_sanitize_embedded_credentials() -> None:
     separators = (*_UNICODE_ZS_SPACES, "\t")
     for wrapper, separator, label, later_token in product(
@@ -2201,7 +2334,9 @@ def test_trace_view_preserves_safe_urls_and_redacts_punctuation_labels() -> None
                     "headers.cookie=api key\n"
                     "result=header-newline-boundary-safe\n"
                     f"message=sessiontoken value={VALUE_SECRET} "
-                    "field=compact-prefix-e2e"
+                    "field=compact-prefix-e2e\n"
+                    f"message=ApiKey value={VALUE_SECRET} "
+                    "field=normalized-prefix-e2e"
                 ),
             }
         }
@@ -2240,6 +2375,7 @@ def test_trace_view_preserves_safe_urls_and_redacts_punctuation_labels() -> None
     assert "cookie-newline-boundary-safe" in message
     assert "header-newline-boundary-safe" in message
     assert "compact-prefix-e2e" in message
+    assert "normalized-prefix-e2e" in message
     assert "secret-one" not in message
     assert f"api_key=\r\n{SECRET_REDACTION} field=newline-field-safe" in message
     assert sanitize_diagnostic_trace_view(view) == view

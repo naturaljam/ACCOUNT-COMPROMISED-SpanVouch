@@ -583,11 +583,13 @@ def _apply_structural_replacements(
 
 def _unquoted_value_starts_credential_label(value: str) -> bool:
     parts = _normalize_credential_label(value)
-    return len(parts) == 1 and (
-        parts[0] in _CREDENTIAL_PART_CORES
-        or parts[0] in _MULTIPART_CREDENTIAL_FIRST_PARTS
-        or _is_compact_credential_label(parts[0])
-    )
+    return (
+        len(parts) == 1
+        and (
+            parts[0] in _CREDENTIAL_PART_CORES
+            or parts[0] in _MULTIPART_CREDENTIAL_FIRST_PARTS
+        )
+    ) or _is_compact_credential_label("".join(parts))
 
 
 def _sanitize_structural_credential_line(
