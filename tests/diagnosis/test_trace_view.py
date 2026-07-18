@@ -1015,6 +1015,25 @@ def test_cookie_prose_still_preserves_a_following_safe_field() -> None:
         _assert_sanitizer_fixed_point(source, source)
 
 
+def test_unquoted_safe_cookie_values_stop_at_physical_line_boundaries() -> None:
+    for label, separator, newline, safe_value, next_field in product(
+        (
+            "Cookie",
+            "Set-Cookie",
+            "Session Cookie",
+            "headers.cookie",
+            "request.headers.Cookie",
+            "http request headers Set-Cookie",
+        ),
+        (":", "="),
+        ("\n", "\r\n"),
+        ("token count", "api key", "private key"),
+        ("note", "message", "result", "header"),
+    ):
+        source = f"{label}{separator} {safe_value}{newline}{next_field}=ok"
+        _assert_sanitizer_fixed_point(source, source)
+
+
 def test_safe_credential_metadata_labels_remain_visible() -> None:
     for label, value in (
         ("cookie_count", "7"),
@@ -1052,6 +1071,49 @@ def test_field_terminal_uses_shared_safe_metadata_semantics() -> None:
             previous_value_source,
             previous_value_source,
         )
+
+
+def test_note_terminal_uses_shared_safe_metadata_semantics() -> None:
+    compact_labels = (
+        "token_count_note",
+        "custom_token_count_note",
+        "tenant_custom_token_count_note",
+    )
+    for label in compact_labels:
+        assert sanitize_diagnostic_value({label: "ok"}) == {label: "ok"}
+        _assert_sanitizer_fixed_point(f"{label}=ok", f"{label}=ok")
+
+    for space, prefix, boundary in product(
+        _UNICODE_ZS_SPACES,
+        ("", "tenant ", "arbitrary tenant custom "),
+        ("", "status=ok; ", "status=ok | ", "status=ok\N{IDEOGRAPHIC COMMA}"),
+    ):
+        label = space.join((*prefix.split(), "token", "count", "note"))
+        source = f"{boundary}{label}=ok"
+        assert sanitize_diagnostic_value({label: "ok"}) == {label: "ok"}
+        _assert_sanitizer_fixed_point(source, source)
+
+        previous_value_source = f"safe={label}=ok"
+        _assert_sanitizer_fixed_point(
+            previous_value_source,
+            previous_value_source,
+        )
+
+
+def test_note_terminal_does_not_weaken_qualified_credential_labels() -> None:
+    for space, prefix, boundary, qualified_label in product(
+        _UNICODE_ZS_SPACES,
+        ("", "tenant custom "),
+        ("", "status=ok; ", "status=ok\N{IDEOGRAPHIC COMMA}"),
+        _METADATA_QUALIFIED_CREDENTIAL_LABELS,
+    ):
+        label = space.join((*prefix.split(), *qualified_label.split()))
+        source = f"{boundary}{label}=secret-one note=ok"
+        expected = source.replace("secret-one", SECRET_REDACTION)
+        assert sanitize_diagnostic_value({label: "secret-one"}) == {
+            label: SECRET_REDACTION
+        }
+        _assert_sanitizer_fixed_point(source, expected)
 
 
 def test_field_terminal_does_not_weaken_qualified_credential_labels() -> None:
@@ -1766,6 +1828,48 @@ def test_mapping_and_structural_label_matrix_share_full_candidate_semantics() ->
         assert structural == f"{label}={expected_value}"
 
 
+def test_safe_qualifier_values_do_not_contaminate_a_following_field() -> None:
+    separators = (*_UNICODE_ZS_SPACES, "\t")
+    credential_cores = (
+        ("token",),
+        ("authorization",),
+        ("password",),
+        ("api", "key"),
+        ("access", "key"),
+        ("private", "key"),
+        ("client", "secret"),
+        ("cookie",),
+    )
+    metadata_qualifiers = (
+        "count",
+        "status",
+        "policy",
+        "id",
+        "algorithm",
+        "length",
+        "field",
+    )
+    token_shaped_safe_values = ("secret-one", "token-shaped", "api-key")
+
+    case_count = 0
+    for space, prefix, core, qualifier, safe_value in product(
+        separators,
+        ((), ("tenant", "custom")),
+        credential_cores,
+        metadata_qualifiers,
+        token_shaped_safe_values,
+    ):
+        label = space.join((*prefix, *core, qualifier, "status"))
+        source = f"{label}={safe_value}{space}field=ok"
+        sanitized = sanitize_diagnostic_value(source)
+
+        assert sanitized == source
+        assert sanitize_diagnostic_value(sanitized) == source
+        case_count += 1
+
+    assert case_count == 6_048
+
+
 def test_compact_structural_alias_suffixes_work_with_every_zs_space() -> None:
     for space, compact_alias in product(
         _UNICODE_ZS_SPACES,
@@ -1979,6 +2083,12 @@ def test_trace_view_preserves_safe_urls_and_redacts_punctuation_labels() -> None
                     "field=quoted-newline-safe\n"
                     rf'message=\"note \\\"quoted\\\" api key={VALUE_SECRET}'
                     r'\" field=escaped-inner-safe'
+                    "\n"
+                    "safe=custom token count note=ok note-terminal-safe\n"
+                    "Cookie: token count\r\n"
+                    "message=cookie-newline-boundary-safe\r\n"
+                    "headers.cookie=api key\n"
+                    "result=header-newline-boundary-safe"
                 ),
             }
         }
@@ -2013,6 +2123,9 @@ def test_trace_view_preserves_safe_urls_and_redacts_punctuation_labels() -> None
     assert "newline-field-safe" in message
     assert "quoted-newline-safe" in message
     assert "escaped-inner-safe" in message
+    assert "note-terminal-safe" in message
+    assert "cookie-newline-boundary-safe" in message
+    assert "header-newline-boundary-safe" in message
     assert "secret-one" not in message
     assert f"api_key=\r\n{SECRET_REDACTION} field=newline-field-safe" in message
     assert sanitize_diagnostic_trace_view(view) == view

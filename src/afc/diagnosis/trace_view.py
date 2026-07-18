@@ -48,6 +48,7 @@ _SAFE_METADATA_TERMINALS = frozenset(
         "id",
         "length",
         "name",
+        "note",
         "policy",
         "required",
         "rotation",
@@ -582,8 +583,9 @@ def _apply_structural_replacements(
 
 def _unquoted_value_starts_credential_label(value: str) -> bool:
     parts = _normalize_credential_label(value)
-    return _is_credential_label_parts(parts) or bool(
-        parts and parts[-1] in _MULTIPART_CREDENTIAL_FIRST_PARTS
+    return len(parts) == 1 and (
+        parts[0] in _CREDENTIAL_PART_CORES
+        or parts[0] in _MULTIPART_CREDENTIAL_FIRST_PARTS
     )
 
 
@@ -614,6 +616,11 @@ def _sanitize_structural_credential_line(
             url_context_index += 1
 
         character = line[index]
+        if character in "\r\n":
+            candidate_start = index + 1
+            candidate_starts_with_previous_value = False
+            index += 1
+            continue
         if candidate_starts_with_previous_value:
             if _is_structural_label_whitespace(character):
                 previous_value = line[candidate_start:index]
