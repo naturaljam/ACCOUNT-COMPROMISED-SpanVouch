@@ -10,6 +10,8 @@
 
 ## Global Constraints
 
+> **Erratum (2026-07-18):** The global immutable-evidence constraint takes precedence over any Task text that appears to place new executable commands in `docs/evaluation/phase3-verification-review.md`. That historical report must remain byte-identical to `phase3-frozen-20260718`; Phase 4 reproduction commands belong in `docs/evaluation/phase3-reproduction-runbook.md`.
+
 - Authoritative spec: `docs/superpowers/specs/2026-07-18-phase4-research-foundation-design.md`.
 - Preserve full Phase 2 and Phase 3 Git history; do not squash, rebase published feature history, or force-push.
 - Integrate Phase 2 before Phase 3, freeze the accepted baseline, then create `feature/phase4-research-foundation`.
@@ -875,7 +877,7 @@ All remaining port methods are moved without signature or semantic changes.
 .\.venv\Scripts\python.exe -m pytest tests/adapters/storage tests/review/test_workflow_recovery.py tests/review/test_service.py tests/architecture/test_storage_adapter_boundary.py -v
 ```
 
-Run the exact 20-process SQLite stability command from `docs/evaluation/phase3-verification-review.md`.
+Run the exact 20-process SQLite stability command from `docs/evaluation/phase3-reproduction-runbook.md`.
 
 Expected: focused tests and 20/20 processes pass; schema remains v2; serialized public aggregates remain valid.
 
@@ -1838,6 +1840,7 @@ src/spanvouch/cli/main.py                     single `spanvouch` command tree
 - Modify through merge: `docs/superpowers/specs/2026-07-18-phase4-research-foundation-design.md`
 - Modify through merge: `docs/handoffs/2026-07-18-phase4-research-foundation-handoff.md`
 - Verify: `docs/evaluation/phase3-verification-review.md`
+- Create: `docs/evaluation/phase3-reproduction-runbook.md`
 
 **Interfaces:**
 - Consumes: `main@dddc7b8b49db81292d72cbac444ad039d17f5dde`, Phase 2 at `4df0ccb847cfee610ada9913e7ba31eec7667fc8`, Phase 3 at `31ff910c72c720fa4a61b52b2687edc2053071e3`, code-under-test `66e8f5d36f7d46db50f7bd962a036fcc94affbe6`, design commit `9407187`, and the commit that contains this plan.
@@ -1891,7 +1894,7 @@ uv run mypy
 .\.venv\Scripts\python.exe -m pytest --cov=afc --cov-report=term-missing
 ```
 
-Then run the exact dataset, deterministic evaluation, SQLite-process, and Docker commands recorded in `docs/evaluation/phase3-verification-review.md`.
+Run the exact dataset and deterministic evaluation commands recorded in `docs/evaluation/phase3-verification-review.md`. Run the SQLite-process command and the Docker/restart/non-root/persistence procedure from `docs/evaluation/phase3-reproduction-runbook.md`. Do not edit the historical Phase 3 report; its byte identity is part of this gate.
 
 Expected: 710 tests pass, total coverage is 93%, Ruff/mypy are clean, review metrics remain `1.0/1.0/1.0/0.0`, repeated reports are byte-exact, provider usage is zero, and all Docker/recovery gates pass. The pre-existing Starlette/httpx deprecation warning is allowed and must be recorded.
 

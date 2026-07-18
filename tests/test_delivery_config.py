@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 import subprocess
 import tomllib
@@ -40,14 +41,24 @@ def test_frozen_dataset_fixtures_are_checked_out_with_lf_endings() -> None:
 
 
 def test_phase_3_verification_documents_exact_sqlite_process_gate() -> None:
-    verification = (
-        ROOT / "docs" / "evaluation" / "phase3-verification-review.md"
-    ).read_text(encoding="utf-8")
+    runbook = (ROOT / "docs" / "evaluation" / "phase3-reproduction-runbook.md").read_text(
+        encoding="utf-8"
+    )
 
     assert (
         r".\.venv\Scripts\python.exe -m pytest "
         r"tests/review/test_sqlite_process_stability.py -q"
-    ) in verification
+    ) in runbook
+    assert ".github/workflows/ci.yml" in runbook
+    assert "Smoke-test containerized API" in runbook
+
+
+def test_phase_3_verification_report_matches_frozen_acceptance_bytes() -> None:
+    verification = ROOT / "docs" / "evaluation" / "phase3-verification-review.md"
+
+    assert hashlib.sha256(verification.read_bytes()).hexdigest() == (
+        "b67345396cfd86a7eb96db98b76834dee057983e8f38491c59c2376fc2bb2e74"
+    )
 
 
 def test_phase_2_delivery_is_safe_and_reproducible() -> None:

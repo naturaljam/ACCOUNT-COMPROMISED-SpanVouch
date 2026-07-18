@@ -13,7 +13,8 @@
 2. `docs/superpowers/specs/2026-07-17-ivad-research-engineering-program-design.md`
 3. `docs/superpowers/specs/2026-07-17-spanvouch-naming-design.md`
 4. `docs/evaluation/phase3-verification-review.md`
-5. `docs/research/2026-07-17-afc-independent-verification-novelty.md`
+5. `docs/evaluation/phase3-reproduction-runbook.md`
+6. `docs/research/2026-07-17-afc-independent-verification-novelty.md`
 
 如果实现计划、旧 README 或历史 handoff 与 Phase 4 详细设计冲突，以 Phase 4 详细设计为准；冻结 artifact 的原始 hash 和 Phase 3 实际验收记录除外。
 
@@ -260,6 +261,7 @@ Ready for next batch: yes/no
 1) docs/superpowers/specs/2026-07-18-phase4-research-foundation-design.md
 2) docs/handoffs/2026-07-18-phase4-research-foundation-handoff.md
 3) docs/evaluation/phase3-verification-review.md
+4) docs/evaluation/phase3-reproduction-runbook.md
 
 先核对 main、Phase 2、Phase 3 和设计分支 SHA，并根据权威规格写出
 docs/superpowers/plans/2026-07-18-phase4-research-foundation.md。
