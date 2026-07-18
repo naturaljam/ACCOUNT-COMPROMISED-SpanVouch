@@ -81,9 +81,12 @@ _COMPACT_CREDENTIAL_CORES = frozenset(
         "privatekey",
         "pwd",
         "secret",
+        "sessionid",
         "sessioncookie",
         "sessioncredential",
         "sessiontoken",
+        "jwt",
+        "passphrase",
         "token",
     }
 )
@@ -149,7 +152,6 @@ _MAX_COMPACT_CREDENTIAL_LABEL_LENGTH = max(
     len(label) for label in _COMPACT_CREDENTIAL_LABELS
 )
 _COMPACT_SAFE_METADATA_BASES = _COMPACT_CREDENTIAL_CORES | {
-    "session",
     "tokenization",
     "tokenizer",
 }
@@ -162,6 +164,10 @@ _COMPACT_SAFE_METADATA_LABELS = frozenset(
     for base in _COMPACT_SAFE_METADATA_BASES
     for qualifier in _COMPACT_SAFE_METADATA_QUALIFIERS
     for terminal in _SAFE_METADATA_TERMINALS
+) | frozenset(
+    f"{prefix}{base}{terminal}"
+    for prefix in _COMPACT_SENSITIVE_PREFIXES
+    for base, terminal in (("jwt", "header"), ("passphrase", "hint"))
 )
 _COOKIE_PAIR_VALUE = re.compile(
     r"(?i)(?:^|;\s*)[!#$%&'*+\-.^_`|~0-9A-Za-z]+\s*="
@@ -409,6 +415,15 @@ def _normalize_structural_delimiter(character: str) -> str | None:
     return normalized if normalized in {":", "="} else None
 
 
+def _has_structural_equals_ahead(line: str, start: int) -> bool:
+    for character in line[start:]:
+        if character in "\r\n":
+            return False
+        if _normalize_structural_delimiter(character) == "=":
+            return True
+    return False
+
+
 def _structural_url_contexts(line: str) -> tuple[tuple[int, int, int], ...]:
     contexts: list[tuple[int, int, int]] = []
     token_end = 0
@@ -654,6 +669,16 @@ def _sanitize_structural_credential_line(
         ):
             index += 1
             continue
+        if (
+            delimiter == ":"
+            and (
+                (index > 0 and line[index - 1] == ":")
+                or (index + 1 < len(line) and line[index + 1] == ":")
+            )
+            and _has_structural_equals_ahead(line, index + 1)
+        ):
+            index += 1
+            continue
 
         label = _extract_structural_label(
             line,
@@ -665,6 +690,12 @@ def _sanitize_structural_credential_line(
         while value_start < len(line) and line[value_start].isspace():
             value_start += 1
         label_parts = _structural_credential_label_parts(label)
+        if label_parts is None and url_context is None:
+            canonical_label = line[candidate_start:index].strip()
+            if canonical_label != label:
+                label_parts = _structural_credential_label_parts(
+                    canonical_label
+                )
         if label_parts is not None:
             is_cookie_label = any(
                 part in {"cookie", "cookies"} for part in label_parts

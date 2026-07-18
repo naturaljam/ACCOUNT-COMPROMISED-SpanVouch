@@ -794,6 +794,26 @@ _NORMALIZED_COMPACT_SENSITIVE_SUFFIXES = (
     "string",
     "value",
 )
+_ADDITIONAL_SENSITIVE_LABELS = (
+    "session_id",
+    "session-id",
+    "sessionId",
+    "sessionid",
+    "jwt",
+    "JWT",
+    "jwt_token",
+    "access_jwt",
+    "passphrase",
+    "pass_phrase",
+    "pass-phrase",
+)
+_PUNCTUATED_SENSITIVE_LABELS = (
+    "api::key",
+    "api,key",
+    "api;key",
+    "api|key",
+    "deepseek::api::key",
+)
 
 
 def _normalized_compact_spellings(parts: tuple[str, str]) -> tuple[str, ...]:
@@ -1274,6 +1294,76 @@ def test_structural_punctuation_labels_share_mapping_key_normalization() -> None
 
         safe_source = f"{safe_label}=7; punctuation metadata remains safe"
         _assert_sanitizer_fixed_point(safe_source, safe_source)
+
+
+def test_additional_sensitive_families_share_mapping_and_structural_parity() -> None:
+    for label in _ADDITIONAL_SENSITIVE_LABELS:
+        assert sanitize_diagnostic_value({label: "secret-one"}) == {
+            label: SECRET_REDACTION
+        }
+        _assert_sanitizer_fixed_point(
+            f"{label}=secret-one",
+            f"{label}={SECRET_REDACTION}",
+        )
+        for wrapper in _QUOTED_STRUCTURAL_WRAPPERS:
+            source = (
+                f"message={wrapper}{label}=secret-one{wrapper} field=ok"
+            )
+            _assert_sanitizer_fixed_point(
+                source,
+                source.replace("secret-one", SECRET_REDACTION),
+            )
+
+
+def test_additional_sensitive_family_metadata_remains_visible() -> None:
+    for label in (
+        "session_duration",
+        "session_state",
+        "jwt_algorithm",
+        "jwt_header",
+        "access_jwt_header",
+        "passphrase_policy",
+        "passphrase_hint",
+        "user_passphrase_hint",
+    ):
+        assert sanitize_diagnostic_value({label: "visible"}) == {
+            label: "visible"
+        }
+        _assert_sanitizer_fixed_point(f"{label}=visible", f"{label}=visible")
+
+
+def test_punctuated_sensitive_labels_share_mapping_structural_parity() -> None:
+    for label, prefix in product(
+        _PUNCTUATED_SENSITIVE_LABELS,
+        ("", "safe=ok; ", "safe=ok | "),
+    ):
+        assert sanitize_diagnostic_value({label: "secret-one"}) == {
+            label: SECRET_REDACTION
+        }
+        source = f"{prefix}{label}=secret-one"
+        expected = f"{prefix}{label}={SECRET_REDACTION}"
+        _assert_sanitizer_fixed_point(source, expected)
+
+        for wrapper in _QUOTED_STRUCTURAL_WRAPPERS:
+            quoted = (
+                f"message={wrapper}{label}=secret-one{wrapper} field=ok"
+            )
+            _assert_sanitizer_fixed_point(
+                quoted,
+                quoted.replace("secret-one", SECRET_REDACTION),
+            )
+
+
+def test_punctuation_field_boundaries_remain_safe() -> None:
+    for source in (
+        "safe=token_count;field=ok",
+        "safe=token_count|note=ok",
+        "ratio=1,field=ok",
+        "message=api,key field=ok",
+        "message=api|key note=ok",
+        "status=ok; ordinary=value",
+    ):
+        _assert_sanitizer_fixed_point(source, source)
 
 
 def test_url_authorities_are_not_structural_assignment_labels() -> None:
@@ -2336,7 +2426,10 @@ def test_trace_view_preserves_safe_urls_and_redacts_punctuation_labels() -> None
                     f"message=sessiontoken value={VALUE_SECRET} "
                     "field=compact-prefix-e2e\n"
                     f"message=ApiKey value={VALUE_SECRET} "
-                    "field=normalized-prefix-e2e"
+                    "field=normalized-prefix-e2e\n"
+                    f"sessionId={VALUE_SECRET} field=session-id-e2e\n"
+                    f"pass_phrase={VALUE_SECRET} field=passphrase-e2e\n"
+                    f"api::key={VALUE_SECRET} field=punctuated-label-e2e"
                 ),
             }
         }
@@ -2376,6 +2469,42 @@ def test_trace_view_preserves_safe_urls_and_redacts_punctuation_labels() -> None
     assert "header-newline-boundary-safe" in message
     assert "compact-prefix-e2e" in message
     assert "normalized-prefix-e2e" in message
+    assert "session-id-e2e" in message
+    assert "passphrase-e2e" in message
+    assert "punctuated-label-e2e" in message
     assert "secret-one" not in message
     assert f"api_key=\r\n{SECRET_REDACTION} field=newline-field-safe" in message
+    assert sanitize_diagnostic_trace_view(view) == view
+
+
+def test_trace_view_redacts_additional_sensitive_mapping_families() -> None:
+    trace = load_trace("clean-01")
+    root = trace.spans[0].model_copy(
+        update={
+            "attributes": {
+                **trace.spans[0].attributes,
+                "tool.result": {
+                    "session_id": VALUE_SECRET,
+                    "jwt": VALUE_SECRET,
+                    "passphrase": VALUE_SECRET,
+                    "api::key": VALUE_SECRET,
+                    "jwt_header": "visible",
+                    "passphrase_hint": "visible",
+                },
+            }
+        }
+    )
+    candidate = trace.model_copy(update={"spans": [root, *trace.spans[1:]]})
+
+    view = DiagnosticTraceView.from_trace(candidate)
+    result = view.spans[0].attributes["tool.result"]
+
+    assert result == {
+        "session_id": SECRET_REDACTION,
+        "jwt": SECRET_REDACTION,
+        "passphrase": SECRET_REDACTION,
+        "api::key": SECRET_REDACTION,
+        "jwt_header": "visible",
+        "passphrase_hint": "visible",
+    }
     assert sanitize_diagnostic_trace_view(view) == view
