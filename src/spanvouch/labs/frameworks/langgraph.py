@@ -78,7 +78,7 @@ class LangGraphRuntimeAdapter:
                 tracer=tracer,
                 timeout_seconds=run_config.timeout_seconds,
                 emit_workflow_spans=True,
-                map_cancellation=True,
+                map_cancellation=False,
                 map_exceptions=True,
             )
         finally:

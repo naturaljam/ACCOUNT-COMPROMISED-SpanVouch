@@ -5,12 +5,16 @@ from spanvouch.labs.runtime.models import (
     ExecutionStatus,
     FrameworkId,
     LabScenario,
+    ParityDimension,
+    ParityMismatch,
+    ParityResult,
     RuntimeConfig,
     RuntimeFailure,
     RuntimeFailureCategory,
     RuntimeState,
     ToolObservation,
 )
+from spanvouch.labs.runtime.parity import ScenarioParityValidator
 from spanvouch.labs.runtime.protocols import (
     AgentRuntimeAdapter,
     LabEnvironment,
@@ -27,9 +31,13 @@ __all__ = [
     "LabEnvironment",
     "LabEnvironmentRegistry",
     "LabScenario",
+    "ParityDimension",
+    "ParityMismatch",
+    "ParityResult",
     "RuntimeConfig",
     "RuntimeFailure",
     "RuntimeFailureCategory",
     "RuntimeState",
+    "ScenarioParityValidator",
     "ToolObservation",
 ]

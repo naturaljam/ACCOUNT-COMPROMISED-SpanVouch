@@ -438,7 +438,7 @@ async def test_timeout_preserves_completed_runtime_progress(
 
 
 @pytest.mark.asyncio
-async def test_cancellation_maps_to_one_infrastructure_failure(
+async def test_cancellation_propagates(
     execution_provenance: ExecutionProvenance,
 ) -> None:
     started = asyncio.Event()
@@ -449,12 +449,8 @@ async def test_cancellation_maps_to_one_infrastructure_failure(
     await started.wait()
 
     task.cancel()
-    record = await task
-
-    assert record.status is ExecutionStatus.FAILED
-    assert record.failure is not None
-    assert record.failure.category is RuntimeFailureCategory.INFRASTRUCTURE
-    assert record.failure.code == "cancelled"
+    with pytest.raises(asyncio.CancelledError):
+        await task
 
 
 class _CountingRegistry:

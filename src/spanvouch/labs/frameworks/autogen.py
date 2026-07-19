@@ -272,14 +272,7 @@ async def _run_autogen_environment(
             result = _RunResult(state, ExecutionStatus.FAILED, failure)
         except asyncio.CancelledError:
             await _cancel_team_run(team_task, token)
-            state = session.state if session is not None else RuntimeState.initial()
-            failure = _failure(
-                RuntimeFailureCategory.INFRASTRUCTURE,
-                code="cancelled",
-                retryable=True,
-            )
-            state = _replace_terminal_with_failure(state, failure)
-            result = _RunResult(state, ExecutionStatus.FAILED, failure)
+            raise
         except Exception as error:
             failure = _exception_failure(error)
             state = session.state if session is not None else RuntimeState.initial()

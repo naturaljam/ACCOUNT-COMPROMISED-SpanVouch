@@ -10,7 +10,11 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from spanvouch.contracts.sanitization import ALLOWED_ATTRIBUTES, sanitize_diagnostic_value
 from spanvouch.contracts.trace import TraceIR
-from spanvouch.contracts.versioning import SHA256_PATTERN, canonical_sha256
+from spanvouch.contracts.versioning import (
+    IDENTIFIER_PATTERN,
+    SHA256_PATTERN,
+    canonical_sha256,
+)
 
 _GIT_COMMIT_PATTERN = r"^[0-9a-f]{40}$"
 _FORBIDDEN_RECORD_FIELDS = frozenset(
@@ -140,6 +144,18 @@ class RuntimeFailureCategory(StrEnum):
     INFRASTRUCTURE = "infrastructure_failure"
 
 
+class ParityDimension(StrEnum):
+    SCENARIO_INPUT = "scenario_input"
+    TOOL_SEQUENCE = "tool_sequence"
+    TOOL_ARGUMENTS = "tool_arguments"
+    TOOL_RESULTS = "tool_results"
+    INJECTION_TRIGGER = "injection_trigger"
+    RUNTIME_LIMIT = "runtime_limit"
+    TERMINAL_PREDICATE = "terminal_predicate"
+    OUTCOME = "outcome"
+    EVIDENCE_SELECTOR = "evidence_selector"
+
+
 class RuntimeConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
 
@@ -246,6 +262,66 @@ class RuntimeFailure(BaseModel):
         )
 
 
+class ParityMismatch(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    dimension: ParityDimension
+    reference_sha256: str = Field(pattern=SHA256_PATTERN)
+    candidate_sha256: str = Field(pattern=SHA256_PATTERN)
+
+
+class ParityResult(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    status: Literal["matched", "mismatched", "incompatible"]
+    mismatches: tuple[ParityMismatch, ...] = ()
+    framework_incompatibility: RuntimeFailure | None = None
+    incompatibility_code: str | None = Field(
+        default=None,
+        pattern=IDENTIFIER_PATTERN,
+    )
+
+    @property
+    def is_match(self) -> bool:
+        return self.status == "matched"
+
+    @model_validator(mode="after")
+    def validate_result_shape(self) -> Self:
+        if self.status == "matched":
+            if self.mismatches:
+                raise ValueError("matched parity result forbids mismatches")
+            self._forbid_incompatibility_fields()
+            return self
+        if self.status == "mismatched":
+            if not self.mismatches:
+                raise ValueError("mismatched parity result requires mismatches")
+            self._forbid_incompatibility_fields()
+            return self
+        if self.mismatches:
+            raise ValueError("incompatible parity result forbids mismatches")
+        if self.framework_incompatibility is None or self.incompatibility_code is None:
+            raise ValueError(
+                "incompatible parity result requires a typed failure and stable code"
+            )
+        if (
+            self.framework_incompatibility.category
+            is not RuntimeFailureCategory.FRAMEWORK_INCOMPATIBILITY
+        ):
+            raise ValueError("incompatible parity result requires framework_incompatibility")
+        if self.framework_incompatibility.code != self.incompatibility_code:
+            raise ValueError("incompatibility code must match the typed failure")
+        return self
+
+    def _forbid_incompatibility_fields(self) -> None:
+        if (
+            self.framework_incompatibility is not None
+            or self.incompatibility_code is not None
+        ):
+            raise ValueError(
+                "only incompatible parity results may carry incompatibility fields"
+            )
+
+
 class RuntimeState(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -337,6 +413,10 @@ class ExecutionRecord(BaseModel):
     template_id: str = Field(min_length=1)
     domain: Literal["supportlab", "opslab"]
     failure_family: str = Field(min_length=1)
+    scenario_input_sha256: str = Field(pattern=SHA256_PATTERN)
+    injection_trigger_sha256: str = Field(pattern=SHA256_PATTERN)
+    terminal_predicate_sha256: str = Field(pattern=SHA256_PATTERN)
+    evidence_selector_sha256: str = Field(pattern=SHA256_PATTERN)
     seed: int
     repetition: int = Field(ge=1)
     runtime_config: RuntimeConfig
@@ -432,6 +512,20 @@ class ExecutionRecord(BaseModel):
             template_id=scenario.template_id,
             domain=scenario.domain,
             failure_family=scenario.failure_family,
+            scenario_input_sha256=canonical_sha256(
+                {
+                    "user_request": scenario.user_request,
+                    "parameters": scenario.parameters,
+                    "tool_contract_sha256": scenario.tool_contract_sha256,
+                }
+            ),
+            injection_trigger_sha256=canonical_sha256(scenario.injection),
+            terminal_predicate_sha256=canonical_sha256(
+                scenario.terminal_predicate_id
+            ),
+            evidence_selector_sha256=canonical_sha256(
+                list(scenario.allowed_evidence_selectors)
+            ),
             seed=run_config.seed,
             repetition=run_config.repetition,
             runtime_config=run_config,
