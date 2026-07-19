@@ -128,6 +128,23 @@ def _normalize_trace(trace: TraceIR, sequence: int) -> TraceIR:
     )
 
 
+def _attach_historical_phase3_label(trace: TraceIR, expected_failure: str) -> TraceIR:
+    """Preserve the frozen Phase 3 fixture; Phase 5 Stage A does not call this."""
+    labeled_spans = []
+    for span in trace.spans:
+        if span.parent_span_id is None:
+            span = span.model_copy(
+                update={
+                    "attributes": {
+                        **span.attributes,
+                        "scenario.expected_failure": expected_failure,
+                    }
+                }
+            )
+        labeled_spans.append(span)
+    return trace.model_copy(update={"spans": labeled_spans})
+
+
 async def generate_dataset(output_dir: Path, seed: int = 20260715) -> DatasetManifest:
     output_dir.mkdir(parents=True, exist_ok=True)
     trace_rows: list[dict[str, object]] = []
@@ -141,7 +158,10 @@ async def generate_dataset(output_dir: Path, seed: int = 20260715) -> DatasetMan
             tracer=tracer,
         )
         trace = _normalize_trace(
-            map_spans(scenario.scenario_id, exporter.get_finished_spans()),
+            _attach_historical_phase3_label(
+                map_spans(scenario.scenario_id, exporter.get_finished_spans()),
+                scenario.expected_failure.value,
+            ),
             sequence,
         )
         trace_rows.append(trace.model_dump(mode="json", exclude={"schema_name"}))

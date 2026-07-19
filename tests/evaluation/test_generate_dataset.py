@@ -113,6 +113,21 @@ async def test_dataset_generation_is_deterministic(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_historical_dataset_generator_retains_phase3_label_attribute(
+    tmp_path: Path,
+) -> None:
+    await generate_dataset(tmp_path, seed=20260715)
+    traces = [
+        json.loads(line)
+        for line in (tmp_path / "traces.jsonl").read_text().splitlines()
+    ]
+
+    for trace in traces:
+        root = next(span for span in trace["spans"] if span["parent_span_id"] is None)
+        assert root["attributes"]["scenario.expected_failure"]
+
+
+@pytest.mark.asyncio
 async def test_committed_dataset_matches_seeded_generation(tmp_path: Path) -> None:
     generated = tmp_path / "supportlab-v1"
     committed = Path(__file__).parents[2] / "evals" / "datasets" / "supportlab-v1"
