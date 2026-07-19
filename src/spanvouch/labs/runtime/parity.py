@@ -95,6 +95,7 @@ def _dimension_payloads(
             for span in tools
         ],
         ParityDimension.INJECTION_TRIGGER: {
+            "injection_trigger_id": record.injection_trigger_id,
             "injection_trigger_sha256": record.injection_trigger_sha256,
             "trace_markers": [
                 markers
@@ -121,7 +122,7 @@ def _dimension_payloads(
                 _normalized_semantic_span(span)
                 for span in record.trace.spans
                 if span.kind is not SpanKind.TOOL
-                and not _is_framework_only_workflow(span)
+                and not _is_framework_only_workflow(span, record.domain)
             ],
         },
         ParityDimension.EVIDENCE_SELECTOR: record.evidence_selector_sha256,
@@ -147,5 +148,8 @@ def _normalized_semantic_span(span: TraceSpan) -> dict[str, JsonValue]:
     }
 
 
-def _is_framework_only_workflow(span: TraceSpan) -> bool:
-    return span.kind is SpanKind.WORKFLOW and not span.attributes
+def _is_framework_only_workflow(span: TraceSpan, domain: str) -> bool:
+    return (
+        span.kind is SpanKind.WORKFLOW
+        and span.name == f"{domain}.decision"
+    )

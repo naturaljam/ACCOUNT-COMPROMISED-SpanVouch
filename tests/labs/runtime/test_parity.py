@@ -76,8 +76,12 @@ def _changed_trace(
     payload = record.trace.model_dump(mode="python")
     change(payload)
     trace = TraceIR.model_validate(payload)
-    return record.model_copy(
-        update={"trace": trace, "trace_sha256": canonical_sha256(trace)}
+    return ExecutionRecord.model_validate(
+        {
+            **record.model_dump(mode="python"),
+            "trace": trace,
+            "trace_sha256": canonical_sha256(trace),
+        }
     )
 
 
@@ -101,6 +105,29 @@ def with_changed_tool_argument(
     value: str,
 ) -> ExecutionRecord:
     return _change_tool_attribute(record, f"tool.arguments.{argument}", value)
+
+
+def _changed_injection_marker(record: ExecutionRecord) -> ExecutionRecord:
+    trace_payload = record.trace.model_dump(mode="python")
+    marker = next(
+        span
+        for span in trace_payload["spans"]
+        if "injection.trigger.id" in span["attributes"]
+    )
+    marker["attributes"] = {
+        "injection.trigger.id": "decision.3",
+        "injection.trigger.sha256": "f" * 64,
+    }
+    trace = TraceIR.model_validate(trace_payload)
+    return ExecutionRecord.model_validate(
+        {
+            **record.model_dump(mode="python"),
+            "injection_trigger_id": "decision.3",
+            "injection_trigger_sha256": "f" * 64,
+            "trace": trace,
+            "trace_sha256": canonical_sha256(trace),
+        }
+    )
 
 
 @pytest.mark.asyncio
@@ -202,24 +229,16 @@ async def test_framework_only_workflow_spans_normalize_away(
         trace_id=autogen_record.trace.trace_id,
         span_id="f" * 16,
         parent_span_id=root.span_id,
-        name="autogen.framework.lifecycle",
+        name="supportlab.decision",
         kind=SpanKind.WORKFLOW,
         status=root.status,
         started_at=root.started_at + timedelta(microseconds=1),
         ended_at=root.started_at + timedelta(microseconds=2),
         attributes={},
     )
-    trace = TraceIR.model_validate(
-        {
-            **autogen_record.trace.model_dump(mode="python"),
-            "spans": [
-                *autogen_record.trace.model_dump(mode="python")["spans"],
-                extra.model_dump(mode="python"),
-            ],
-        }
-    )
-    changed = autogen_record.model_copy(
-        update={"trace": trace, "trace_sha256": canonical_sha256(trace)}
+    changed = _changed_trace(
+        autogen_record,
+        lambda payload: payload["spans"].append(extra.model_dump(mode="python")),
     )
 
     result = ScenarioParityValidator().validate(langgraph_record, changed)
@@ -265,11 +284,43 @@ async def test_semantic_workflow_spans_do_not_normalize_away(
 
 
 @pytest.mark.asyncio
+async def test_empty_semantic_workflow_spans_do_not_normalize_away(
+    provenance: ExecutionProvenance,
+) -> None:
+    langgraph_record, autogen_record = await _paired_records(provenance)
+    root = autogen_record.trace.spans[0]
+    semantic = TraceSpan(
+        trace_id=autogen_record.trace.trace_id,
+        span_id="d" * 16,
+        parent_span_id=root.span_id,
+        name="supportlab.semantic-empty-transition",
+        kind=SpanKind.WORKFLOW,
+        status=SpanStatus.OK,
+        started_at=root.started_at + timedelta(microseconds=1),
+        ended_at=root.started_at + timedelta(microseconds=2),
+        attributes={},
+    )
+
+    changed = _changed_trace(
+        autogen_record,
+        lambda payload: payload["spans"].append(semantic.model_dump(mode="python")),
+    )
+    result = ScenarioParityValidator().validate(langgraph_record, changed)
+
+    assert tuple(item.dimension for item in result.mismatches) == (
+        ParityDimension.OUTCOME,
+    )
+
+
+@pytest.mark.asyncio
 async def test_tool_order_error_status_and_injection_markers_do_not_normalize_away(
     provenance: ExecutionProvenance,
 ) -> None:
     clean_left, clean_right = await _paired_records(provenance)
     error_left, error_right = await _paired_records(provenance, "wrong_tool-01")
+    injection_left, injection_right = await _paired_records(
+        provenance, "invalid_argument-01"
+    )
 
     def reorder_tools(payload: dict[str, Any]) -> None:
         indexes = [
@@ -289,12 +340,6 @@ async def test_tool_order_error_status_and_injection_markers_do_not_normalize_aw
         )
         tool["status"] = SpanStatus.ERROR
 
-    def add_injection_marker(payload: dict[str, Any]) -> None:
-        tool = next(
-            span for span in payload["spans"] if span["kind"] == SpanKind.TOOL
-        )
-        tool["attributes"]["injection.trigger"] = "safe-trigger-id"
-
     reordered = ScenarioParityValidator().validate(
         clean_left, _changed_trace(clean_right, reorder_tools)
     )
@@ -306,7 +351,7 @@ async def test_tool_order_error_status_and_injection_markers_do_not_normalize_aw
         clean_left, _changed_trace(clean_right, change_tool_status)
     )
     changed_injection = ScenarioParityValidator().validate(
-        clean_left, _changed_trace(clean_right, add_injection_marker)
+        injection_left, _changed_injection_marker(injection_right)
     )
 
     assert ParityDimension.TOOL_SEQUENCE in {
@@ -414,6 +459,18 @@ def test_parity_result_rejects_every_cross_state_shape() -> None:
     for payload in invalid_payloads:
         with pytest.raises(ValidationError):
             ParityResult.model_validate(payload)
+    with pytest.raises(ValidationError, match="different hashes"):
+        ParityResult.model_validate(
+            {
+                "status": "mismatched",
+                "mismatches": [
+                    {
+                        **mismatch,
+                        "candidate_sha256": mismatch["reference_sha256"],
+                    }
+                ],
+            }
+        )
     with pytest.raises(ValidationError):
         ParityResult.model_validate(
             {

@@ -1,4 +1,4 @@
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from spanvouch.labs.runtime.models import (
     AgentAction,
@@ -20,6 +20,15 @@ class LabEnvironment(Protocol):
     async def execute(self, action: AgentAction) -> ToolObservation: ...
 
     def terminal_status(self, state: RuntimeState) -> ExecutionStatus | None: ...
+
+
+@runtime_checkable
+class InjectionTriggerProvider(Protocol):
+    def injection_trigger(
+        self,
+        state: RuntimeState,
+        action: AgentAction,
+    ) -> tuple[str, str] | None: ...
 
 
 class LabEnvironmentRegistry(Protocol):

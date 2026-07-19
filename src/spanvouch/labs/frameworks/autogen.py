@@ -15,7 +15,7 @@ from autogen_agentchat.messages import BaseAgentEvent, BaseChatMessage, TextMess
 from autogen_agentchat.teams import RoundRobinGroupChat
 from autogen_core import CancellationToken
 from opentelemetry.sdk.trace import ReadableSpan
-from opentelemetry.trace import Status, StatusCode, Tracer
+from opentelemetry.trace import Span, Status, StatusCode, Tracer
 from pydantic import JsonValue, ValidationError
 
 from spanvouch.contracts.versioning import canonical_json
@@ -34,6 +34,7 @@ from spanvouch.labs.runtime import (
     RuntimeState,
     ToolObservation,
 )
+from spanvouch.labs.runtime.protocols import InjectionTriggerProvider
 from spanvouch.observability.tracing import build_run_tracer
 from spanvouch.trace.mapper import map_spans
 
@@ -89,6 +90,12 @@ class EnvironmentActionAgent(BaseChatAgent):
             action = await _await_with_cancellation(
                 self._session.environment.decide(self._session.state),
                 cancellation_token,
+            )
+            _mark_injection_trigger(
+                span,
+                self._session.environment,
+                self._session.state,
+                action,
             )
             span.set_status(Status(StatusCode.OK))
         _raise_if_cancelled(cancellation_token)
@@ -538,6 +545,22 @@ def _trace_attribute(value: JsonValue) -> str | bool | int | float:
     if isinstance(value, (str, bool, int, float)):
         return value
     return str(value)
+
+
+def _mark_injection_trigger(
+    span: Span,
+    environment: LabEnvironment,
+    state: RuntimeState,
+    action: AgentAction,
+) -> None:
+    if not isinstance(environment, InjectionTriggerProvider):
+        return
+    marker = environment.injection_trigger(state, action)
+    if marker is None:
+        return
+    trigger_id, trigger_sha256 = marker
+    span.set_attribute("injection.trigger.id", trigger_id)
+    span.set_attribute("injection.trigger.sha256", trigger_sha256)
 
 
 def _root_first(spans: Sequence[ReadableSpan]) -> tuple[ReadableSpan, ...]:

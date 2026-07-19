@@ -20,6 +20,8 @@ ALLOWED_ATTRIBUTES = frozenset(
         "run.outcome",
         "run.final_message",
         "error.type",
+        "injection.trigger.id",
+        "injection.trigger.sha256",
         "tool.name",
         "tool.arguments.customer_id",
         "tool.arguments.order_id",

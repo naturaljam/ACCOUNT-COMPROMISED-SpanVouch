@@ -28,6 +28,16 @@ from spanvouch.labs.supportlab.runtime import build_support_lab_scenarios
 from spanvouch.labs.supportlab.tools import RefundRejected, SupportTools
 
 _MAX_STEPS = 8
+_TRIGGER_STEP_BY_INJECTION = {
+    "wrong_tool": 0,
+    "invalid_amount": 4,
+    "skip_policy": 2,
+    "ignore_tool_error": 4,
+    "poisoned_context": 4,
+    "bypass_approval": 4,
+    "repeat_lookup": 0,
+    "false_success": 5,
+}
 
 
 class FrameworkIncompatibilityError(RuntimeError):
@@ -137,6 +147,22 @@ class SupportLabEnvironment:
             status="ok",
             retryable=False,
         )
+
+    def injection_trigger(
+        self,
+        state: RuntimeState,
+        action: AgentAction,
+    ) -> tuple[str, str] | None:
+        del action
+        enabled = tuple(
+            name
+            for name in _TRIGGER_STEP_BY_INJECTION
+            if self.scenario.injection.get(name) is True
+        )
+        if not enabled or state.step != _TRIGGER_STEP_BY_INJECTION[enabled[0]]:
+            return None
+        trigger_id = f"decision.{state.step}"
+        return trigger_id, self.scenario.injection_trigger_digest(trigger_id)
 
     def terminal_status(self, state: RuntimeState) -> ExecutionStatus | None:
         if state.final_message is not None:

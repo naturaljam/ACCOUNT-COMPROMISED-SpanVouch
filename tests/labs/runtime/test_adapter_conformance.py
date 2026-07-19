@@ -47,6 +47,17 @@ ADAPTER_FACTORIES: tuple[tuple[str, AdapterFactory, FrameworkId], ...] = (
     ("langgraph", _langgraph_factory, FrameworkId.LANGGRAPH),
     ("autogen", _autogen_factory, FrameworkId.AUTOGEN),
 )
+_TRIGGER_ID_BY_FAMILY = {
+    "clean": "none",
+    "wrong_tool": "decision.0",
+    "invalid_argument": "decision.4",
+    "missing_precondition": "decision.2",
+    "ignored_tool_error": "decision.4",
+    "context_corruption": "decision.4",
+    "policy_violation": "decision.4",
+    "loop_or_budget_exhaustion": "decision.0",
+    "invalid_final_state": "decision.5",
+}
 
 
 @pytest.fixture
@@ -132,8 +143,10 @@ async def test_complete_supportlab_executes_as_hashed_typed_records(
                 "tool_contract_sha256": scenario.tool_contract_sha256,
             }
         )
-        assert record.injection_trigger_sha256 == canonical_sha256(
-            scenario.injection
+        expected_trigger_id = _TRIGGER_ID_BY_FAMILY[scenario.failure_family]
+        assert record.injection_trigger_id == expected_trigger_id
+        assert record.injection_trigger_sha256 == scenario.injection_trigger_digest(
+            expected_trigger_id
         )
         assert record.terminal_predicate_sha256 == canonical_sha256(
             scenario.terminal_predicate_id
@@ -143,6 +156,19 @@ async def test_complete_supportlab_executes_as_hashed_typed_records(
         )
         assert record.trace.run_id == scenario.scenario_id
         assert record.trace_sha256 == canonical_sha256(record.trace)
+        injection_markers = tuple(
+            span.attributes
+            for span in record.trace.spans
+            if "injection.trigger.id" in span.attributes
+        )
+        if scenario.failure_family == "clean":
+            assert injection_markers == ()
+        else:
+            assert len(injection_markers) == 1
+            assert injection_markers[0] == {
+                "injection.trigger.id": expected_trigger_id,
+                "injection.trigger.sha256": record.injection_trigger_sha256,
+            }
     clean_records = tuple(record for record in records if record.failure_family == "clean")
     assert all(record.status is ExecutionStatus.SUCCEEDED for record in clean_records)
 

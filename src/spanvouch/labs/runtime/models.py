@@ -189,6 +189,14 @@ class LabScenario(BaseModel):
         object.__setattr__(self, "injection", _freeze_json_dict(self.injection))
         return self
 
+    def injection_trigger_digest(self, trigger_id: str) -> str:
+        return canonical_sha256(
+            {
+                "injection_sha256": canonical_sha256(self.injection),
+                "trigger_id": trigger_id,
+            }
+        )
+
 
 class AgentAction(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -268,6 +276,12 @@ class ParityMismatch(BaseModel):
     dimension: ParityDimension
     reference_sha256: str = Field(pattern=SHA256_PATTERN)
     candidate_sha256: str = Field(pattern=SHA256_PATTERN)
+
+    @model_validator(mode="after")
+    def validate_distinct_hashes(self) -> Self:
+        if self.reference_sha256 == self.candidate_sha256:
+            raise ValueError("parity mismatch requires different hashes")
+        return self
 
 
 class ParityResult(BaseModel):
@@ -414,6 +428,7 @@ class ExecutionRecord(BaseModel):
     domain: Literal["supportlab", "opslab"]
     failure_family: str = Field(min_length=1)
     scenario_input_sha256: str = Field(pattern=SHA256_PATTERN)
+    injection_trigger_id: str = Field(pattern=IDENTIFIER_PATTERN)
     injection_trigger_sha256: str = Field(pattern=SHA256_PATTERN)
     terminal_predicate_sha256: str = Field(pattern=SHA256_PATTERN)
     evidence_selector_sha256: str = Field(pattern=SHA256_PATTERN)
@@ -438,6 +453,7 @@ class ExecutionRecord(BaseModel):
         if projected_trace != self.trace:
             raise ValueError("trace attributes must be allowlisted and sanitized")
         object.__setattr__(self, "trace", _freeze_trace(self.trace))
+        self._validate_injection_marker()
         if canonical_sha256(self.trace) != self.trace_sha256:
             raise ValueError("trace_sha256 does not match trace")
         if canonical_sha256(self.runtime_config) != self.runtime_config_sha256:
@@ -455,6 +471,27 @@ class ExecutionRecord(BaseModel):
         self._validate_status()
         _reject_forbidden_field_names(self.model_dump(mode="python"))
         return self
+
+    def _validate_injection_marker(self) -> None:
+        markers = tuple(
+            span.attributes
+            for span in self.trace.spans
+            if (
+                "injection.trigger.id" in span.attributes
+                or "injection.trigger.sha256" in span.attributes
+            )
+        )
+        if self.injection_trigger_id == "none":
+            if markers:
+                raise ValueError("no-injection execution forbids trigger markers")
+            return
+        if len(markers) > 1:
+            raise ValueError("execution trace has multiple injection trigger markers")
+        if markers and markers[0] != {
+            "injection.trigger.id": self.injection_trigger_id,
+            "injection.trigger.sha256": self.injection_trigger_sha256,
+        }:
+            raise ValueError("injection trigger marker does not match execution record")
 
     def _validate_timings(self) -> None:
         if not _is_utc(self.started_at) or not _is_utc(self.completed_at):
@@ -503,6 +540,10 @@ class ExecutionRecord(BaseModel):
         if state.failure != failure:
             raise ValueError("runtime state failure does not match execution failure")
         projected_trace = _project_trace(trace)
+        trigger_id, trigger_sha256 = _execution_injection_trigger(
+            scenario,
+            projected_trace,
+        )
         return cls(
             trace=projected_trace,
             trace_sha256=canonical_sha256(projected_trace),
@@ -519,7 +560,8 @@ class ExecutionRecord(BaseModel):
                     "tool_contract_sha256": scenario.tool_contract_sha256,
                 }
             ),
-            injection_trigger_sha256=canonical_sha256(scenario.injection),
+            injection_trigger_id=trigger_id,
+            injection_trigger_sha256=trigger_sha256,
             terminal_predicate_sha256=canonical_sha256(
                 scenario.terminal_predicate_id
             ),
@@ -548,6 +590,36 @@ class ExecutionRecord(BaseModel):
 
 def _is_utc(value: datetime) -> bool:
     return value.tzinfo is not None and value.utcoffset() == UTC.utcoffset(value)
+
+
+def _execution_injection_trigger(
+    scenario: LabScenario,
+    trace: TraceIR,
+) -> tuple[str, str]:
+    markers = tuple(
+        span.attributes
+        for span in trace.spans
+        if (
+            "injection.trigger.id" in span.attributes
+            or "injection.trigger.sha256" in span.attributes
+        )
+    )
+    if len(markers) > 1:
+        raise ValueError("execution trace has multiple injection trigger markers")
+    if markers:
+        trigger_id = markers[0].get("injection.trigger.id")
+        trigger_sha256 = markers[0].get("injection.trigger.sha256")
+        if not isinstance(trigger_id, str) or not isinstance(trigger_sha256, str):
+            raise ValueError("injection trigger marker must contain safe strings")
+        if trigger_sha256 != scenario.injection_trigger_digest(trigger_id):
+            raise ValueError("injection trigger marker hash does not match scenario")
+        return trigger_id, trigger_sha256
+    trigger_id = (
+        "unobserved"
+        if any(value is True for value in scenario.injection.values())
+        else "none"
+    )
+    return trigger_id, scenario.injection_trigger_digest(trigger_id)
 
 
 def _sanitize_text(value: str) -> str:
