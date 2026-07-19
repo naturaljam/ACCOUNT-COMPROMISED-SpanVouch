@@ -9,7 +9,9 @@ from spanvouch.labs.opslab.environment import OpsLabEnvironmentRegistry
 from spanvouch.labs.registry import CombinedLabEnvironmentRegistry
 from spanvouch.labs.runtime import (
     ExecutionProvenance,
+    ExecutionRecord,
     ExecutionStatus,
+    LabScenario,
     RuntimeConfig,
     RuntimeFailureCategory,
     ScenarioParityValidator,
@@ -42,6 +44,31 @@ def _config() -> RuntimeConfig:
     )
 
 
+def _assert_safe_injection_marker(
+    record: ExecutionRecord,
+    scenario: LabScenario,
+) -> None:
+    markers = [
+        span.attributes
+        for span in record.trace.spans
+        if "injection.trigger.id" in span.attributes
+    ]
+    if not scenario.injection:
+        assert record.injection_trigger_id == "none"
+        assert markers == []
+        return
+    assert record.injection_trigger_id != "unobserved"
+    assert record.injection_trigger_sha256 == scenario.injection_trigger_digest(
+        record.injection_trigger_id
+    )
+    assert markers == [
+        {
+            "injection.trigger.id": record.injection_trigger_id,
+            "injection.trigger.sha256": record.injection_trigger_sha256,
+        }
+    ]
+
+
 def test_combined_registry_delegates_domains_and_types_unknown_domain() -> None:
     registry = CombinedLabEnvironmentRegistry(
         supportlab=SupportLabEnvironmentRegistry(),
@@ -57,6 +84,45 @@ def test_combined_registry_delegates_domains_and_types_unknown_domain() -> None:
         registry.build(invalid)
     assert caught.value.failure.category is RuntimeFailureCategory.FRAMEWORK_INCOMPATIBILITY
     assert caught.value.failure.code == "unsupported_domain"
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"failure_family": "unknown-family"},
+        {"user_request": "Altered request."},
+        {"parameters": {"operation_plan": []}},
+        {
+            "injection": {
+                "fault_code": "unknown-fault",
+                "operation": "call-upstream",
+                "attempt": 1,
+            }
+        },
+        {
+            "injection": {
+                "fault_code": "timeout-no-retry",
+                "operation": "call-upstream",
+                "attempt": 2,
+            }
+        },
+    ],
+)
+def test_opslab_registry_types_every_tampered_known_scenario(
+    change: dict[str, object],
+) -> None:
+    registry = OpsLabEnvironmentRegistry()
+    scenario = next(
+        item.to_lab_scenario()
+        for item in build_opslab_templates()
+        if item.template_id == "timeout-no-retry"
+    )
+
+    with pytest.raises(RuntimeError) as caught:
+        registry.build(scenario.model_copy(update=change))
+
+    assert caught.value.failure.category is RuntimeFailureCategory.FRAMEWORK_INCOMPATIBILITY
+    assert caught.value.failure.code == "scenario_mismatch"
 
 
 @pytest.mark.asyncio
@@ -75,22 +141,9 @@ async def test_all_sixteen_templates_match_across_both_frameworks() -> None:
         right = await autogen.execute(scenario, _config())
         assert validator.validate(left, right).is_match, template.template_id
         assert left.status is right.status
+        _assert_safe_injection_marker(left, scenario)
+        _assert_safe_injection_marker(right, scenario)
         if template.injection is None:
             assert left.status is ExecutionStatus.SUCCEEDED
-            assert left.injection_trigger_id == "none"
-            assert not any(
-                "injection.trigger.id" in span.attributes for span in left.trace.spans
-            )
         else:
             assert left.status in {ExecutionStatus.FAILED, ExecutionStatus.STEP_LIMIT}
-            assert left.injection_trigger_id != "unobserved"
-            markers = [
-                span.attributes
-                for span in left.trace.spans
-                if "injection.trigger.id" in span.attributes
-            ]
-            assert len(markers) == 1
-            assert markers[0] == {
-                "injection.trigger.id": left.injection_trigger_id,
-                "injection.trigger.sha256": left.injection_trigger_sha256,
-            }

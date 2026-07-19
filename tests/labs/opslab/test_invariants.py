@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from spanvouch.labs.frameworks.langgraph import LangGraphRuntimeAdapter
@@ -50,6 +52,25 @@ async def _context(template_id: str) -> RuleContext:
     )
 
 
+def _corrupt_last_result(
+    context: RuleContext,
+    updates: dict[str, object],
+) -> RuleContext:
+    payload = context.view.model_dump(mode="python")
+    span = next(
+        item
+        for item in reversed(payload["spans"])
+        if isinstance(item["attributes"].get("tool.result"), str)
+    )
+    evidence = json.loads(span["attributes"]["tool.result"])
+    evidence.update(updates)
+    span["attributes"]["tool.result"] = json.dumps(
+        evidence, sort_keys=True, separators=(",", ":")
+    )
+    view = type(context.view).model_validate(payload)
+    return RuleContext(view=view, evidence=EvidenceCatalog.from_view(view))
+
+
 @pytest.mark.asyncio
 async def test_family_rules_distinguish_three_faults_from_healthy_path() -> None:
     rules = {rule.rule_id: rule for rule in opslab_rules()}
@@ -70,6 +91,7 @@ async def test_family_rules_distinguish_three_faults_from_healthy_path() -> None
                 assert result.status is InvariantStatus.FAILED
                 assert result.hard_failure is True
                 assert result.evidence
+                assert "recognized deterministic fault state" in result.explanation
 
 
 @pytest.mark.asyncio
@@ -93,3 +115,51 @@ def test_rules_do_not_import_framework_adapters() -> None:
     assert "spanvouch.labs.frameworks" not in source
     assert "langgraph" not in source.lower()
     assert "autogen" not in source.lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("family", "template_id", "updates"),
+    [
+        (
+            OpsFailureFamily.TIMEOUT,
+            "timeout-control",
+            {"attempts": 9, "upstream_calls": 9, "backoff": 9},
+        ),
+        (
+            OpsFailureFamily.RESOURCE,
+            "resource-control",
+            {"rejection": True},
+        ),
+        (
+            OpsFailureFamily.CONCURRENCY,
+            "concurrency-control",
+            {
+                "acquisition_result": "blocked",
+                "wait_for_edges": [["worker-a", "worker-b"]],
+            },
+        ),
+        (
+            OpsFailureFamily.RECOVERY,
+            "recovery-control",
+            {
+                "current_state_hash": "state-drifted",
+                "state_hash_match": False,
+            },
+        ),
+    ],
+)
+async def test_family_rules_reject_semantically_corrupted_successes(
+    family: OpsFailureFamily,
+    template_id: str,
+    updates: dict[str, object],
+) -> None:
+    rule = next(
+        item for item in opslab_rules() if item.rule_id == f"opslab.{family.value}"
+    )
+    result = rule.evaluate(_corrupt_last_result(await _context(template_id), updates))
+
+    assert result.status is InvariantStatus.FAILED
+    assert result.hard_failure is True
+    assert result.evidence
+    assert "semantically inconsistent state" in result.explanation

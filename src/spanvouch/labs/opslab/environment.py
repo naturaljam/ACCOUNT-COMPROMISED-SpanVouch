@@ -53,9 +53,14 @@ class OpsLabEnvironment:
         self._locks = OrderedLockLeaseTable()
         self._checkpoints = VersionedCheckpointStore()
         initial = self._checkpoints.save("workflow", state_hash="state-initial")
-        self._checkpoint_version = initial.version
+        self._current_checkpoint_version = initial.version
+        self._loaded_checkpoint_version = initial.version
+        self._checkpoint_state_hash = initial.state_hash
+        self._current_state_hash = initial.state_hash
+        self._state_hash_match = True
         self._idempotency_key = "operation-001"
         self._applied_keys: set[str] = set()
+        self._effect_count = 0
         self._replay_count = 0
         self._state_hashes = [initial.state_hash]
         self._upstream_calls = 0
@@ -210,7 +215,10 @@ class OpsLabEnvironment:
             )
             self._record_lease(result)
             if not result.acquired and self._matches_injection(operation, attempt):
-                self._wait_for_edges = (*result.wait_for_edges, ("worker-b", "worker-a"))
+                self._locks.acquire(
+                    "alpha", owner="worker-b", now=self._clock.now, lease_ticks=3
+                )
+                self._wait_for_edges = self._locks.wait_for_edges
             return result.acquired, False
         if operation == "renew-lease":
             if self._matches_injection(operation, attempt):
@@ -238,31 +246,67 @@ class OpsLabEnvironment:
     def _execute_recovery(self, operation: str, attempt: int) -> tuple[bool, bool]:
         if operation == "load-checkpoint":
             if self._matches_injection(operation, attempt):
+                current = self._checkpoints.save(
+                    "workflow", state_hash="state-current"
+                )
+                loaded = self._checkpoints.load("workflow", version=1)
+                self._current_checkpoint_version = current.version
+                self._loaded_checkpoint_version = loaded.version
+                self._checkpoint_state_hash = loaded.state_hash
+                self._current_state_hash = current.state_hash
+                self._state_hashes.append(current.state_hash)
+                self._state_hash_match = (
+                    self._checkpoint_state_hash == self._current_state_hash
+                )
                 self._replay_count += 1
                 return False, False
             checkpoint = self._checkpoints.load("workflow")
-            self._checkpoint_version = checkpoint.version
+            self._current_checkpoint_version = checkpoint.version
+            self._loaded_checkpoint_version = checkpoint.version
+            self._checkpoint_state_hash = checkpoint.state_hash
+            self._current_state_hash = checkpoint.state_hash
+            self._state_hash_match = True
             return True, False
         if operation == "apply-operation":
             if self._matches_injection(operation, attempt):
-                self._applied_keys.add(self._idempotency_key)
+                first_application = self._apply_effect(self._idempotency_key)
+                duplicate_application = self._apply_effect(self._idempotency_key)
                 self._replay_count = 2
-                self._state_hashes.append("state-duplicate")
-                return False, False
-            self._applied_keys.add(self._idempotency_key)
-            self._state_hashes.append("state-applied")
+                return first_application and duplicate_application, False
+            self._apply_effect(self._idempotency_key)
             return True, False
         if operation == "save-checkpoint":
             checkpoint = self._checkpoints.save(
-                "workflow", state_hash=self._state_hashes[-1]
+                "workflow", state_hash=self._current_state_hash
             )
-            self._checkpoint_version = checkpoint.version
+            self._current_checkpoint_version = checkpoint.version
+            self._checkpoint_state_hash = checkpoint.state_hash
             return True, False
+        checkpoint = self._checkpoints.load("workflow")
+        self._loaded_checkpoint_version = checkpoint.version
+        self._checkpoint_state_hash = checkpoint.state_hash
         if self._matches_injection(operation, attempt):
-            self._state_hashes.append("state-drifted")
+            self._set_current_state_hash("state-drifted")
+            self._state_hash_match = (
+                self._checkpoint_state_hash == self._current_state_hash
+            )
             return False, False
         self._replay_count = 1
+        self._state_hash_match = self._checkpoint_state_hash == self._current_state_hash
         return True, False
+
+    def _apply_effect(self, idempotency_key: str) -> bool:
+        if idempotency_key in self._applied_keys:
+            return False
+        self._applied_keys.add(idempotency_key)
+        self._effect_count += 1
+        self._set_current_state_hash("state-applied")
+        return True
+
+    def _set_current_state_hash(self, state_hash: str) -> None:
+        self._current_state_hash = state_hash
+        if not self._state_hashes or self._state_hashes[-1] != state_hash:
+            self._state_hashes.append(state_hash)
 
     def _matches_injection(self, operation: str, attempt: int) -> bool:
         return (
@@ -303,9 +347,15 @@ class OpsLabEnvironment:
                 "acquisition_result": self._acquisition_result,
             }
         return {
-            "checkpoint_version": self._checkpoint_version,
+            "checkpoint_version": self._loaded_checkpoint_version,
+            "current_checkpoint_version": self._current_checkpoint_version,
+            "loaded_checkpoint_version": self._loaded_checkpoint_version,
             "idempotency_key": self._idempotency_key,
             "replay_count": self._replay_count,
+            "effect_count": self._effect_count,
+            "checkpoint_state_hash": self._checkpoint_state_hash,
+            "current_state_hash": self._current_state_hash,
+            "state_hash_match": self._state_hash_match,
             "state_hashes": list(self._state_hashes),
         }
 
@@ -313,15 +363,19 @@ class OpsLabEnvironment:
 class OpsLabEnvironmentRegistry:
     def __init__(self, *, max_steps: int = _MAX_STEPS) -> None:
         self._max_steps = max_steps
-        self._scenario_ids = frozenset(
-            item.template_id for item in build_opslab_templates()
-        )
+        self._scenarios = {
+            item.template_id: item.to_lab_scenario()
+            for item in build_opslab_templates()
+        }
 
     def build(self, scenario: LabScenario) -> OpsLabEnvironment:
         if scenario.domain != "opslab":
             raise _incompatibility("unsupported_domain", scenario.domain)
-        if scenario.scenario_id not in self._scenario_ids:
+        canonical = self._scenarios.get(scenario.scenario_id)
+        if canonical is None:
             raise _incompatibility("unsupported_scenario", scenario.scenario_id)
+        if scenario.model_dump(mode="json") != canonical.model_dump(mode="json"):
+            raise _incompatibility("scenario_mismatch", scenario.scenario_id)
         return OpsLabEnvironment(scenario=scenario, max_steps=self._max_steps)
 
 

@@ -123,6 +123,124 @@ def test_ordered_locks_and_versioned_checkpoints_are_deterministic() -> None:
     assert checkpoints.load("workflow") == v2
 
 
+def test_lock_table_derives_a_cycle_from_two_blocked_acquisitions() -> None:
+    locks = OrderedLockLeaseTable()
+    locks.acquire("alpha", owner="worker-a", now=0, lease_ticks=4)
+    locks.acquire("beta", owner="worker-b", now=0, lease_ticks=4)
+
+    first_wait = locks.acquire("beta", owner="worker-a", now=1, lease_ticks=2)
+    second_wait = locks.acquire("alpha", owner="worker-b", now=1, lease_ticks=2)
+
+    assert first_wait.wait_for_edges == (("worker-a", "worker-b"),)
+    assert second_wait.wait_for_edges == (("worker-b", "worker-a"),)
+    assert locks.wait_for_edges == (
+        ("worker-a", "worker-b"),
+        ("worker-b", "worker-a"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_recovery_faults_expose_real_version_idempotency_and_hash_checks() -> None:
+    stale_status, stale_state = await _drive("checkpoint-stale")
+    duplicate_status, duplicate_state = await _drive("resume-duplicate")
+    drift_status, drift_state = await _drive("workflow-state-drift")
+    stale = _evidence(stale_state)[-1]
+    duplicate = _evidence(duplicate_state)[-1]
+    drift = _evidence(drift_state)[-1]
+
+    assert stale_status is ExecutionStatus.FAILED
+    assert stale["current_checkpoint_version"] == 2
+    assert stale["loaded_checkpoint_version"] == 1
+    assert stale["state_hash_match"] is False
+    assert duplicate_status is ExecutionStatus.FAILED
+    assert duplicate["replay_count"] == 2
+    assert duplicate["effect_count"] == 1
+    assert drift_status is ExecutionStatus.FAILED
+    assert drift["checkpoint_state_hash"] == "state-applied"
+    assert drift["current_state_hash"] == "state-drifted"
+    assert drift["state_hash_match"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("template_id", "terminal", "tool_name", "values"),
+    [
+        (
+            "timeout-no-retry",
+            ExecutionStatus.FAILED,
+            "call-upstream",
+            {"retry_policy": "none", "attempts": 1, "upstream_calls": 1, "backoff": 0},
+        ),
+        (
+            "timeout-unbounded-retry",
+            ExecutionStatus.STEP_LIMIT,
+            "call-upstream",
+            {"retry_policy": "unbounded", "attempts": 7, "upstream_calls": 7, "backoff": 7},
+        ),
+        (
+            "retry-amplification",
+            ExecutionStatus.FAILED,
+            "call-upstream",
+            {"retry_policy": "bounded-3", "attempts": 3, "upstream_calls": 3, "backoff": 6},
+        ),
+        (
+            "rate-limit-unhandled",
+            ExecutionStatus.FAILED,
+            "reserve-token",
+            {"remaining_tokens": 2, "rejection": True, "degradation_result": "not-needed"},
+        ),
+        (
+            "resource-exhaustion",
+            ExecutionStatus.FAILED,
+            "perform-work",
+            {"remaining_tokens": 1, "rejection": True, "degradation_result": "not-needed"},
+        ),
+        (
+            "degradation-missing",
+            ExecutionStatus.FAILED,
+            "apply-degradation",
+            {"remaining_tokens": 0, "rejection": False, "degradation_result": "missing"},
+        ),
+        (
+            "lease-expiry",
+            ExecutionStatus.FAILED,
+            "renew-lease",
+            {"acquisition_result": "blocked", "wait_for_edges": [["worker-a", "worker-b"]]},
+        ),
+        (
+            "lock-contention",
+            ExecutionStatus.FAILED,
+            "acquire-alpha",
+            {"acquisition_result": "blocked", "wait_for_edges": [["worker-a", "worker-b"]]},
+        ),
+        (
+            "deadlock-cycle",
+            ExecutionStatus.FAILED,
+            "acquire-beta",
+            {
+                "acquisition_result": "blocked",
+                "wait_for_edges": [
+                    ["worker-a", "worker-b"],
+                    ["worker-b", "worker-a"],
+                ],
+            },
+        ),
+    ],
+)
+async def test_timeout_resource_and_concurrency_fault_oracles(
+    template_id: str,
+    terminal: ExecutionStatus,
+    tool_name: str,
+    values: dict[str, object],
+) -> None:
+    status, state = await _drive(template_id)
+    evidence = _evidence(state)[-1]
+
+    assert status is terminal
+    assert state.observations[-1].tool_name == tool_name
+    assert {key: evidence[key] for key in values} == values
+
+
 def test_opslab_uses_no_nondeterministic_runtime_primitives() -> None:
     from pathlib import Path
 

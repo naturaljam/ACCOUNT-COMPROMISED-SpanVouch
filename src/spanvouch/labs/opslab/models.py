@@ -131,6 +131,11 @@ class _Lease:
 class OrderedLockLeaseTable:
     def __init__(self) -> None:
         self._leases: dict[str, _Lease] = {}
+        self._wait_for_edges: list[tuple[str, str]] = []
+
+    @property
+    def wait_for_edges(self) -> tuple[tuple[str, str], ...]:
+        return tuple(self._wait_for_edges)
 
     def acquire(
         self,
@@ -144,12 +149,15 @@ class OrderedLockLeaseTable:
             raise ValueError("lease_ticks must be positive")
         current = self._leases.get(resource)
         if current is not None and current.expiry > now and current.owner != owner:
+            edge = (owner, current.owner)
+            if edge not in self._wait_for_edges:
+                self._wait_for_edges.append(edge)
             return LockLeaseResult(
                 acquired=False,
                 owner=current.owner,
                 version=current.version,
                 expiry=current.expiry,
-                wait_for_edges=((owner, current.owner),),
+                wait_for_edges=(edge,),
             )
         version = 1 if current is None else current.version + 1
         lease = _Lease(owner=owner, version=version, expiry=now + lease_ticks)
