@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from spanvouch.labs.frameworks.autogen import AutoGenRuntimeAdapter
@@ -69,6 +71,22 @@ def _assert_safe_injection_marker(
     ]
 
 
+def _assert_unbounded_retry_budget(
+    record: ExecutionRecord,
+    config: RuntimeConfig,
+) -> None:
+    upstream_calls = [
+        span for span in record.trace.spans if span.name == "call-upstream"
+    ]
+    assert record.status is ExecutionStatus.STEP_LIMIT
+    assert len(upstream_calls) == config.max_steps - 1
+    payload = json.loads(upstream_calls[-1].attributes["tool.error.message"])
+    assert payload["attempts"] == config.max_steps - 1
+    assert payload["upstream_calls"] == config.max_steps - 1
+    assert payload["backoff"] == config.max_steps - 1
+    assert payload["retry_policy"] == "unbounded"
+
+
 def test_combined_registry_delegates_domains_and_types_unknown_domain() -> None:
     registry = CombinedLabEnvironmentRegistry(
         supportlab=SupportLabEnvironmentRegistry(),
@@ -134,11 +152,12 @@ async def test_all_sixteen_templates_match_across_both_frameworks() -> None:
     langgraph = LangGraphRuntimeAdapter(registry, provenance=_provenance())
     autogen = AutoGenRuntimeAdapter(registry, provenance=_provenance())
     validator = ScenarioParityValidator()
+    config = _config()
 
     for template in build_opslab_templates():
         scenario = template.to_lab_scenario()
-        left = await langgraph.execute(scenario, _config())
-        right = await autogen.execute(scenario, _config())
+        left = await langgraph.execute(scenario, config)
+        right = await autogen.execute(scenario, config)
         assert validator.validate(left, right).is_match, template.template_id
         assert left.status is right.status
         _assert_safe_injection_marker(left, scenario)
@@ -147,3 +166,6 @@ async def test_all_sixteen_templates_match_across_both_frameworks() -> None:
             assert left.status is ExecutionStatus.SUCCEEDED
         else:
             assert left.status in {ExecutionStatus.FAILED, ExecutionStatus.STEP_LIMIT}
+        if template.template_id == "timeout-unbounded-retry":
+            _assert_unbounded_retry_budget(left, config)
+            _assert_unbounded_retry_budget(right, config)
