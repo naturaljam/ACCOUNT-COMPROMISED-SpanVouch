@@ -8,7 +8,19 @@ import pytest
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_ROOT = REPOSITORY_ROOT / "src" / "spanvouch"
 CORE_ROOTS = ("contracts", "trace", "diagnosis", "verification", "review")
-CORE_FORBIDDEN_PREFIXES = ("spanvouch.labs", "spanvouch.evaluation")
+PHASE5_EXPERIMENTAL_PREFIXES = (
+    "spanvouch.labs.runtime",
+    "spanvouch.labs.frameworks",
+    "spanvouch.labs.opslab",
+    "spanvouch.labs.corpus",
+    "spanvouch.evaluation.experiments",
+    "spanvouch.evaluation.statistics",
+)
+CORE_FORBIDDEN_PREFIXES = (
+    "spanvouch.labs",
+    "spanvouch.evaluation",
+    *PHASE5_EXPERIMENTAL_PREFIXES,
+)
 CONTRACT_FORBIDDEN_PREFIXES = (
     "fastapi",
     "langgraph",
@@ -85,6 +97,21 @@ def test_outer_modules_have_only_the_new_locations() -> None:
 def test_production_core_never_imports_labs_or_evaluation() -> None:
     roots = tuple(SOURCE_ROOT / root for root in CORE_ROOTS)
     assert _forbidden_imports(roots, SOURCE_ROOT, CORE_FORBIDDEN_PREFIXES) == {}
+
+
+@pytest.mark.parametrize("module", PHASE5_EXPERIMENTAL_PREFIXES)
+def test_production_core_scanner_rejects_phase5_experimental_packages(
+    tmp_path: Path, module: str
+) -> None:
+    source_root = tmp_path / "spanvouch"
+    diagnosis = source_root / "diagnosis"
+    diagnosis.mkdir(parents=True)
+    probe = diagnosis / "probe.py"
+    probe.write_text(f"import {module}\n", encoding="utf-8")
+
+    assert _forbidden_imports(
+        (diagnosis,), source_root, CORE_FORBIDDEN_PREFIXES
+    ) == {"diagnosis/probe.py": (module,)}
 
 
 def test_contracts_never_import_higher_or_infrastructure_modules() -> None:
