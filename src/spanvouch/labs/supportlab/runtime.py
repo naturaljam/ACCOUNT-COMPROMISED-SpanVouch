@@ -54,8 +54,10 @@ SUPPORT_TOOL_CONTRACT: JsonValue = {
     "submit_refund": [
         "amount",
         "approval",
+        "calculated_amount",
         "customer_id",
         "idempotency_key",
+        "ignore_error",
         "item_skus",
         "order_id",
         "reason",

@@ -233,7 +233,8 @@ async def test_all_phase3_scenarios_have_stable_graph_behavior(scenario: Scenari
         decision_model=ScriptedDecisionModel(scenario),
         tracer=tracer,
     )
-    trace = map_spans(scenario.scenario_id, exporter.get_finished_spans())
+    finished_spans = exporter.get_finished_spans()
+    trace = map_spans(scenario.scenario_id, finished_spans)
     root = next(span for span in trace.spans if span.parent_span_id is None)
     tool_spans = tuple(span for span in trace.spans if span.kind is SpanKind.TOOL)
     expected_arguments = _expected_arguments(scenario, expected)
@@ -254,7 +255,12 @@ async def test_all_phase3_scenarios_have_stable_graph_behavior(scenario: Scenari
         SpanStatus.OK if expected.outcome is RunOutcome.SUCCEEDED else SpanStatus.ERROR
     )
     assert root.attributes["scenario.id"] == scenario.scenario_id
-    assert root.attributes["scenario.expected_failure"] == scenario.expected_failure.value
+    assert "scenario.expected_failure" not in root.attributes
+    assert all(
+        "expected_failure" not in key.lower() and "gold" not in key.lower()
+        for span in trace.spans
+        for key in span.attributes
+    )
     assert root.attributes["run.outcome"] == expected.outcome.value
     assert root.attributes.get("run.final_message") == expected.final_message
 
@@ -270,6 +276,20 @@ async def test_all_phase3_scenarios_have_stable_graph_behavior(scenario: Scenari
             assert span.attributes["tool.error.type"] == expected.error_type
             assert span.attributes["tool.error.message"] == expected.error_message
             assert "tool.result" not in span.attributes
+            raw_span = next(item for item in finished_spans if item.name == span.name)
+            exception_event = next(
+                event for event in raw_span.events if event.name == "exception"
+            )
+            expected_exception_type = (
+                "spanvouch.labs.supportlab.tools.RefundRejected"
+                if expected.error_type == "RefundRejected"
+                else expected.error_type
+            )
+            assert exception_event.attributes is not None
+            assert (
+                exception_event.attributes["exception.type"]
+                == expected_exception_type
+            )
         else:
             assert span.status is SpanStatus.OK
             assert span.attributes["tool.result"] == expected.observations[index]
@@ -340,7 +360,7 @@ async def test_loop_scenario_stops_at_max_steps() -> None:
 
 
 @pytest.mark.parametrize(
-    ("tool_name", "arguments", "error_type"),
+    ("tool_name", "arguments", "error_type", "exception_type"),
     [
         (
             "submit_refund",
@@ -354,10 +374,12 @@ async def test_loop_scenario_stops_at_max_steps() -> None:
                 "approval": "reviewer@example.test",
             },
             "InvalidOperation",
+            "decimal.InvalidOperation",
         ),
         (
             "calculate_refund",
             {"order_id": "order-001", "item_skus": "sku-red,sku-red"},
+            "ValueError",
             "ValueError",
         ),
     ],
@@ -367,6 +389,7 @@ async def test_expected_tool_errors_return_structured_failed_results(
     tool_name: str,
     arguments: dict[str, str],
     error_type: str,
+    exception_type: str,
 ) -> None:
     scenario = scenario_for(FailureType.NO_FAILURE)
     tracer, exporter = build_test_tracer()
@@ -395,7 +418,9 @@ async def test_expected_tool_errors_return_structured_failed_results(
     assert tool_span.attributes["tool.error.type"] == error_type
     assert "tool.error.message" in tool_span.attributes
     assert tool_span.status.status_code is StatusCode.ERROR
-    assert any(event.name == "exception" for event in tool_span.events)
+    exception_event = next(event for event in tool_span.events if event.name == "exception")
+    assert exception_event.attributes is not None
+    assert exception_event.attributes["exception.type"] == exception_type
     assert run_span.attributes is not None
     assert run_span.attributes["run.outcome"] == RunOutcome.FAILED.value
     assert run_span.status.status_code is StatusCode.ERROR

@@ -123,7 +123,11 @@ class SupportLabEnvironment:
             ignored = arguments.get("ignore_error") == "true"
             return ToolObservation(
                 tool_name=observation_tool_name,
-                error={"type": error_type, "message": error_message},
+                error={
+                    "type": error_type,
+                    "message": error_message,
+                    "exception_type": _qualified_exception_type(error),
+                },
                 status="error",
                 retryable=ignored,
             )
@@ -245,6 +249,13 @@ def _item_skus(arguments: dict[str, JsonValue]) -> tuple[str, ...]:
 
 def _sanitize_text(value: str) -> str:
     return cast(str, sanitize_diagnostic_value(value))
+
+
+def _qualified_exception_type(error: Exception) -> str:
+    error_type = type(error)
+    if error_type.__module__ == "builtins":
+        return error_type.__qualname__
+    return f"{error_type.__module__}.{error_type.__qualname__}"
 
 
 def _observation_text(observation: ToolObservation) -> str:

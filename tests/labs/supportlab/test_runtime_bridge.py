@@ -63,6 +63,23 @@ def test_scenario_projection_contains_only_execution_inputs_and_injection() -> N
     }
     assert projected.injection == historical.fault.model_dump(mode="json")
     assert projected.failure_family == "invalid_argument"
+    assert SUPPORT_TOOL_CONTRACT == {
+        "calculate_refund": ["item_skus", "order_id"],
+        "get_customer": ["customer_id"],
+        "get_order": ["order_id"],
+        "get_refund_policy": ["order_id"],
+        "submit_refund": [
+            "amount",
+            "approval",
+            "calculated_amount",
+            "customer_id",
+            "idempotency_key",
+            "ignore_error",
+            "item_skus",
+            "order_id",
+            "reason",
+        ],
+    }
     assert projected.tool_contract_sha256 == canonical_sha256(SUPPORT_TOOL_CONTRACT)
     assert projected == next(
         item

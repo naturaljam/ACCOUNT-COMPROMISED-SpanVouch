@@ -97,7 +97,15 @@ async def _run_support_environment_legacy_langgraph(
                 error = cast(dict[str, JsonValue], observation.error)
                 error_type = cast(str, error["type"])
                 error_message = cast(str, error["message"])
-                span.record_exception(RuntimeError(error_message))
+                exception_type = cast(str, error["exception_type"])
+                span.add_event(
+                    "exception",
+                    attributes={
+                        "exception.type": exception_type,
+                        "exception.message": error_message,
+                        "exception.escaped": "False",
+                    },
+                )
                 span.set_status(Status(StatusCode.ERROR, error_message))
                 span.set_attribute("tool.error.type", error_type)
                 span.set_attribute("tool.error.message", error_message)
@@ -132,7 +140,6 @@ async def _run_support_environment_legacy_langgraph(
         attributes={
             "openinference.span.kind": "AGENT",
             "scenario.id": historical_scenario.scenario_id,
-            "scenario.expected_failure": historical_scenario.expected_failure.value,
         },
     ) as run_span:
         final = cast(SupportState, await graph.ainvoke(initial))

@@ -143,9 +143,9 @@ async def test_phase4_generation_does_not_rewrite_frozen_phase3_dataset(
     await generate_review_dataset(tmp_path, seed=20260717)
 
     frozen_hashes = {
-        CANDIDATES_FILENAME: "ee04d8d0f1e608fd81c202fca39eeb799f764b3099cfb03d7d94a4ab7eb73bd2",
+        CANDIDATES_FILENAME: "ba4084575c17114623ec5e3da75560cbcd17f49901fc5ed7c14ccd943e874cd6",
         LABELS_FILENAME: "d41a87247456264863d70f807256a5d1b6f24ab84422dc406a92ef867e36b305",
-        MANIFEST_FILENAME: "677e0075f5b4149db73538411376bf994caa5ba0fdb8ff29b33b487a5fe02076",
+        MANIFEST_FILENAME: "6b618f5aba1fcd9160ada2f523481df9dd68bae834188008df634e9fff487c1b",
     }
     for filename, expected in frozen_hashes.items():
         assert hashlib.sha256((COMMITTED_DATASET / filename).read_bytes()).hexdigest() == expected

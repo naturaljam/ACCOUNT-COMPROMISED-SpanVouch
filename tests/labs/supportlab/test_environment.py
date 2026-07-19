@@ -112,6 +112,7 @@ async def test_hard_tool_error_is_sanitized_and_terminal() -> None:
     assert observation.error == {
         "type": "KeyError",
         "message": "'unknown tool: get_account'",
+        "exception_type": "KeyError",
     }
     assert environment.terminal_status(state) is ExecutionStatus.FAILED
 
@@ -270,6 +271,7 @@ async def test_execute_normalizes_nonstring_tool_arguments() -> None:
     assert observation.error == {
         "type": "ValueError",
         "message": "SupportLab argument order_id must be a string",
+        "exception_type": "ValueError",
     }
 
 
