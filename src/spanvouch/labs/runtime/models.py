@@ -367,6 +367,10 @@ class ExecutionRecord(BaseModel):
             or self.repetition != self.runtime_config.repetition
         ):
             raise ValueError("execution seed/repetition do not match runtime_config")
+        if self.final_message is not None and (
+            _sanitize_text(self.final_message) != self.final_message
+        ):
+            raise ValueError("final_message must be sanitized")
         self._validate_timings()
         self._validate_status()
         _reject_forbidden_field_names(self.model_dump(mode="python"))
@@ -439,13 +443,21 @@ class ExecutionRecord(BaseModel):
             latency_seconds=(completed_at - started_at).total_seconds(),
             steps=state.step,
             tool_calls=state.tool_calls,
-            final_message=state.final_message,
+            final_message=(
+                _sanitize_text(state.final_message)
+                if state.final_message is not None
+                else None
+            ),
             provenance=provenance,
         )
 
 
 def _is_utc(value: datetime) -> bool:
     return value.tzinfo is not None and value.utcoffset() == UTC.utcoffset(value)
+
+
+def _sanitize_text(value: str) -> str:
+    return cast(str, sanitize_diagnostic_value(value))
 
 
 def _freeze_trace(trace: TraceIR) -> TraceIR:

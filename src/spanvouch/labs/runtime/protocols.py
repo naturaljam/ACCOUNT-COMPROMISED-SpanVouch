@@ -35,4 +35,3 @@ class AgentRuntimeAdapter(Protocol):
         scenario: LabScenario,
         run_config: RuntimeConfig,
     ) -> ExecutionRecord: ...
-

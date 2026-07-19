@@ -476,6 +476,33 @@ def test_execution_record_rejects_unprojected_bypass_trace(
         )
 
 
+def test_execution_record_sanitizes_final_message_and_rejects_bypass(
+    record: ExecutionRecord,
+) -> None:
+    secret = "sk-abcdefghijklmnop"
+    started_at = datetime(2026, 7, 19, 8, 0, tzinfo=UTC)
+    sanitized = ExecutionRecord.from_run(
+        scenario=_scenario(),
+        run_config=_config(),
+        framework_id=FrameworkId.LANGGRAPH,
+        framework_version="0.6.7",
+        trace=_trace(),
+        state=RuntimeState.initial().with_final(f"Completed with token {secret}"),
+        status=ExecutionStatus.SUCCEEDED,
+        failure=None,
+        started_at=started_at,
+        completed_at=started_at + timedelta(seconds=2),
+        provenance=_provenance(),
+    )
+
+    assert secret not in (sanitized.final_message or "")
+    assert secret not in sanitized.model_dump_json()
+    with pytest.raises(ValidationError, match="final_message"):
+        ExecutionRecord.model_validate(
+            {**record.model_dump(mode="python"), "final_message": secret}
+        )
+
+
 def test_execution_record_from_run_has_the_frozen_signature() -> None:
     parameters = signature(ExecutionRecord.from_run).parameters
     assert tuple(parameters) == (

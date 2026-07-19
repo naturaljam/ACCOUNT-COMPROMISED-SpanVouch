@@ -51,4 +51,3 @@ def test_runtime_adapter_framework_metadata_is_typed() -> None:
         "framework_id": FrameworkId,
         "framework_version": str,
     }
-
