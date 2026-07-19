@@ -3,7 +3,45 @@ from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from spanvouch.labs.supportlab.scenarios import Scenario
+
+class DecisionFaultProfile(Protocol):
+    @property
+    def wrong_tool(self) -> bool: ...
+
+    @property
+    def invalid_amount(self) -> bool: ...
+
+    @property
+    def skip_policy(self) -> bool: ...
+
+    @property
+    def ignore_tool_error(self) -> bool: ...
+
+    @property
+    def poisoned_context(self) -> bool: ...
+
+    @property
+    def bypass_approval(self) -> bool: ...
+
+    @property
+    def repeat_lookup(self) -> bool: ...
+
+    @property
+    def false_success(self) -> bool: ...
+
+
+class DecisionScenario(Protocol):
+    @property
+    def scenario_id(self) -> str: ...
+
+    @property
+    def customer_id(self) -> str: ...
+
+    @property
+    def order_id(self) -> str: ...
+
+    @property
+    def fault(self) -> DecisionFaultProfile: ...
 
 
 class DecisionKind(StrEnum):
@@ -38,7 +76,7 @@ class ScriptedDecisionModel:
         "submit_refund",
     )
 
-    def __init__(self, scenario: Scenario) -> None:
+    def __init__(self, scenario: DecisionScenario) -> None:
         self._scenario = scenario
 
     async def next_decision(self, context: DecisionContext) -> AgentDecision:

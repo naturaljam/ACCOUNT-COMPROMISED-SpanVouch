@@ -1,9 +1,12 @@
+from collections import Counter
+from dataclasses import dataclass
 from unittest.mock import patch
+from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 from opentelemetry.trace import StatusCode
 
-from spanvouch.contracts.trace import SpanStatus
+from spanvouch.contracts.trace import SpanKind, SpanStatus, TraceIR
 from spanvouch.labs.supportlab.decision import (
     AgentDecision,
     DecisionContext,
@@ -18,9 +21,259 @@ from spanvouch.labs.supportlab.tools import SupportTools
 from spanvouch.observability.tracing import build_test_tracer
 from spanvouch.trace.mapper import map_spans
 
+_CUSTOMER_OBSERVATION = "customer_id='cust-001' name='Demo Customer'"
+_ORDER_OBSERVATION = (
+    "order_id='order-001' customer_id='cust-001' policy_id='standard' "
+    "status=<OrderStatus.DELIVERED: 'delivered'> "
+    "items=(OrderItem(sku='sku-red', quantity=1, unit_price=Decimal('19.99')),)"
+)
+_POLICY_OBSERVATION = (
+    "policy_id='standard' "
+    "refundable_statuses=frozenset({<OrderStatus.DELIVERED: 'delivered'>}) "
+    "max_refund=Decimal('100.00') requires_approval=True"
+)
+
+
+@dataclass(frozen=True)
+class ExpectedGraphBehavior:
+    outcome: RunOutcome
+    tools: tuple[str, ...]
+    final_message: str | None
+    observations: tuple[str, ...]
+    submit_overrides: dict[str, str]
+    error_type: str | None = None
+    error_message: str | None = None
+    error_is_ignored: bool = False
+
+
+def _refund_observation(scenario_id: str) -> str:
+    refund_id = uuid5(uuid5(NAMESPACE_URL, "order-001"), f"{scenario_id}-refund")
+    return (
+        f"refund_id='{refund_id}' order_id='order-001' amount=Decimal('19.99') "
+        "reason='damaged item' "
+        f"idempotency_key='{scenario_id}-refund' "
+        "approved_by='reviewer@example.test'"
+    )
+
+
+def _expected_graph_behavior(scenario: Scenario) -> ExpectedGraphBehavior:
+    failure_type = scenario.expected_failure
+    clean_tools = (
+        "get_customer",
+        "get_order",
+        "get_refund_policy",
+        "calculate_refund",
+        "submit_refund",
+    )
+    clean_observations = (
+        _CUSTOMER_OBSERVATION,
+        _ORDER_OBSERVATION,
+        _POLICY_OBSERVATION,
+        "19.99",
+        _refund_observation(scenario.scenario_id),
+    )
+    if failure_type is FailureType.NO_FAILURE:
+        return ExpectedGraphBehavior(
+            RunOutcome.SUCCEEDED,
+            clean_tools,
+            "Refund submitted successfully.",
+            clean_observations,
+            {},
+        )
+    if failure_type is FailureType.WRONG_TOOL:
+        message = "'unknown tool: get_account'"
+        return ExpectedGraphBehavior(
+            RunOutcome.FAILED,
+            ("get_account",),
+            None,
+            (f"ERROR:KeyError:{message}",),
+            {},
+            "KeyError",
+            message,
+        )
+    if failure_type is FailureType.LOOP_OR_BUDGET_EXHAUSTION:
+        return ExpectedGraphBehavior(
+            RunOutcome.STEP_LIMIT,
+            ("get_order",) * 8,
+            None,
+            (_ORDER_OBSERVATION,) * 8,
+            {},
+        )
+    if failure_type is FailureType.MISSING_PRECONDITION:
+        return ExpectedGraphBehavior(
+            RunOutcome.SUCCEEDED,
+            ("get_customer", "get_order", "calculate_refund", "submit_refund"),
+            "Refund submitted successfully.",
+            (
+                _CUSTOMER_OBSERVATION,
+                _ORDER_OBSERVATION,
+                "19.99",
+                _refund_observation(scenario.scenario_id),
+            ),
+            {},
+        )
+    if failure_type is FailureType.INVALID_FINAL_STATE:
+        return ExpectedGraphBehavior(
+            RunOutcome.SUCCEEDED,
+            clean_tools,
+            "Refund submitted successfully without a refund record.",
+            clean_observations,
+            {},
+        )
+    error_by_failure = {
+        FailureType.INVALID_ARGUMENT: (
+            "amount_exceeds_calculation,amount_exceeds_policy",
+            {"amount": "200.00"},
+            False,
+        ),
+        FailureType.IGNORED_TOOL_ERROR: (
+            "missing_approval",
+            {"approval": "none", "ignore_error": "true"},
+            True,
+        ),
+        FailureType.CONTEXT_CORRUPTION: (
+            "customer_mismatch",
+            {"customer_id": "attacker-customer"},
+            False,
+        ),
+        FailureType.POLICY_VIOLATION: (
+            "missing_approval",
+            {"approval": "none"},
+            False,
+        ),
+    }
+    error_message, submit_overrides, ignored = error_by_failure[failure_type]
+    return ExpectedGraphBehavior(
+        RunOutcome.SUCCEEDED if ignored else RunOutcome.FAILED,
+        clean_tools,
+        "Refund submitted successfully." if ignored else None,
+        (
+            _CUSTOMER_OBSERVATION,
+            _ORDER_OBSERVATION,
+            _POLICY_OBSERVATION,
+            "19.99",
+            f"ERROR:RefundRejected:{error_message}",
+        ),
+        submit_overrides,
+        "RefundRejected",
+        error_message,
+        ignored,
+    )
+
+
+def _expected_arguments(
+    scenario: Scenario, expected: ExpectedGraphBehavior
+) -> tuple[dict[str, str], ...]:
+    clean_by_tool = {
+        "get_customer": {"customer_id": "cust-001"},
+        "get_order": {"order_id": "order-001"},
+        "get_refund_policy": {"order_id": "order-001"},
+        "calculate_refund": {"order_id": "order-001", "item_skus": "sku-red"},
+        "submit_refund": {
+            "customer_id": "cust-001",
+            "order_id": "order-001",
+            "amount": "19.99",
+            "item_skus": "sku-red",
+            "calculated_amount": "19.99",
+            "reason": "damaged item",
+            "idempotency_key": f"{scenario.scenario_id}-refund",
+            "approval": "reviewer@example.test",
+            "ignore_error": "false",
+            **expected.submit_overrides,
+        },
+        "get_account": {
+            "customer_id": "cust-001",
+            "order_id": "order-001",
+            "amount": "19.99",
+            "item_skus": "sku-red",
+            "calculated_amount": "19.99",
+            "reason": "damaged item",
+            "idempotency_key": f"{scenario.scenario_id}-refund",
+            "approval": "reviewer@example.test",
+            "ignore_error": "false",
+        },
+    }
+    return tuple(clean_by_tool[tool_name] for tool_name in expected.tools)
+
 
 def scenario_for(failure_type: FailureType) -> Scenario:
     return next(item for item in build_scenarios() if item.expected_failure is failure_type)
+
+
+def test_scenario_distribution_remains_four_clean_plus_two_per_failure() -> None:
+    counts = Counter(scenario.expected_failure for scenario in build_scenarios())
+
+    assert len(build_scenarios()) == 20
+    assert counts == {
+        FailureType.NO_FAILURE: 4,
+        FailureType.WRONG_TOOL: 2,
+        FailureType.INVALID_ARGUMENT: 2,
+        FailureType.MISSING_PRECONDITION: 2,
+        FailureType.IGNORED_TOOL_ERROR: 2,
+        FailureType.CONTEXT_CORRUPTION: 2,
+        FailureType.POLICY_VIOLATION: 2,
+        FailureType.LOOP_OR_BUDGET_EXHAUSTION: 2,
+        FailureType.INVALID_FINAL_STATE: 2,
+    }
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    sorted(build_scenarios(), key=lambda item: item.scenario_id),
+    ids=lambda scenario: scenario.scenario_id,
+)
+@pytest.mark.asyncio
+async def test_all_phase3_scenarios_have_stable_graph_behavior(scenario: Scenario) -> None:
+    expected = _expected_graph_behavior(scenario)
+    tracer, exporter = build_test_tracer()
+
+    result = await run_support_scenario(
+        scenario=scenario,
+        tools=SupportTools(build_seed_repository()),
+        decision_model=ScriptedDecisionModel(scenario),
+        tracer=tracer,
+    )
+    trace = map_spans(scenario.scenario_id, exporter.get_finished_spans())
+    root = next(span for span in trace.spans if span.parent_span_id is None)
+    tool_spans = tuple(span for span in trace.spans if span.kind is SpanKind.TOOL)
+    expected_arguments = _expected_arguments(scenario, expected)
+
+    assert result.scenario_id == scenario.scenario_id
+    assert result.outcome is expected.outcome
+    assert result.steps == len(expected.tools)
+    assert result.observations == expected.observations
+    assert result.final_message == expected.final_message
+    assert isinstance(trace, TraceIR)
+    assert TraceIR.model_validate(trace.model_dump(mode="python")) == trace
+    assert trace.run_id == scenario.scenario_id
+    assert len(trace.spans) == len(expected.tools) + 1
+    assert tuple(span.name for span in tool_spans) == expected.tools
+    assert root.name == "supportlab.run"
+    assert root.kind is SpanKind.AGENT
+    assert root.status is (
+        SpanStatus.OK if expected.outcome is RunOutcome.SUCCEEDED else SpanStatus.ERROR
+    )
+    assert root.attributes["scenario.id"] == scenario.scenario_id
+    assert root.attributes["scenario.expected_failure"] == scenario.expected_failure.value
+    assert root.attributes["run.outcome"] == expected.outcome.value
+    assert root.attributes.get("run.final_message") == expected.final_message
+
+    for index, (span, arguments) in enumerate(zip(tool_spans, expected_arguments, strict=True)):
+        assert span.attributes["tool.name"] == span.name
+        assert {
+            key.removeprefix("tool.arguments."): value
+            for key, value in span.attributes.items()
+            if key.startswith("tool.arguments.")
+        } == arguments
+        if index == len(tool_spans) - 1 and expected.error_type is not None:
+            assert span.status is SpanStatus.ERROR
+            assert span.attributes["tool.error.type"] == expected.error_type
+            assert span.attributes["tool.error.message"] == expected.error_message
+            assert "tool.result" not in span.attributes
+        else:
+            assert span.status is SpanStatus.OK
+            assert span.attributes["tool.result"] == expected.observations[index]
+            assert "tool.error.type" not in span.attributes
 
 
 class FixedDecisionModel:
