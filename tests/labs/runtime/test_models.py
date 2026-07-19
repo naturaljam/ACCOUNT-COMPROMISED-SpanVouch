@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from inspect import Parameter, signature
+from math import inf
+from typing import Self, get_type_hints
 
 import pytest
 from pydantic import ValidationError
@@ -173,6 +176,11 @@ def test_runtime_config_enforces_execution_limits(
         RuntimeConfig.model_validate({**_config().model_dump(), **update})
 
 
+def test_runtime_config_rejects_non_finite_timeout() -> None:
+    with pytest.raises(ValidationError, match="finite_number"):
+        RuntimeConfig.model_validate({**_config().model_dump(), "timeout_seconds": inf})
+
+
 @pytest.mark.parametrize(
     "action",
     (
@@ -280,6 +288,7 @@ def test_execution_record_computes_canonical_hashes_and_counts(
     record: ExecutionRecord,
 ) -> None:
     assert record.trace_sha256 == canonical_sha256(record.trace)
+    assert record.runtime_config == _config()
     assert record.runtime_config_sha256 == canonical_sha256(_config())
     assert record.steps == 1
     assert record.tool_calls == 1
@@ -291,6 +300,18 @@ def test_execution_record_rejects_forged_trace_hash(record: ExecutionRecord) -> 
     with pytest.raises(ValidationError, match="trace_sha256"):
         ExecutionRecord.model_validate(
             {**record.model_dump(mode="python"), "trace_sha256": "f" * 64}
+        )
+
+
+def test_execution_record_rejects_forged_runtime_config_hash(
+    record: ExecutionRecord,
+) -> None:
+    with pytest.raises(ValidationError, match="runtime_config_sha256"):
+        ExecutionRecord.model_validate(
+            {
+                **record.model_dump(mode="python"),
+                "runtime_config_sha256": "f" * 64,
+            }
         )
 
 
@@ -391,3 +412,91 @@ def test_execution_record_rejects_forbidden_trace_attribute_names(
                 "trace_sha256": canonical_sha256(leaked_trace),
             }
         )
+
+
+def test_from_run_projects_trace_attributes_through_the_contract_allowlist() -> None:
+    trace = _trace()
+    projected_input = trace.model_copy(
+        update={
+            "spans": [
+                trace.spans[0].model_copy(
+                    update={
+                        "attributes": {
+                            "run.outcome": "succeeded",
+                            "input": "full prompt text",
+                            "message": "raw provider response",
+                            "headers": {"authorization": "Bearer opaque-secret-123"},
+                        }
+                    }
+                )
+            ]
+        }
+    )
+    started_at = datetime(2026, 7, 19, 8, 0, tzinfo=UTC)
+    record = ExecutionRecord.from_run(
+        scenario=_scenario(),
+        run_config=_config(),
+        framework_id=FrameworkId.LANGGRAPH,
+        framework_version="0.6.7",
+        trace=projected_input,
+        state=_success_state(),
+        status=ExecutionStatus.SUCCEEDED,
+        failure=None,
+        started_at=started_at,
+        completed_at=started_at + timedelta(seconds=2),
+        provenance=_provenance(),
+    )
+
+    assert record.trace.spans[0].attributes == {"run.outcome": "succeeded"}
+    serialized = record.model_dump_json().lower()
+    assert "full prompt text" not in serialized
+    assert "raw provider response" not in serialized
+    assert "opaque-secret-123" not in serialized
+
+
+def test_execution_record_rejects_unprojected_bypass_trace(
+    record: ExecutionRecord,
+) -> None:
+    bypass_trace = record.trace.model_copy(
+        update={
+            "spans": [
+                record.trace.spans[0].model_copy(
+                    update={"attributes": {"message": "raw provider response"}}
+                )
+            ]
+        }
+    )
+    with pytest.raises(ValidationError, match="allowlisted"):
+        ExecutionRecord.model_validate(
+            {
+                **record.model_dump(mode="python"),
+                "trace": bypass_trace,
+                "trace_sha256": canonical_sha256(bypass_trace),
+            }
+        )
+
+
+def test_execution_record_from_run_has_the_frozen_signature() -> None:
+    parameters = signature(ExecutionRecord.from_run).parameters
+    assert tuple(parameters) == (
+        "scenario",
+        "run_config",
+        "framework_id",
+        "framework_version",
+        "trace",
+        "state",
+        "status",
+        "failure",
+        "started_at",
+        "completed_at",
+        "provenance",
+    )
+    assert all(item.kind is Parameter.KEYWORD_ONLY for item in parameters.values())
+    hints = get_type_hints(ExecutionRecord.from_run)
+    assert hints["scenario"] is LabScenario
+    assert hints["run_config"] is RuntimeConfig
+    assert hints["trace"] is TraceIR
+    assert hints["state"] is RuntimeState
+    assert hints["status"] is ExecutionStatus
+    assert hints["failure"] == RuntimeFailure | None
+    assert hints["return"] is Self

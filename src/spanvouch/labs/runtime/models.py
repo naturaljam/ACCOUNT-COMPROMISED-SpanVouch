@@ -8,6 +8,7 @@ from typing import Any, Literal, NoReturn, Self, TypeVar, cast
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
+from spanvouch.contracts.sanitization import ALLOWED_ATTRIBUTES, sanitize_diagnostic_value
 from spanvouch.contracts.trace import TraceIR
 from spanvouch.contracts.versioning import SHA256_PATTERN, canonical_sha256
 
@@ -140,7 +141,7 @@ class RuntimeFailureCategory(StrEnum):
 
 
 class RuntimeConfig(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
 
     seed: int
     repetition: int = Field(ge=1)
@@ -338,6 +339,7 @@ class ExecutionRecord(BaseModel):
     failure_family: str = Field(min_length=1)
     seed: int
     repetition: int = Field(ge=1)
+    runtime_config: RuntimeConfig
     runtime_config_sha256: str = Field(pattern=SHA256_PATTERN)
     status: ExecutionStatus
     failure: RuntimeFailure | None
@@ -351,9 +353,20 @@ class ExecutionRecord(BaseModel):
 
     @model_validator(mode="after")
     def validate_integrity(self) -> Self:
+        _reject_forbidden_field_names(self.trace)
+        projected_trace = _project_trace(self.trace)
+        if projected_trace != self.trace:
+            raise ValueError("trace attributes must be allowlisted and sanitized")
         object.__setattr__(self, "trace", _freeze_trace(self.trace))
         if canonical_sha256(self.trace) != self.trace_sha256:
             raise ValueError("trace_sha256 does not match trace")
+        if canonical_sha256(self.runtime_config) != self.runtime_config_sha256:
+            raise ValueError("runtime_config_sha256 does not match runtime_config")
+        if (
+            self.seed != self.runtime_config.seed
+            or self.repetition != self.runtime_config.repetition
+        ):
+            raise ValueError("execution seed/repetition do not match runtime_config")
         self._validate_timings()
         self._validate_status()
         _reject_forbidden_field_names(self.model_dump(mode="python"))
@@ -405,9 +418,10 @@ class ExecutionRecord(BaseModel):
     ) -> Self:
         if state.failure != failure:
             raise ValueError("runtime state failure does not match execution failure")
+        projected_trace = _project_trace(trace)
         return cls(
-            trace=trace,
-            trace_sha256=canonical_sha256(trace),
+            trace=projected_trace,
+            trace_sha256=canonical_sha256(projected_trace),
             framework_id=framework_id,
             framework_version=framework_version,
             scenario_id=scenario.scenario_id,
@@ -416,6 +430,7 @@ class ExecutionRecord(BaseModel):
             failure_family=scenario.failure_family,
             seed=run_config.seed,
             repetition=run_config.repetition,
+            runtime_config=run_config,
             runtime_config_sha256=canonical_sha256(run_config),
             status=status,
             failure=failure,
@@ -446,6 +461,19 @@ def _freeze_trace(trace: TraceIR) -> TraceIR:
     frozen_trace = trace.model_copy(deep=True)
     object.__setattr__(frozen_trace, "spans", _FrozenList(frozen_spans))
     return frozen_trace
+
+
+def _project_trace(trace: TraceIR) -> TraceIR:
+    payload = trace.model_dump(mode="python")
+    spans = cast(list[dict[str, object]], payload["spans"])
+    for span in spans:
+        attributes = cast(dict[str, JsonValue], span["attributes"])
+        span["attributes"] = {
+            key: sanitize_diagnostic_value(value)
+            for key, value in attributes.items()
+            if key in ALLOWED_ATTRIBUTES
+        }
+    return TraceIR.model_validate(payload)
 
 
 def _reject_forbidden_field_names(value: object) -> None:
