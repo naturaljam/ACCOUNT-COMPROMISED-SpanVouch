@@ -146,6 +146,22 @@ async def test_unknown_tool_maps_to_one_framework_execution_failure(
 
 
 @pytest.mark.asyncio
+async def test_tool_failure_at_the_configured_limit_remains_a_tool_failure(
+    execution_provenance: ExecutionProvenance,
+) -> None:
+    record = await LangGraphRuntimeAdapter(
+        SupportLabEnvironmentRegistry(), provenance=execution_provenance
+    ).execute(
+        _scenario("wrong_tool-01"),
+        _config(max_steps=1, max_tool_calls=1),
+    )
+
+    assert record.status is ExecutionStatus.FAILED
+    assert record.failure is not None
+    assert record.failure.code == "tool_error"
+
+
+@pytest.mark.asyncio
 async def test_ignored_tool_error_remains_a_success_without_a_failure(
     execution_provenance: ExecutionProvenance,
 ) -> None:
@@ -222,6 +238,55 @@ class _InitiallyTerminalRegistry:
     def build(self, scenario: LabScenario) -> _InitiallyTerminalEnvironment:
         self.environment = _InitiallyTerminalEnvironment(scenario)
         return self.environment
+
+
+class _InitiallySuccessfulEnvironment:
+    def __init__(self, scenario: LabScenario) -> None:
+        self.scenario = scenario
+        self.decide_calls = 0
+
+    async def decide(self, state: RuntimeState) -> AgentAction:
+        self.decide_calls += 1
+        raise AssertionError("successful terminal state must not schedule decide")
+
+    async def execute(self, action: AgentAction) -> ToolObservation:
+        raise AssertionError("successful terminal state must not schedule execute")
+
+    def terminal_status(self, state: RuntimeState) -> ExecutionStatus | None:
+        return ExecutionStatus.SUCCEEDED
+
+
+class _InitiallySuccessfulRegistry:
+    def __init__(self) -> None:
+        self.environment: _InitiallySuccessfulEnvironment | None = None
+
+    def build(self, scenario: LabScenario) -> _InitiallySuccessfulEnvironment:
+        self.environment = _InitiallySuccessfulEnvironment(scenario)
+        return self.environment
+
+
+class _SuccessfulToolAtLimitEnvironment:
+    def __init__(self, scenario: LabScenario) -> None:
+        self.scenario = scenario
+
+    async def decide(self, state: RuntimeState) -> AgentAction:
+        return AgentAction(kind="tool", tool_name="finish")
+
+    async def execute(self, action: AgentAction) -> ToolObservation:
+        return ToolObservation(
+            tool_name="finish",
+            result="completed",
+            status="ok",
+            retryable=False,
+        )
+
+    def terminal_status(self, state: RuntimeState) -> ExecutionStatus | None:
+        return ExecutionStatus.SUCCEEDED if state.tool_calls == 1 else None
+
+
+class _SuccessfulToolAtLimitRegistry:
+    def build(self, scenario: LabScenario) -> _SuccessfulToolAtLimitEnvironment:
+        return _SuccessfulToolAtLimitEnvironment(scenario)
 
 
 class _TerminalAfterDecisionEnvironment:
@@ -308,6 +373,38 @@ async def test_initial_terminal_state_reaches_end_without_scheduling_decide(
     assert record.failure.code == "terminal_failure"
     assert registry.environment is not None
     assert registry.environment.decide_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_initial_success_state_reaches_end_without_scheduling_decide(
+    execution_provenance: ExecutionProvenance,
+) -> None:
+    registry = _InitiallySuccessfulRegistry()
+
+    record = await LangGraphRuntimeAdapter(
+        registry, provenance=execution_provenance
+    ).execute(_scenario("clean-01"), _config())
+
+    assert record.status is ExecutionStatus.SUCCEEDED
+    assert record.final_message == "Environment reported successful completion."
+    assert registry.environment is not None
+    assert registry.environment.decide_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_successful_tool_at_the_configured_limit_remains_successful(
+    execution_provenance: ExecutionProvenance,
+) -> None:
+    record = await LangGraphRuntimeAdapter(
+        _SuccessfulToolAtLimitRegistry(), provenance=execution_provenance
+    ).execute(
+        _scenario("clean-01"),
+        _config(max_steps=1, max_tool_calls=1),
+    )
+
+    assert record.status is ExecutionStatus.SUCCEEDED
+    assert record.steps == 1
+    assert record.tool_calls == 1
 
 
 @pytest.mark.asyncio

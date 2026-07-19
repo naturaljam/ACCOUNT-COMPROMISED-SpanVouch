@@ -31,6 +31,7 @@ from spanvouch.observability.tracing import build_run_tracer
 from spanvouch.trace.mapper import map_spans
 
 _SERVICE_NAME = "spanvouch.labs.langgraph"
+_TERMINAL_SUCCESS_MESSAGE = "Environment reported successful completion."
 
 
 class _GraphState(TypedDict):
@@ -322,25 +323,9 @@ def _apply_terminal_or_limit(
 ) -> RuntimeState:
     if state.final_message is not None or state.failure is not None:
         return state
-    if state.step >= run_config.max_steps:
-        return state.with_failure(
-            _failure(
-                RuntimeFailureCategory.FRAMEWORK_EXECUTION,
-                code="step_limit",
-                retryable=False,
-            )
-        )
-    if state.tool_calls >= run_config.max_tool_calls:
-        return state.with_failure(
-            _failure(
-                RuntimeFailureCategory.FRAMEWORK_EXECUTION,
-                code="tool_call_limit",
-                retryable=False,
-            )
-        )
     terminal = environment.terminal_status(state)
     if terminal is ExecutionStatus.SUCCEEDED:
-        return state
+        return state.with_final(_TERMINAL_SUCCESS_MESSAGE)
     if terminal is ExecutionStatus.INCOMPATIBLE:
         if state.failure is not None:
             return state
@@ -361,11 +346,25 @@ def _apply_terminal_or_limit(
                 retryable=False,
             )
         )
-    if terminal is ExecutionStatus.STEP_LIMIT:
-        # RuntimeConfig is the cross-framework budget authority. Some domain
-        # environments retain a legacy local cap, so only the checks above may
-        # terminate a framework run for budget exhaustion.
-        return state
+    # RuntimeConfig is the cross-framework budget authority. Some domain
+    # environments retain a legacy STEP_LIMIT cap, so only these checks may
+    # terminate a framework run for budget exhaustion.
+    if state.step >= run_config.max_steps:
+        return state.with_failure(
+            _failure(
+                RuntimeFailureCategory.FRAMEWORK_EXECUTION,
+                code="step_limit",
+                retryable=False,
+            )
+        )
+    if state.tool_calls >= run_config.max_tool_calls:
+        return state.with_failure(
+            _failure(
+                RuntimeFailureCategory.FRAMEWORK_EXECUTION,
+                code="tool_call_limit",
+                retryable=False,
+            )
+        )
     return state
 
 
