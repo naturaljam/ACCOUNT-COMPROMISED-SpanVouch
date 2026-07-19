@@ -9,6 +9,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_autogen_dependencies_are_bounded() -> None:
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+        "project"
+    ]
+
+    assert "autogen-agentchat>=0.7,<0.8" in project["dependencies"]
+    assert "autogen-core>=0.7,<0.8" in project["dependencies"]
+
+
 def test_frozen_dataset_fixtures_are_checked_out_with_lf_endings() -> None:
     attributes_file = ROOT / ".gitattributes"
     assert attributes_file.is_file(), "repository .gitattributes must define fixture EOLs"
