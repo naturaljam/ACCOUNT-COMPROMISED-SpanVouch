@@ -78,6 +78,7 @@ class LangGraphRuntimeAdapter:
                 timeout_seconds=run_config.timeout_seconds,
                 emit_workflow_spans=True,
                 map_cancellation=True,
+                map_exceptions=True,
             )
         finally:
             finished_spans = tuple(exporter.get_finished_spans())
@@ -108,6 +109,7 @@ async def _run_langgraph_environment(
     timeout_seconds: float | None,
     emit_workflow_spans: bool,
     map_cancellation: bool,
+    map_exceptions: bool,
 ) -> _RunResult:
     latest_state = RuntimeState.initial()
     result: _RunResult | None = None
@@ -158,6 +160,8 @@ async def _run_langgraph_environment(
             latest_state = latest_state.with_failure(failure)
             result = _RunResult(latest_state, ExecutionStatus.FAILED, failure)
         except Exception as error:
+            if not map_exceptions:
+                raise
             failure = _exception_failure(error)
             latest_state = latest_state.with_failure(failure)
             status = (
@@ -190,11 +194,19 @@ async def _invoke_graph(
     on_progress: Callable[[RuntimeState], None],
 ) -> RuntimeState:
     pending_action: AgentAction | None = None
-    latest_state = initial_state
+    latest_state = _apply_terminal_or_limit(environment, initial_state, run_config)
+    on_progress(latest_state)
 
     async def decide(state: _GraphState) -> _GraphState:
         nonlocal latest_state, pending_action
-        runtime_state = _runtime_state(state)
+        runtime_state = _apply_terminal_or_limit(
+            environment, _runtime_state(state), run_config
+        )
+        if runtime_state.final_message is not None or runtime_state.failure is not None:
+            latest_state = runtime_state
+            pending_action = None
+            on_progress(latest_state)
+            return _graph_state(latest_state)
         if emit_workflow_spans:
             with tracer.start_as_current_span(
                 f"{environment.scenario.domain}.decision",
@@ -204,7 +216,11 @@ async def _invoke_graph(
                 span.set_status(Status(StatusCode.OK))
         else:
             action = await environment.decide(runtime_state)
-        if action.kind == "final":
+        runtime_state = _apply_terminal_or_limit(environment, runtime_state, run_config)
+        if runtime_state.final_message is not None or runtime_state.failure is not None:
+            latest_state = runtime_state
+            pending_action = None
+        elif action.kind == "final":
             latest_state = runtime_state.with_final(action.final_message or "")
             pending_action = None
         else:
@@ -238,16 +254,22 @@ async def _invoke_graph(
             return "end"
         return "decide"
 
+    def before_start(state: _GraphState) -> str:
+        runtime_state = _runtime_state(state)
+        if runtime_state.final_message is not None or runtime_state.failure is not None:
+            return "end"
+        return "decide"
+
     builder = StateGraph(_GraphState)
     builder.add_node("decide", decide)
     builder.add_node("execute", execute)
-    builder.set_entry_point("decide")
+    builder.set_conditional_entry_point(before_start, {"decide": "decide", "end": END})
     builder.add_conditional_edges("decide", after_decide, {"execute": "execute", "end": END})
     builder.add_conditional_edges("execute", after_execute, {"decide": "decide", "end": END})
     graph = builder.compile()
     recursion_limit = max(25, 2 * max(run_config.max_steps, run_config.max_tool_calls) + 3)
     final = await graph.ainvoke(
-        _graph_state(initial_state),
+        _graph_state(latest_state),
         config={"recursion_limit": recursion_limit},
     )
     return _runtime_state(cast(_GraphState, final))
@@ -298,6 +320,24 @@ def _apply_terminal_or_limit(
     state: RuntimeState,
     run_config: RuntimeConfig,
 ) -> RuntimeState:
+    if state.final_message is not None or state.failure is not None:
+        return state
+    if state.step >= run_config.max_steps:
+        return state.with_failure(
+            _failure(
+                RuntimeFailureCategory.FRAMEWORK_EXECUTION,
+                code="step_limit",
+                retryable=False,
+            )
+        )
+    if state.tool_calls >= run_config.max_tool_calls:
+        return state.with_failure(
+            _failure(
+                RuntimeFailureCategory.FRAMEWORK_EXECUTION,
+                code="tool_call_limit",
+                retryable=False,
+            )
+        )
     terminal = environment.terminal_status(state)
     if terminal is ExecutionStatus.SUCCEEDED:
         return state
@@ -322,29 +362,10 @@ def _apply_terminal_or_limit(
             )
         )
     if terminal is ExecutionStatus.STEP_LIMIT:
-        return state.with_failure(
-            _failure(
-                RuntimeFailureCategory.FRAMEWORK_EXECUTION,
-                code="step_limit",
-                retryable=False,
-            )
-        )
-    if state.step >= run_config.max_steps:
-        return state.with_failure(
-            _failure(
-                RuntimeFailureCategory.FRAMEWORK_EXECUTION,
-                code="step_limit",
-                retryable=False,
-            )
-        )
-    if state.tool_calls >= run_config.max_tool_calls:
-        return state.with_failure(
-            _failure(
-                RuntimeFailureCategory.FRAMEWORK_EXECUTION,
-                code="tool_call_limit",
-                retryable=False,
-            )
-        )
+        # RuntimeConfig is the cross-framework budget authority. Some domain
+        # environments retain a legacy local cap, so only the checks above may
+        # terminate a framework run for budget exhaustion.
+        return state
     return state
 
 

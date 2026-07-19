@@ -1,7 +1,10 @@
 import asyncio
 from collections.abc import Callable
+from unittest.mock import patch
 
 import pytest
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import Tracer
 
 from spanvouch.contracts.trace import SpanKind
 from spanvouch.contracts.versioning import canonical_sha256
@@ -21,6 +24,7 @@ from spanvouch.labs.runtime import (
 from spanvouch.labs.supportlab.environment import SupportLabEnvironmentRegistry
 from spanvouch.labs.supportlab.runtime import support_scenario_to_lab
 from spanvouch.labs.supportlab.scenarios import build_scenarios
+from spanvouch.observability.tracing import build_run_tracer
 
 
 @pytest.fixture
@@ -91,6 +95,24 @@ async def test_step_limit_maps_to_one_framework_execution_failure(
     assert record.steps == 2
     assert record.failure is not None
     assert record.failure.category is RuntimeFailureCategory.FRAMEWORK_EXECUTION
+    assert record.failure.code == "step_limit"
+
+
+@pytest.mark.asyncio
+async def test_run_config_step_limit_overrides_the_environment_default(
+    execution_provenance: ExecutionProvenance,
+) -> None:
+    record = await LangGraphRuntimeAdapter(
+        SupportLabEnvironmentRegistry(), provenance=execution_provenance
+    ).execute(
+        _scenario("loop_or_budget_exhaustion-01"),
+        _config(max_steps=9, max_tool_calls=10),
+    )
+
+    assert record.status is ExecutionStatus.STEP_LIMIT
+    assert record.steps == 9
+    assert record.tool_calls == 9
+    assert record.failure is not None
     assert record.failure.code == "step_limit"
 
 
@@ -177,6 +199,58 @@ class _BlockingRegistry:
         return _BlockingEnvironment(scenario, self._started)
 
 
+class _InitiallyTerminalEnvironment:
+    def __init__(self, scenario: LabScenario) -> None:
+        self.scenario = scenario
+        self.decide_calls = 0
+
+    async def decide(self, state: RuntimeState) -> AgentAction:
+        self.decide_calls += 1
+        raise AssertionError("terminal state must not schedule decide")
+
+    async def execute(self, action: AgentAction) -> ToolObservation:
+        raise AssertionError("terminal state must not schedule execute")
+
+    def terminal_status(self, state: RuntimeState) -> ExecutionStatus | None:
+        return ExecutionStatus.FAILED
+
+
+class _InitiallyTerminalRegistry:
+    def __init__(self) -> None:
+        self.environment: _InitiallyTerminalEnvironment | None = None
+
+    def build(self, scenario: LabScenario) -> _InitiallyTerminalEnvironment:
+        self.environment = _InitiallyTerminalEnvironment(scenario)
+        return self.environment
+
+
+class _TerminalAfterDecisionEnvironment:
+    def __init__(self, scenario: LabScenario) -> None:
+        self.scenario = scenario
+        self.terminal = False
+        self.execute_calls = 0
+
+    async def decide(self, state: RuntimeState) -> AgentAction:
+        self.terminal = True
+        return AgentAction(kind="tool", tool_name="must_not_run")
+
+    async def execute(self, action: AgentAction) -> ToolObservation:
+        self.execute_calls += 1
+        raise AssertionError("terminal transition must not schedule execute")
+
+    def terminal_status(self, state: RuntimeState) -> ExecutionStatus | None:
+        return ExecutionStatus.FAILED if self.terminal else None
+
+
+class _TerminalAfterDecisionRegistry:
+    def __init__(self) -> None:
+        self.environment: _TerminalAfterDecisionEnvironment | None = None
+
+    def build(self, scenario: LabScenario) -> _TerminalAfterDecisionEnvironment:
+        self.environment = _TerminalAfterDecisionEnvironment(scenario)
+        return self.environment
+
+
 class _PartiallyBlockingEnvironment:
     def __init__(self, scenario: LabScenario) -> None:
         self.scenario = scenario
@@ -217,6 +291,40 @@ async def test_timeout_maps_to_one_infrastructure_failure(
     assert record.failure.category is RuntimeFailureCategory.INFRASTRUCTURE
     assert record.failure.code == "timeout"
     assert record.trace.spans[0].name == "supportlab.run"
+
+
+@pytest.mark.asyncio
+async def test_initial_terminal_state_reaches_end_without_scheduling_decide(
+    execution_provenance: ExecutionProvenance,
+) -> None:
+    registry = _InitiallyTerminalRegistry()
+
+    record = await LangGraphRuntimeAdapter(
+        registry, provenance=execution_provenance
+    ).execute(_scenario("clean-01"), _config())
+
+    assert record.status is ExecutionStatus.FAILED
+    assert record.failure is not None
+    assert record.failure.code == "terminal_failure"
+    assert registry.environment is not None
+    assert registry.environment.decide_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_terminal_transition_after_decision_does_not_schedule_execute(
+    execution_provenance: ExecutionProvenance,
+) -> None:
+    registry = _TerminalAfterDecisionRegistry()
+
+    record = await LangGraphRuntimeAdapter(
+        registry, provenance=execution_provenance
+    ).execute(_scenario("clean-01"), _config())
+
+    assert record.status is ExecutionStatus.FAILED
+    assert record.failure is not None
+    assert record.failure.code == "terminal_failure"
+    assert registry.environment is not None
+    assert registry.environment.execute_calls == 0
 
 
 @pytest.mark.asyncio
@@ -278,3 +386,50 @@ async def test_each_execution_builds_a_fresh_environment(
     assert second.status is ExecutionStatus.SUCCEEDED
     assert len(registry.environments) == 2
     assert registry.environments[0] is not registry.environments[1]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_executions_have_isolated_parented_traces(
+    execution_provenance: ExecutionProvenance,
+) -> None:
+    adapter = LangGraphRuntimeAdapter(
+        SupportLabEnvironmentRegistry(), provenance=execution_provenance
+    )
+    scenario = _scenario("clean-01")
+
+    first, second = await asyncio.gather(
+        adapter.execute(scenario, _config()),
+        adapter.execute(scenario, _config(repetition=2)),
+    )
+
+    assert first.trace.trace_id != second.trace.trace_id
+    for record in (first, second):
+        root = record.trace.spans[0]
+        assert root.parent_span_id is None
+        assert all(span.parent_span_id == root.span_id for span in record.trace.spans[1:])
+
+
+@pytest.mark.asyncio
+async def test_adapter_consumes_the_run_exporter_after_trace_mapping(
+    execution_provenance: ExecutionProvenance,
+) -> None:
+    exporters: list[InMemorySpanExporter] = []
+
+    def capture_exporter(
+        service_name: str,
+    ) -> tuple[Tracer, InMemorySpanExporter]:
+        tracer, exporter = build_run_tracer(service_name)
+        exporters.append(exporter)
+        return tracer, exporter
+
+    with patch(
+        "spanvouch.labs.frameworks.langgraph.build_run_tracer",
+        side_effect=capture_exporter,
+    ):
+        record = await LangGraphRuntimeAdapter(
+            SupportLabEnvironmentRegistry(), provenance=execution_provenance
+        ).execute(_scenario("clean-01"), _config())
+
+    assert record.status is ExecutionStatus.SUCCEEDED
+    assert len(exporters) == 1
+    assert exporters[0].get_finished_spans() == ()

@@ -248,6 +248,7 @@ async def test_all_phase3_scenarios_have_stable_graph_behavior(scenario: Scenari
     assert TraceIR.model_validate(trace.model_dump(mode="python")) == trace
     assert trace.run_id == scenario.scenario_id
     assert len(trace.spans) == len(expected.tools) + 1
+    assert not tuple(span for span in trace.spans if span.kind is SpanKind.WORKFLOW)
     assert tuple(span.name for span in tool_spans) == expected.tools
     assert root.name == "supportlab.run"
     assert root.kind is SpanKind.AGENT
@@ -302,6 +303,24 @@ class FixedDecisionModel:
 
     async def next_decision(self, context: DecisionContext) -> AgentDecision:
         return self._decision
+
+
+class ExplodingDecisionModel:
+    async def next_decision(self, context: DecisionContext) -> AgentDecision:
+        raise ValueError("decision failed")
+
+
+@pytest.mark.asyncio
+async def test_ordinary_decision_exceptions_remain_visible_to_legacy_callers() -> None:
+    scenario = scenario_for(FailureType.NO_FAILURE)
+
+    with pytest.raises(ValueError, match="decision failed"):
+        await run_support_scenario(
+            scenario=scenario,
+            tools=SupportTools(build_seed_repository()),
+            decision_model=ExplodingDecisionModel(),
+            tracer=build_test_tracer()[0],
+        )
 
 
 @pytest.mark.asyncio

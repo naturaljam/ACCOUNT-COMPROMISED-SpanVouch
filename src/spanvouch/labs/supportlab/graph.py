@@ -58,6 +58,7 @@ async def run_support_scenario(
         timeout_seconds=None,
         emit_workflow_spans=False,
         map_cancellation=False,
+        map_exceptions=False,
     )
     return SupportRunResult(
         scenario_id=scenario.scenario_id,
