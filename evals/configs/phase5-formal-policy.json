@@ -1,0 +1,8 @@
+{
+  "minimum_repetitions": 5,
+  "maximum_repetitions": 20,
+  "maximum_coverage_loss": 0.10,
+  "required_confidence_level": 0.95,
+  "bootstrap_draws": 10000,
+  "multiple_comparison_correction": "holm"
+}

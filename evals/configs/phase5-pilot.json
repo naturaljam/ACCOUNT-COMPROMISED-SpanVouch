@@ -1,0 +1,60 @@
+{
+  "experiment_id": "phase5-multiframework-isolated-verification",
+  "mode": "pilot",
+  "seed": 20260719,
+  "repetitions": 3,
+  "conditions": [
+    "b0_no_verifier",
+    "b1_deterministic",
+    "b2_deepseek_shared",
+    "b3_deepseek_isolated",
+    "b4_qwen_isolated",
+    "b5_deterministic_qwen"
+  ],
+  "frameworks": ["langgraph", "autogen"],
+  "generator": {
+    "provider": "deepseek",
+    "model": "deepseek-chat",
+    "endpoint_class": "chat-completions",
+    "prompt_version": "phase5-generator-v1",
+    "max_tokens": 2048,
+    "temperature": 0.0,
+    "extra_body": {}
+  },
+  "shared_verifier": {
+    "provider": "deepseek",
+    "model": "deepseek-chat",
+    "endpoint_class": "chat-completions",
+    "prompt_version": "phase5-shared-verifier-v1",
+    "max_tokens": 2048,
+    "temperature": 0.0,
+    "extra_body": {}
+  },
+  "isolated_verifier": {
+    "provider": "deepseek",
+    "model": "deepseek-chat",
+    "endpoint_class": "chat-completions",
+    "prompt_version": "phase5-isolated-verifier-v1",
+    "max_tokens": 2048,
+    "temperature": 0.0,
+    "extra_body": {}
+  },
+  "cross_model_verifier": {
+    "provider": "qwen",
+    "model": "Qwen/Qwen3-14B",
+    "endpoint_class": "chat-completions",
+    "prompt_version": "phase5-cross-model-verifier-v1",
+    "max_tokens": 2048,
+    "temperature": 0.0,
+    "extra_body": {
+      "chat_template_kwargs": {
+        "enable_thinking": false
+      }
+    }
+  },
+  "budget": {
+    "monthly_cap_cny": "1000",
+    "pilot_fraction": "0.10",
+    "stop_fraction": "0.80"
+  }
+}

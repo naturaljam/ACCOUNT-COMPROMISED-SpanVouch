@@ -12,6 +12,9 @@ establish a paper effectiveness result.
 | Risk control attains target alpha | needs evidence | frozen calibration protocol and independent ID test |
 | One-time evidence acquisition restores coverage without violating risk | needs evidence | post-acquisition calibration and cost/coverage curves |
 | Conclusions generalize across domains and frameworks | needs evidence | Phase 5 framework labs and Phase 9 OOD evaluation |
+| Phase 5 verification conditions improve diagnosis quality across frameworks | planned; no Phase 5 evidence yet | frozen Phase 5 protocol, paired clustered analysis, and formal results |
+| Phase 5 verifier isolation reduces correlated failure | planned; no Phase 5 evidence yet | frozen isolation ablation, formal results, and cross-model comparison |
+| Phase 5 risk control meets the preregistered analysis policy | planned; no Phase 5 evidence yet | frozen formal configuration, paired bootstrap intervals, and Holm-corrected results |
 
 The frozen 36-candidate deterministic results are a regression guard for known
 engineering behavior, not statistical evidence of general effectiveness.
