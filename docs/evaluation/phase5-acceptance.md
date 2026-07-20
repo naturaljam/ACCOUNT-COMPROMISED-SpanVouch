@@ -16,7 +16,7 @@ Formal DeepSeek/Qwen evidence: not collected. Cloud GPU: unapproved.
 | Provider-visible schema and checked-in artifact secret gates | complete | offline architecture test |
 | Offline-only Phase 5 CI command | complete | `.github/workflows/ci.yml` |
 | SupportLab/OpsLab through LangGraph and AutoGen | complete | deterministic zero-provider E2E covers both labs and both adapters |
-| Deterministic B0-B5 offline reference bundle | complete | byte-reproduced fake-provider bundle generated from clean commit `bb0fa4f939d6edd3f0ca32284ee93c250b82f71b`; manifest file SHA-256 `983c58b1e388d66262ae430b1a2e76fd9bdd29d355bd9ccedb60ebb1a8cb1200` |
+| Deterministic B0-B5 offline reference bundle | complete | byte-reproduced fake-provider bundle generated from clean commit `029b694168185cf9a6c92c0577ab3de9fbd72c8d`; manifest file SHA-256 `16d8518f8f6397033fa6240ff53dd7da34a77c9c7243a59dd98bae16b16c737d` |
 | Offline full suite and coverage | complete | 1,610 passed, 1 skipped; 93.58% coverage on the final integrated branch |
 | Reproducible wheel and Docker acceptance | complete | repeated wheel hash; non-root, health, writable persistence, restart, teardown, and no-residue checks passed |
 | Offline CI gates | complete | architecture, security, coverage, wheel, and Docker gates are configured without provider credentials |
@@ -49,9 +49,9 @@ matches the verified claim-gate JSON exactly.
 
 The committed reference bundle is deterministic fake-provider evidence. Its
 `manifest.json` file has SHA-256
-`983c58b1e388d66262ae430b1a2e76fd9bdd29d355bd9ccedb60ebb1a8cb1200`.
+`16d8518f8f6397033fa6240ff53dd7da34a77c9c7243a59dd98bae16b16c737d`.
 The generator discovered clean code-under-test commit
-`bb0fa4f939d6edd3f0ca32284ee93c250b82f71b` from Git; the manifest and
+`029b694168185cf9a6c92c0577ab3de9fbd72c8d` from Git; the manifest and
 `environment.txt` record that same identity with `dirty_worktree=false`.
 The final integrated full suite reported 1,610 passing tests, 1 skipped test, and
 93.58% coverage.
