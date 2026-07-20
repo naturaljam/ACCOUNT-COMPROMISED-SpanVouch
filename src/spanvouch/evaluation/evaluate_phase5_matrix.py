@@ -26,6 +26,7 @@ from spanvouch.evaluation.corpus import CorpusCell
 from spanvouch.evaluation.corpus.labels import GoldLabel, GoldLabelManifest
 from spanvouch.evaluation.experiments.config import ConditionId
 from spanvouch.evaluation.experiments.models import (
+    CausalClaimEvaluationEvidence,
     ExperimentFailureCategory,
     SelectiveAction,
 )
@@ -279,16 +280,31 @@ def _evaluate(
             evidence is not None
             and evidence.diagnosis_family == label.expected_failure_type
         )
-        causal_correct = evidence is not None and _ordered_token_subset(
-            label.causal_chain_expectations,
-            evidence.causal_tokens,
-        )
-        grounding_correct = evidence is not None and all(
-            any(
-                selector.partition("::")[2].endswith(expected)
-                for selector in evidence.diagnosis_selectors
+        matched_claims = (
+            _ordered_claim_matches(
+                label.causal_chain_expectations,
+                evidence.causal_claims,
             )
-            for expected in label.evidence_expectations
+            if evidence is not None
+            else None
+        )
+        causal_correct = matched_claims is not None
+        grounding_correct = (
+            evidence is not None
+            and (
+                label.control
+                or (
+                    matched_claims is not None
+                    and all(
+                        any(
+                            selector.partition("::")[2].endswith(expected)
+                            for claim in matched_claims
+                            for selector in claim.selectors
+                        )
+                        for expected in label.evidence_expectations
+                    )
+                )
+            )
         )
         diagnosis_correct = family_correct and causal_correct and grounding_correct
         diagnosis_error = not diagnosis_correct
@@ -331,16 +347,27 @@ def _evaluate(
     )
 
 
-def _ordered_token_subset(expected: tuple[str, ...], actual: tuple[str, ...]) -> bool:
-    required = tuple(
-        token
-        for item in expected
-        for token in re.findall(r"[a-z][a-z0-9_]*", item.casefold())
-    )
-    if not required:
-        return True
-    cursor = iter(actual)
-    return all(any(candidate == token for candidate in cursor) for token in required)
+def _ordered_claim_matches(
+    expected: tuple[str, ...],
+    claims: tuple[CausalClaimEvaluationEvidence, ...],
+) -> tuple[CausalClaimEvaluationEvidence, ...] | None:
+    if not expected:
+        return () if not claims else None
+    matched: list[CausalClaimEvaluationEvidence] = []
+    cursor = 0
+    for item in expected:
+        required = set(re.findall(r"[a-z][a-z0-9_]*", item.casefold()))
+        if not required:
+            return None
+        while cursor < len(claims) and not required.issubset(
+            set(claims[cursor].normalized_tokens)
+        ):
+            cursor += 1
+        if cursor == len(claims):
+            return None
+        matched.append(claims[cursor])
+        cursor += 1
+    return tuple(matched)
 
 
 @dataclass(frozen=True)

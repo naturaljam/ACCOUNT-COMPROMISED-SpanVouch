@@ -311,9 +311,11 @@ async def test_condition_result_carries_only_hash_bound_sanitized_evaluation_evi
     assert evidence is not None
     assert evidence.diagnosis_report_sha256 == context.verification_input.report_sha256
     assert evidence.diagnosis_family == "policy_violation"
-    assert evidence.causal_stages == ("cause",)
-    assert {"refund", "tool", "rejected", "request"} <= set(evidence.causal_tokens)
-    assert evidence.diagnosis_selectors == (
+    assert len(evidence.causal_claims) == 1
+    claim = evidence.causal_claims[0]
+    assert claim.stage == "cause"
+    assert {"refund", "tool", "rejected", "request"} <= set(claim.normalized_tokens)
+    assert claim.selectors == (
         "span-tool::attributes.tool.error.type",
     )
     assert evidence.verifier_reports[0].verdict is VerifierVerdict.VERIFIED

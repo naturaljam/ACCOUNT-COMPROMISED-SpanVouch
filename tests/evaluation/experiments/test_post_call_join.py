@@ -17,7 +17,10 @@ from spanvouch.evaluation.evaluate_phase5_matrix import (
     _evaluate,
 )
 from spanvouch.evaluation.experiments.config import ConditionId
-from spanvouch.evaluation.experiments.models import ExperimentFailureCategory
+from spanvouch.evaluation.experiments.models import (
+    CausalClaimEvaluationEvidence,
+    ExperimentFailureCategory,
+)
 from spanvouch.evaluation.experiments.runner import (
     ExperimentRunner,
     OutcomeStatus,
@@ -260,8 +263,18 @@ def test_gold_join_scores_causal_subset_and_grounding_then_fails_closed() -> Non
     )
     evidence_payload.update(
         diagnosis_family="wrong_tool",
-        causal_tokens=("tool_selection", "noise", "unexpected_tool"),
-        diagnosis_selectors=("span-tool::attributes.tool.name",),
+        causal_claims=(
+            CausalClaimEvaluationEvidence(
+                stage="cause",
+                normalized_tokens=("tool_selection",),
+                selectors=("span-tool::attributes.tool.name",),
+            ),
+            CausalClaimEvaluationEvidence(
+                stage="propagation",
+                normalized_tokens=("noise", "unexpected_tool"),
+                selectors=("span-tool::attributes.run.outcome",),
+            ),
+        ),
     )
     evidence = result.evaluation_evidence.model_validate(
         {
@@ -291,6 +304,40 @@ def test_gold_join_scores_causal_subset_and_grounding_then_fails_closed() -> Non
     assert scored.causal_chain_correct is True
     assert scored.grounding_correct is True
     assert scored.verification_correct is True
+
+    unrelated_payload = evidence_payload.copy()
+    unrelated_payload["causal_claims"] = (
+        CausalClaimEvaluationEvidence(
+            stage="cause",
+            normalized_tokens=("tool_selection",),
+            selectors=("span-tool::attributes.run.outcome",),
+        ),
+        CausalClaimEvaluationEvidence(
+            stage="propagation",
+            normalized_tokens=("unrelated",),
+            selectors=("span-tool::attributes.tool.name",),
+        ),
+        CausalClaimEvaluationEvidence(
+            stage="outcome",
+            normalized_tokens=("unexpected_tool",),
+            selectors=("span-tool::attributes.run.outcome",),
+        ),
+    )
+    unrelated = result.evaluation_evidence.model_validate(
+        {
+            **unrelated_payload,
+            "projection_sha256": canonical_sha256(unrelated_payload),
+        }
+    )
+    ungrounded = _evaluate(
+        outcome.model_copy(
+            update={"result": result.model_copy(update={"evaluation_evidence": unrelated})}
+        ),
+        "c" * 64,
+        label,
+    )
+    assert ungrounded.causal_chain_correct is True
+    assert ungrounded.grounding_correct is False
 
     missing = ProviderPlanOutcome(
         plan=plan,

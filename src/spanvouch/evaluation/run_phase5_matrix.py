@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -12,7 +13,7 @@ from typing import cast
 
 from pydantic import JsonValue
 
-from spanvouch.contracts.versioning import canonical_sha256
+from spanvouch.contracts.versioning import SHA256_PATTERN, canonical_sha256
 from spanvouch.evaluation.artifacts import read_verified_directory_tree
 from spanvouch.evaluation.corpus import CorpusEntry
 from spanvouch.evaluation.corpus.repository import TraceReplayRepository
@@ -33,7 +34,10 @@ from spanvouch.evaluation.experiments.models import (
     SelectiveAction,
 )
 from spanvouch.evaluation.experiments.planner import VerificationMatrixPlanner
-from spanvouch.evaluation.experiments.provider import PaidRunAuthorization
+from spanvouch.evaluation.experiments.provider import (
+    PaidRunAuthorization,
+    ProviderConfigurationError,
+)
 from spanvouch.evaluation.experiments.runner import (
     ExperimentRunner,
     ProviderPhaseRepository,
@@ -49,9 +53,28 @@ class ProviderRunRequest:
     output_dir: Path
     allow_live_provider: bool
     formal_run: bool
+    approved_manifest_sha256: str | None
 
 
 ProviderRunCommand = Callable[[ProviderRunRequest], None]
+
+
+def _require_approved_manifest(
+    request: ProviderRunRequest,
+    *,
+    matrix_manifest_sha256: str,
+) -> str:
+    """Bind paid execution to the exact matrix identity approved beforehand."""
+    approved = request.approved_manifest_sha256
+    if request.formal_run and approved is None:
+        raise ProviderConfigurationError(
+            "formal live run requires --approved-manifest-sha256"
+        )
+    if approved is not None and re.fullmatch(SHA256_PATTERN, approved) is None:
+        raise ProviderConfigurationError("approved manifest hash must be SHA-256")
+    if approved is not None and approved != matrix_manifest_sha256:
+        raise ProviderConfigurationError("approved manifest hash does not match matrix")
+    return matrix_manifest_sha256
 
 
 class _OfflineExecutor:
@@ -138,13 +161,15 @@ def _default_command(request: ProviderRunRequest) -> None:
         expected_cells=expected_cells,
     )
     if request.allow_live_provider or request.formal_run:
+        matrix_manifest_sha256 = _require_approved_manifest(
+            request,
+            matrix_manifest_sha256=canonical_sha256(matrix),
+        )
         PaidRunAuthorization(
             experiment_id=config.experiment_id,
             allow_live_provider=request.allow_live_provider,
             formal_run=request.formal_run,
-            frozen_manifest_sha256=(
-                canonical_sha256(matrix) if request.formal_run else None
-            ),
+            frozen_manifest_sha256=matrix_manifest_sha256,
         ).require(config.mode)
         raise RuntimeError("live provider adapter is not configured for this CLI")
     asyncio.run(
@@ -164,6 +189,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--allow-live-provider", action="store_true")
     parser.add_argument("--formal-run", action="store_true")
+    parser.add_argument("--approved-manifest-sha256")
     return parser
 
 
@@ -180,6 +206,7 @@ def main(
         output_dir=arguments.output_dir,
         allow_live_provider=arguments.allow_live_provider,
         formal_run=arguments.formal_run,
+        approved_manifest_sha256=arguments.approved_manifest_sha256,
     )
     (command or _default_command)(request)
     return 0

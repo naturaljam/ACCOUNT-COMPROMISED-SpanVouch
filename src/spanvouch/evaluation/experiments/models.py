@@ -73,6 +73,27 @@ class VerifierEvaluationEvidence(BaseModel):
     selectors: tuple[str, ...]
 
 
+class CausalClaimEvaluationEvidence(BaseModel):
+    """Normalized claim text with only the evidence selectors cited by that claim."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    stage: ClaimStage
+    normalized_tokens: tuple[str, ...]
+    selectors: tuple[str, ...]
+
+    @model_validator(mode="after")
+    def validate_projection(self) -> Self:
+        if not self.normalized_tokens or any(
+            re.fullmatch(r"[a-z][a-z0-9_]*", token) is None
+            for token in self.normalized_tokens
+        ):
+            raise ValueError("claim tokens must be safe identifiers")
+        if self.selectors != tuple(sorted(set(self.selectors))) or not self.selectors:
+            raise ValueError("claim selectors must be non-empty, sorted and unique")
+        return self
+
+
 class ConditionEvaluationEvidence(BaseModel):
     """Self-hashed label-free projection used only by the post-call evaluator."""
 
@@ -81,9 +102,7 @@ class ConditionEvaluationEvidence(BaseModel):
     diagnosis_report_sha256: str = Field(pattern=SHA256_PATTERN)
     diagnosis_status: DiagnosisStatus
     diagnosis_family: str | None = None
-    causal_stages: tuple[ClaimStage, ...]
-    causal_tokens: tuple[str, ...]
-    diagnosis_selectors: tuple[str, ...]
+    causal_claims: tuple[CausalClaimEvaluationEvidence, ...]
     verifier_reports: tuple[VerifierEvaluationEvidence, ...]
     projection_sha256: str = Field(pattern=SHA256_PATTERN)
 
@@ -95,13 +114,6 @@ class ConditionEvaluationEvidence(BaseModel):
         )
         if canonical_sha256(payload) != self.projection_sha256:
             raise ValueError("evaluation evidence projection hash mismatch")
-        if self.causal_tokens != tuple(dict.fromkeys(self.causal_tokens)) or any(
-            re.fullmatch(r"[a-z][a-z0-9_]*", token) is None
-            for token in self.causal_tokens
-        ):
-            raise ValueError("causal tokens must be unique safe identifiers")
-        if self.diagnosis_selectors != tuple(sorted(set(self.diagnosis_selectors))):
-            raise ValueError("diagnosis selectors must be sorted and unique")
         return self
 
     @classmethod
@@ -110,13 +122,21 @@ class ConditionEvaluationEvidence(BaseModel):
         diagnosis: DiagnosisReport,
         verifier_reports: tuple[VerifierReport, ...],
     ) -> ConditionEvaluationEvidence:
-        token_groups = tuple(
-            tuple(re.findall(r"[a-z][a-z0-9_]*", claim.statement.casefold()))
+        evidence_by_id = {item.evidence_id: item.canonical for item in diagnosis.evidence}
+        projected_claims = tuple(
+            CausalClaimEvaluationEvidence(
+                stage=claim.stage,
+                normalized_tokens=tuple(
+                    dict.fromkeys(
+                        re.findall(r"[a-z][a-z0-9_]*", claim.statement.casefold())
+                    )
+                ),
+                selectors=tuple(
+                    sorted({evidence_by_id[evidence_id] for evidence_id in claim.evidence_ids})
+                ),
+            )
             for claim in diagnosis.causal_chain
         )
-        if any(not group for group in token_groups):
-            raise ValueError("diagnosis claim cannot be projected to safe causal tokens")
-        tokens = tuple(dict.fromkeys(token for group in token_groups for token in group))
         projected_verifiers = tuple(
             VerifierEvaluationEvidence(
                 artifact_sha256=canonical_sha256(report),
@@ -143,18 +163,14 @@ class ConditionEvaluationEvidence(BaseModel):
             "diagnosis_report_sha256": canonical_sha256(diagnosis),
             "diagnosis_status": diagnosis.status,
             "diagnosis_family": diagnosis.failure_type,
-            "causal_stages": tuple(claim.stage for claim in diagnosis.causal_chain),
-            "causal_tokens": tokens,
-            "diagnosis_selectors": tuple(
-                sorted({evidence.canonical for evidence in diagnosis.evidence})
-            ),
+            "causal_claims": projected_claims,
             "verifier_reports": projected_verifiers,
         }
         require_safe_artifact_content(
             "condition_evidence",
             (
-                *tokens,
-                *(evidence.canonical for evidence in diagnosis.evidence),
+                *(token for claim in projected_claims for token in claim.normalized_tokens),
+                *(selector for claim in projected_claims for selector in claim.selectors),
                 *(
                     selector
                     for report in projected_verifiers
@@ -168,11 +184,9 @@ class ConditionEvaluationEvidence(BaseModel):
                 "diagnosis_report_sha256": canonical_sha256(diagnosis),
                 "diagnosis_status": diagnosis.status.value,
                 "diagnosis_family": diagnosis.failure_type,
-                "causal_stages": [claim.stage.value for claim in diagnosis.causal_chain],
-                "causal_tokens": list(tokens),
-                "diagnosis_selectors": sorted(
-                    {evidence.canonical for evidence in diagnosis.evidence}
-                ),
+                "causal_claims": [
+                    claim.model_dump(mode="json") for claim in projected_claims
+                ],
                 "verifier_reports": [
                     report.model_dump(mode="json") for report in projected_verifiers
                 ],

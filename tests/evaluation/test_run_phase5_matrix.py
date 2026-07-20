@@ -7,8 +7,23 @@ from spanvouch.contracts.versioning import canonical_bytes, canonical_sha256
 from spanvouch.evaluation import evaluate_phase5_matrix, run_phase5_matrix
 from spanvouch.evaluation.corpus import TraceReplayRepository
 from spanvouch.evaluation.corpus.labels import GoldLabel, GoldLabelManifest
+from spanvouch.evaluation.experiments.provider import ProviderConfigurationError
 from spanvouch.evaluation.experiments.runner import ProviderPhaseRepository
 from tests.evaluation.experiments.test_planner import _candidate_pair
+
+
+def _request(**updates: object) -> run_phase5_matrix.ProviderRunRequest:
+    payload: dict[str, object] = {
+        "config": Path("config.json"),
+        "corpus_dir": Path("corpus"),
+        "candidate_dir": Path("candidates"),
+        "output_dir": Path("out"),
+        "allow_live_provider": True,
+        "formal_run": True,
+        "approved_manifest_sha256": "a" * 64,
+    }
+    payload.update(updates)
+    return run_phase5_matrix.ProviderRunRequest(**payload)  # type: ignore[arg-type]
 
 
 def test_run_cli_has_no_label_argument_and_supports_live_formal_flags() -> None:
@@ -19,7 +34,11 @@ def test_run_cli_has_no_label_argument_and_supports_live_formal_flags() -> None:
         for option in action.option_strings
     }
     assert {"--config", "--corpus-dir", "--candidate-dir", "--output-dir"} <= option_strings
-    assert {"--allow-live-provider", "--formal-run"} <= option_strings
+    assert {
+        "--allow-live-provider",
+        "--formal-run",
+        "--approved-manifest-sha256",
+    } <= option_strings
     assert all("label" not in option for option in option_strings)
 
 
@@ -133,4 +152,28 @@ def test_default_run_rejects_tampered_candidate_parent(tmp_path: Path) -> None:
                 "--candidate-dir", str(tmp_path / "candidates"),
                 "--output-dir", str(tmp_path / "provider"),
             ]
+        )
+
+
+def test_formal_run_requires_the_preapproved_exact_matrix_identity() -> None:
+    with pytest.raises(ProviderConfigurationError, match="requires"):
+        run_phase5_matrix._require_approved_manifest(
+            _request(approved_manifest_sha256=None),
+            matrix_manifest_sha256="a" * 64,
+        )
+    with pytest.raises(ProviderConfigurationError, match="does not match"):
+        run_phase5_matrix._require_approved_manifest(
+            _request(approved_manifest_sha256="b" * 64),
+            matrix_manifest_sha256="a" * 64,
+        )
+    assert run_phase5_matrix._require_approved_manifest(
+        _request(), matrix_manifest_sha256="a" * 64
+    ) == "a" * 64
+
+
+def test_pilot_records_and_checks_an_explicit_approved_identity_when_supplied() -> None:
+    request = _request(formal_run=False, approved_manifest_sha256="b" * 64)
+    with pytest.raises(ProviderConfigurationError, match="does not match"):
+        run_phase5_matrix._require_approved_manifest(
+            request, matrix_manifest_sha256="a" * 64
         )

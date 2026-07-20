@@ -131,9 +131,7 @@ def _result(plan: ConditionPlan, *, failed: bool = False) -> ConditionResult:
         "diagnosis_report_sha256": plan.diagnosis_sha256,
         "diagnosis_status": DiagnosisStatus.NO_FAILURE,
         "diagnosis_family": "no_failure",
-        "causal_stages": (),
-        "causal_tokens": (),
-        "diagnosis_selectors": ("span-root::attributes.run.outcome",),
+        "causal_claims": (),
         "verifier_reports": tuple(
             VerifierEvaluationEvidence(
                 artifact_sha256=digest,
