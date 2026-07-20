@@ -380,7 +380,11 @@ def create_owned_staging_directory(
     staging = Path(
         tempfile.mkdtemp(
             dir=destination.parent,
-            prefix=f".{destination.name}.tmp-",
+            prefix=(
+                f".{destination.name}.tmp-"
+                if sys.platform == "win32"
+                else f".{destination.name}.rollback-"
+            ),
         )
     )
     metadata = staging.stat(follow_symlinks=False)
@@ -455,15 +459,11 @@ def quarantine_owned_staging_directory(
     The quarantine is retained.  Cleanup errors never replace the operation's
     original exception, and a root already replaced before validation is untouched.
     """
-    try:
-        metadata = staging.stat(follow_symlinks=False)
-    except (FileNotFoundError, OSError):
+    if not _owned_root_matches(staging, identity):
         return False
-    if (
-        not stat.S_ISDIR(metadata.st_mode)
-        or _is_reparse_point(metadata)
-        or (metadata.st_dev, metadata.st_ino) != (identity.device, identity.inode)
-    ):
+    if sys.platform != "win32":
+        # POSIX staging already lives in the rollback namespace.  Retain it in
+        # place so no pathname operation can relocate an adversarial replacement.
         return False
     quarantine = _posix_cleanup_tombstone(staging)
     try:
@@ -479,6 +479,18 @@ def quarantine_owned_staging_directory(
         and not _is_reparse_point(quarantined)
         and (quarantined.st_dev, quarantined.st_ino)
         == (identity.device, identity.inode)
+    )
+
+
+def _owned_root_matches(staging: Path, identity: OwnedDirectoryRootIdentity) -> bool:
+    try:
+        metadata = staging.stat(follow_symlinks=False)
+    except (FileNotFoundError, OSError):
+        return False
+    return (
+        stat.S_ISDIR(metadata.st_mode)
+        and not _is_reparse_point(metadata)
+        and (metadata.st_dev, metadata.st_ino) == (identity.device, identity.inode)
     )
 
 
@@ -709,20 +721,15 @@ def _capture_posix_tree_entries(  # pragma: no cover - POSIX dir_fd API is absen
 def _delete_posix_owned_staging(  # pragma: no cover - POSIX dir_fd API is absent on Windows
     staging: Path, identity: OwnedDirectoryIdentity
 ) -> bool:
-    """Quarantine a POSIX tree, but never delete it through a raceable name.
+    """Validate a POSIX rollback tree, but retain it at its existing name.
 
     POSIX does not expose an inode-conditional unlink/rmdir operation.  Even after
     validating a pinned descriptor, a concurrent rename can replace its pathname
-    before removal.  Keep the uniquely named quarantine as a fail-closed tombstone;
+    before removal.  Keep the uniquely named staging tree as a fail-closed tombstone;
     a separate trusted maintenance process may remove it while the corpus is idle.
     """
-    quarantine = _posix_cleanup_tombstone(staging)
     try:
-        _publish_no_replace(staging, quarantine)
-    except FileNotFoundError:
-        return True
-    try:
-        actual_entries = _capture_posix_tree_entries(quarantine)
+        actual_entries = _capture_posix_tree_entries(staging)
     except (OSError, RuntimeError):
         return False
     expected_entries: tuple[
@@ -730,7 +737,8 @@ def _delete_posix_owned_staging(  # pragma: no cover - POSIX dir_fd API is absen
     ] = identity.native_entries
     if actual_entries != expected_entries:
         return False
-    # Even a confirmed owner can be replaced after the final handle closes.
+    # The tree already has a rollback name.  Even a confirmed owner can be
+    # replaced after the final handle closes, so retain it in place.
     return False
 
 

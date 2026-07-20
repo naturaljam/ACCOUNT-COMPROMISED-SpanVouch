@@ -253,12 +253,16 @@ def test_freeze_rejects_parity_hash_mismatch_and_cleans_staging(
     assert not tuple(tmp_path.glob(".corpus.tmp-*"))
 
 
-def test_posix_tombstone_name_is_outside_staging_namespace(tmp_path: Path) -> None:
-    staging = tmp_path / ".corpus.tmp-owned"
-    tombstone = artifacts_module._posix_cleanup_tombstone(staging)
-    assert tombstone.parent == tmp_path
-    assert tombstone.name.startswith(".corpus.rollback-")
-    assert not tombstone.match(".corpus.tmp-*")
+def test_posix_staging_starts_in_rollback_namespace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(artifacts_module.sys, "platform", "linux")
+    staging, _identity = artifacts_module.create_owned_staging_directory(
+        tmp_path / "corpus"
+    )
+    assert staging.parent == tmp_path
+    assert staging.name.startswith(".corpus.rollback-")
+    assert not staging.match(".corpus.tmp-*")
 
 
 def test_failed_publish_cleans_or_quarantines_only_the_owned_staging_tree(
@@ -363,6 +367,34 @@ def test_pre_identity_cleanup_does_not_touch_replaced_root_or_mask_error(
     assert (foreign_root / "foreign.txt").read_bytes() == b"preserve"
     assert displaced_owned is not None and displaced_owned.is_dir()
     assert not tuple(tmp_path.glob(".corpus.rollback-*"))
+
+
+def test_posix_former_validate_rename_seam_performs_no_rename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    staging = tmp_path / ".corpus.rollback-owned"
+    staging.mkdir()
+    metadata = staging.stat(follow_symlinks=False)
+    identity = artifacts_module.OwnedDirectoryRootIdentity(
+        metadata.st_dev, metadata.st_ino
+    )
+    foreign = staging
+
+    def replace_after_validation(_path: Path, _identity: object) -> bool:
+        staging.rename(tmp_path / ".corpus.rollback-displaced-owned")
+        foreign.mkdir()
+        (foreign / "foreign.txt").write_bytes(b"preserve")
+        return True
+
+    def forbidden_rename(_source: Path, _destination: Path) -> None:
+        raise AssertionError("POSIX early cleanup must not rename")
+
+    monkeypatch.setattr(artifacts_module.sys, "platform", "linux")
+    monkeypatch.setattr(artifacts_module, "_owned_root_matches", replace_after_validation)
+    monkeypatch.setattr(artifacts_module, "_publish_no_replace", forbidden_rename)
+
+    assert not artifacts_module.quarantine_owned_staging_directory(staging, identity)
+    assert (foreign / "foreign.txt").read_bytes() == b"preserve"
 
 
 def test_failed_publish_preserves_foreign_staging_replacement(
