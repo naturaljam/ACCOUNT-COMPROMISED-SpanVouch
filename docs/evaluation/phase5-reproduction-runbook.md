@@ -72,13 +72,41 @@ uv run --no-sync pytest tests/labs tests/evaluation/corpus `
   tests/evaluation/experiments tests/evaluation/statistics -v
 ```
 
-If an offline reference bundle is added by the separate end-to-end acceptance
-task, regenerate it twice and compare `config.json`, `metrics.json`,
-`structured-events.jsonl`, and `README.md` byte-for-byte. Verify every payload
-digest against `manifest.json`. No Phase 5 reference bundle is claimed by this
-architecture/documentation task.
+Run the network-disabled E2E and reproduce the committed reference bundle:
 
-## 5. Interpret the result
+```powershell
+uv run --no-sync pytest tests/evaluation/test_phase5_offline_e2e.py -v
+uv run --no-sync python -m spanvouch.evaluation.offline_acceptance `
+  --output-dir .cache/phase5-offline-smoke
+```
+
+Compare `config.json`, `metrics.json`, `structured-events.jsonl`, `README.md`, and
+their manifest payload digests byte-for-byte. The committed `manifest.json` file
+has SHA-256
+`16ef8b19e705b214bb698514a82aaae1b02951c5837f87935410a8509ccdce8d`.
+
+## 5. Verify the delivery gates
+
+Run the full offline suite, coverage, wheel, and Docker gates:
+
+```powershell
+uv run --no-sync pytest --cov=spanvouch --cov-report=term-missing
+uv build --wheel --build-constraints build-constraints.txt `
+  --require-hashes --no-cache
+docker compose config --quiet
+docker compose build api
+docker compose up --detach --wait --wait-timeout 90 api
+docker compose exec -T api sh -c 'test "$(id -u):$(id -g)" = "10001:10001"'
+docker compose restart api
+docker compose down --volumes --remove-orphans
+```
+
+The last integrated baseline reported 1,591 passing tests, 1 skipped test, and
+93.58% coverage. The repeated wheel, non-root container, health, writable
+persistence, restart, teardown, and no-residue checks passed. Rerun all commands
+after the final architecture fix before creating a release tag.
+
+## 6. Interpret the result
 
 A green run establishes only implementation properties. It does not support H1-H5
 and does not justify portability equivalence, verifier correctness from
@@ -88,3 +116,6 @@ approved paid matrix and its independently verified analysis manifest.
 Any paid pilot is a separate checkpoint requiring the user to approve exact model
 and image revisions, GPU quote, call/token budget, maximum CNY spend, shutdown
 command, and rollback. Approval of this offline runbook is not spend approval.
+Follow the [live experiment preparation
+checklist](../research/phase5-live-experiment-preparation-2026-07-20.md) before
+requesting that approval.

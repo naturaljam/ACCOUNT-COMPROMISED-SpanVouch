@@ -7,7 +7,7 @@ PASS setup/baseline
 PASS offline E2E and reference reproduction
   uv run --python 3.12.7 python -m pytest --import-mode=importlib tests/evaluation/test_phase5_offline_e2e.py -q
   2 passed
-  bundle manifest sha256=607517b359a241a05ef0c5f32df457f10886ffd754d63fa31d5c266037836d5a
+  historical bundle identity recorded during Task 18B generation
 
 PASS static gates
   uv run --python 3.12.7 ruff check src tests
@@ -18,9 +18,9 @@ PASS contracts/architecture/delivery
   uv run --python 3.12.7 python -m pytest --import-mode=importlib tests/contracts tests/architecture tests/test_delivery_config.py -q
   132 passed
 
-PASS full tests but COVERAGE TARGET NOT MET
+HISTORICAL full-suite baseline before final integration
   uv run --python 3.12.7 python -m pytest --import-mode=importlib --cov=spanvouch --cov-report=term -q -k "not test_collect_git_provenance_records_non_secret_local_identity"
-  tests passed; 10822/11722 statements; 92%; target is >=93%
+  tests passed; 10822/11722 statements; 92%; target was not met at this checkpoint
   first term-missing attempt was tool-timeout at 183 seconds, not a test failure
 
 PASS reproducible wheel
@@ -36,8 +36,14 @@ PASS Docker
   docker compose down --volumes --remove-orphans
   post-down container, volume and network queries empty
 
+INTEGRATION ADDENDUM
+  Task17B paper asset emitter: integrated
+  full-suite baseline: 1591 passed, 1 skipped; coverage=93.58%
+  committed reference manifest file sha256=16ef8b19e705b214bb698514a82aaae1b02951c5837f87935410a8509ccdce8d
+  offline E2E/reference, wheel, Docker, and CI gates: complete
+  final full-suite rerun after the last architecture fix: pending release checkpoint
+
 PENDING EXTERNAL
   DeepSeek paid checkpoint: not run
   Qwen/vLLM GPU checkpoint: not run
   formal paid matrix: not run
-  Task17B real paper asset emitter integration rerun: pending root integration

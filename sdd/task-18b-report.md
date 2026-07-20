@@ -18,20 +18,20 @@
 
 ## Evidence identities
 
-- Reference bundle manifest SHA-256:
-  `607517b359a241a05ef0c5f32df457f10886ffd754d63fa31d5c266037836d5a`
+- Reference bundle `manifest.json` file SHA-256:
+  `16ef8b19e705b214bb698514a82aaae1b02951c5837f87935410a8509ccdce8d`
 - Reproducible wheel SHA-256:
   `8c08dc35560691166e179ba562898a457da9069d1457c713781c12942888987d`
 
-## Explicit limitations and pending checkpoints
+## Integration addendum
 
-- The branch base does not include Task 17B paper asset generation. The harness uses
-  the approved `OfflineAssetEmitter` seam; root integration must rerun with the real
-  Task 17B emitter without weakening the E2E.
-- Global coverage is 92% (10,822/11,722 statements) on the integrated branch base,
-  below the 93% acceptance target. The E2E module itself is 95% covered. Root must
-  close the aggregate gap after integrating Task 18A/18B; it is not reported as pass.
-- The isolated-worktree provenance test hard-codes `local:phase4-integration`; it is
-  excluded only from the coverage command and must be rerun in the integration tree.
-- DeepSeek paid pilot, Qwen/vLLM GPU checkpoint, and formal paid matrix remain pending
-  explicit spend approvals. This task made zero live provider and zero GPU calls.
+- Task 17B paper asset generation is integrated. The offline E2E uses the approved
+  asset-emitter boundary and the committed bundle reproduces byte-for-byte.
+- The last integrated full-suite baseline reported 1,591 passing tests, 1 skipped
+  test, and 93.58% coverage. This closes the earlier 92% historical gap. Rerun the
+  full suite after the final architecture fix before release.
+- The reference `manifest.json` file now has SHA-256
+  `16ef8b19e705b214bb698514a82aaae1b02951c5837f87935410a8509ccdce8d`.
+- DeepSeek paid pilot, Qwen/vLLM GPU checkpoint, and the formal paid matrix still
+  require explicit spend approval. Offline acceptance made zero live provider and
+  zero GPU calls.
