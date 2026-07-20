@@ -449,6 +449,22 @@ def test_phase_4_release_candidate_documents_delivery_and_six_contract_roots() -
     assert not missing, f"missing Phase 4 release documentation: {missing}"
 
 
+def test_phase_5_ci_enforces_coverage_and_explicit_offline_acceptance_gates() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+    assert (
+        "uv run --no-sync pytest --cov=spanvouch --cov-report=term-missing "
+        "--cov-fail-under=93"
+    ) in workflow
+    assert (
+        "uv run --no-sync pytest tests/architecture/test_phase5_boundaries.py -v"
+    ) in workflow
+    assert (
+        "uv run --no-sync pytest tests/evaluation/test_phase5_offline_e2e.py -v"
+    ) in workflow
+    assert "${{ secrets." not in workflow
+
+
 def test_phase_4_acceptance_evidence_includes_a_clean_offline_reference_bundle() -> None:
     bundle = ROOT / "evals" / "reports" / "reference" / "phase4-offline-bundle"
     required_bundle_files = (
