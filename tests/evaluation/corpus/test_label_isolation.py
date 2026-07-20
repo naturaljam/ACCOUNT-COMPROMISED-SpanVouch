@@ -11,10 +11,15 @@ import pytest
 from spanvouch.contracts.trace import SpanKind, SpanStatus, TraceIR, TraceSpan
 from spanvouch.contracts.versioning import canonical_bytes, canonical_sha256
 from spanvouch.evaluation.corpus import CorpusManifestMetadata, TraceReplayRepository
+from spanvouch.evaluation.corpus import labels as labels_module
 from spanvouch.evaluation.corpus import repository as repository_module
 from spanvouch.evaluation.corpus.generate import generate_phase5_corpus
 from spanvouch.evaluation.corpus.gold_specs import GOLD_SPECS, GoldSpec
-from spanvouch.evaluation.corpus.labels import generate_phase5_labels
+from spanvouch.evaluation.corpus.labels import (
+    GoldLabel,
+    GoldLabelManifest,
+    generate_phase5_labels,
+)
 from spanvouch.evaluation.experiments import load_experiment_config
 from spanvouch.labs.opslab.templates import build_opslab_templates
 from spanvouch.labs.runtime import (
@@ -57,6 +62,37 @@ def _imports(path: Path) -> tuple[tuple[str, str], ...]:
             module = node.module or ""
             imports.extend((module, alias.name) for alias in node.names)
     return tuple(imports)
+
+
+def _gold_label() -> GoldLabel:
+    return GoldLabel(
+        cell_identity="supportlab:clean-01:clean-01:langgraph:1:20260719",
+        scenario_id="clean-01",
+        expected_failure_type="none",
+        causal_chain_expectations=(),
+        evidence_expectations=(),
+        control=True,
+        split="pilot",
+        record_sha256="1" * 64,
+        trace_sha256="2" * 64,
+    )
+
+
+def test_gold_label_manifest_rejects_duplicate_identities_and_hash_drift() -> None:
+    label = _gold_label()
+    duplicate_labels = [label.model_dump(mode="json")] * 2
+    with pytest.raises(ValueError, match="identities must be unique"):
+        GoldLabelManifest(
+            corpus_manifest_sha256="3" * 64,
+            labels=(label, label),
+            labels_sha256=canonical_sha256(duplicate_labels),
+        )
+    with pytest.raises(ValueError, match="labels_sha256 does not match"):
+        GoldLabelManifest(
+            corpus_manifest_sha256="3" * 64,
+            labels=(label,),
+            labels_sha256="4" * 64,
+        )
 
 
 @pytest.mark.parametrize("path", STAGE_A_PATHS, ids=lambda path: path.name)
@@ -237,6 +273,99 @@ async def test_sealed_labels_fail_closed_on_a_tampered_corpus(
     output = tmp_path / "sealed"
 
     with pytest.raises(ValueError, match="SHA-256 mismatch"):
+        generate_phase5_labels(corpus_dir=corpus, output_dir=output)
+
+    assert not output.exists()
+
+
+async def test_sealed_labels_delete_owned_staging_after_publish_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    corpus = tmp_path / "pilot-corpus"
+    await _write_test_corpus(corpus)
+    output = tmp_path / "sealed-labels"
+    deleted: list[Path] = []
+    original_delete = labels_module.delete_owned_staging_directory
+
+    def delete_owned(path: Path, identity: object) -> bool:
+        deleted.append(path)
+        return original_delete(path, identity)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(labels_module, "delete_owned_staging_directory", delete_owned)
+    monkeypatch.setattr(
+        labels_module,
+        "publish_directory_no_replace",
+        lambda _source, _target: (_ for _ in ()).throw(OSError("publish failed")),
+    )
+
+    with pytest.raises(OSError, match="publish failed"):
+        generate_phase5_labels(corpus_dir=corpus, output_dir=output)
+
+    assert len(deleted) == 1
+    assert not output.exists()
+
+
+async def test_sealed_labels_quarantine_staging_after_pre_identity_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    corpus = tmp_path / "pilot-corpus"
+    await _write_test_corpus(corpus)
+    output = tmp_path / "sealed-labels"
+    quarantined: list[Path] = []
+    original_quarantine = labels_module.quarantine_owned_staging_directory
+
+    def quarantine(path: Path, root_identity: object) -> bool:
+        quarantined.append(path)
+        return original_quarantine(path, root_identity)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        labels_module,
+        "capture_owned_directory_identity",
+        lambda _path: (_ for _ in ()).throw(OSError("identity failed")),
+    )
+    monkeypatch.setattr(
+        labels_module,
+        "quarantine_owned_staging_directory",
+        quarantine,
+    )
+
+    with pytest.raises(OSError, match="identity failed"):
+        generate_phase5_labels(corpus_dir=corpus, output_dir=output)
+
+    assert len(quarantined) == 1
+    assert not output.exists()
+
+
+async def test_sealed_labels_detect_replaced_publication_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    corpus = tmp_path / "pilot-corpus"
+    await _write_test_corpus(corpus)
+    output = tmp_path / "sealed-labels"
+    identities = iter((object(), object()))
+    monkeypatch.setattr(
+        labels_module,
+        "capture_owned_directory_identity",
+        lambda _path: next(identities),
+    )
+
+    with pytest.raises(RuntimeError, match="published sealed-label ownership"):
+        generate_phase5_labels(corpus_dir=corpus, output_dir=output)
+
+
+async def test_sealed_labels_reject_missing_gold_spec_without_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    corpus = tmp_path / "pilot-corpus"
+    await _write_test_corpus(corpus)
+    output = tmp_path / "sealed-labels"
+    monkeypatch.setattr(labels_module, "GOLD_SPECS", {})
+
+    with pytest.raises(ValueError, match="missing sealed gold spec"):
         generate_phase5_labels(corpus_dir=corpus, output_dir=output)
 
     assert not output.exists()
