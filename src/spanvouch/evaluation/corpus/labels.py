@@ -19,7 +19,7 @@ from spanvouch.evaluation.artifacts import (
     quarantine_owned_staging_directory,
 )
 from spanvouch.evaluation.corpus.gold_specs import GOLD_SPECS
-from spanvouch.evaluation.corpus.models import CorpusCell
+from spanvouch.evaluation.corpus.models import CorpusCell, CorpusManifest
 from spanvouch.evaluation.corpus.repository import TraceReplayRepository
 
 _MANIFEST = "manifest.json"
@@ -89,6 +89,7 @@ def generate_phase5_labels(
 
     repository = TraceReplayRepository(corpus_root)
     corpus_manifest = repository.verify()
+    _require_canonical_phase5_corpus(corpus_manifest)
     labels = tuple(
         _label_from_entry(
             entry.cell,
@@ -133,6 +134,21 @@ def generate_phase5_labels(
         manifest=manifest,
         manifest_sha256=sha256(content).hexdigest(),
     )
+
+
+def _require_canonical_phase5_corpus(manifest: CorpusManifest) -> None:
+    metadata = manifest.metadata
+    plan = metadata.phase5_plan
+    if plan is None or metadata.corpus_id != f"phase5-{metadata.mode}":
+        raise ValueError("sealed labels require a canonical Phase 5 corpus")
+    if (
+        plan.mode != metadata.mode
+        or plan.experiment_config_sha256 != metadata.experiment_config_sha256
+        or len(plan.ordered_cells) != metadata.expected_cell_count
+        or len(plan.ordered_cells) // 2 != metadata.expected_pair_count
+        or set(plan.ordered_cells) != {entry.cell for entry in manifest.entries}
+    ):
+        raise ValueError("sealed labels require a canonical Phase 5 corpus")
 
 
 def _label_from_entry(

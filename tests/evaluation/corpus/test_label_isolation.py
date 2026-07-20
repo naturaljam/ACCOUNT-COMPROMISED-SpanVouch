@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import json
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
@@ -8,6 +9,8 @@ from pathlib import Path
 import pytest
 
 from spanvouch.contracts.trace import SpanKind, SpanStatus, TraceIR, TraceSpan
+from spanvouch.contracts.versioning import canonical_bytes, canonical_sha256
+from spanvouch.evaluation.corpus import CorpusManifestMetadata, TraceReplayRepository
 from spanvouch.evaluation.corpus.generate import generate_phase5_corpus
 from spanvouch.evaluation.corpus.gold_specs import GOLD_SPECS, GoldSpec
 from spanvouch.evaluation.corpus.labels import generate_phase5_labels
@@ -203,6 +206,68 @@ async def test_sealed_labels_fail_closed_on_a_tampered_corpus(
     output = tmp_path / "sealed"
 
     with pytest.raises(ValueError, match="SHA-256 mismatch"):
+        generate_phase5_labels(corpus_dir=corpus, output_dir=output)
+
+    assert not output.exists()
+
+
+def test_sealed_labels_reject_verified_generic_formal_looking_corpus(
+    tmp_path: Path,
+    record: ExecutionRecord,
+) -> None:
+    known_scenario_id = next(iter(GOLD_SPECS))
+    runtime_config = record.runtime_config.model_copy(
+        update={"repetition": 5, "seed": 20260799}
+    )
+    probe = record.model_copy(
+        update={
+            "scenario_id": known_scenario_id,
+            "template_id": known_scenario_id,
+            "repetition": 5,
+            "seed": 20260799,
+            "runtime_config": runtime_config,
+            "runtime_config_sha256": canonical_sha256(runtime_config),
+        }
+    )
+    corpus = tmp_path / "generic-formal-corpus"
+    TraceReplayRepository.freeze(
+        records=(probe,),
+        parity_results=(),
+        destination=corpus,
+        manifest_metadata=CorpusManifestMetadata(
+            corpus_id="generic-formal-probe",
+            mode="formal",
+            experiment_config_sha256="1" * 64,
+            git_commit=probe.provenance.git_commit,
+            dependency_lock_sha256=probe.provenance.dependency_lock_sha256,
+            dataset_manifest_sha256=probe.provenance.dataset_manifest_sha256,
+            dirty_worktree=probe.provenance.dirty_worktree,
+            expected_cell_count=1,
+            expected_pair_count=0,
+            created_at_utc=datetime(2026, 7, 20, tzinfo=UTC),
+            parity_results_sha256=canonical_sha256([]),
+        ),
+    )
+    output = tmp_path / "sealed-generic-labels"
+
+    with pytest.raises(ValueError, match="canonical Phase 5 corpus"):
+        generate_phase5_labels(corpus_dir=corpus, output_dir=output)
+
+    assert not output.exists()
+
+
+async def test_sealed_labels_reject_wrong_phase5_corpus_id_without_output(
+    tmp_path: Path,
+) -> None:
+    corpus = tmp_path / "pilot-corpus"
+    await _write_test_corpus(corpus)
+    manifest_path = corpus / "manifest.json"
+    payload = json.loads(manifest_path.read_bytes())
+    payload["metadata"]["corpus_id"] = "phase5-wrong"
+    manifest_path.write_bytes(canonical_bytes(payload))
+    output = tmp_path / "sealed-wrong-id-labels"
+
+    with pytest.raises(ValueError, match="canonical Phase 5 corpus"):
         generate_phase5_labels(corpus_dir=corpus, output_dir=output)
 
     assert not output.exists()

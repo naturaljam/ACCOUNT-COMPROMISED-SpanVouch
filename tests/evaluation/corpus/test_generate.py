@@ -738,3 +738,105 @@ async def test_logical_corpus_payload_retains_counts_and_non_git_provenance() ->
         }
     )
     assert project(git_only) == baseline
+
+
+async def test_logical_corpus_hash_binds_workflow_spans_and_normalizes_physical_fields(
+) -> None:
+    cell = build_corpus_plan(_pilot_config())[0]
+    config = RuntimeConfig(
+        seed=cell.seed,
+        repetition=cell.repetition,
+        max_steps=8,
+        timeout_seconds=5.0,
+        max_retries=0,
+        max_tool_calls=8,
+    )
+    record = await _RecordingAdapter(FrameworkId.LANGGRAPH).execute(
+        cell.scenario,
+        config,
+    )
+    root = record.trace.spans[0]
+    decision = TraceSpan(
+        trace_id=root.trace_id,
+        span_id="d" * 16,
+        parent_span_id=root.span_id,
+        name=f"{record.domain}.decision",
+        kind=SpanKind.WORKFLOW,
+        status=SpanStatus.OK,
+        started_at=root.started_at + timedelta(milliseconds=100),
+        ended_at=root.started_at + timedelta(milliseconds=200),
+        attributes={"workflow.state": "selected"},
+    )
+    trace = TraceIR(
+        trace_id=record.trace.trace_id,
+        run_id=record.trace.run_id,
+        spans=[root, decision],
+    )
+    with_workflow = record.model_copy(update={"trace": trace})
+    def logical_hash(candidate: ExecutionRecord) -> str:
+        return canonical_sha256(
+            corpus_generate.logical_corpus_record_payload(candidate)
+        )
+    baseline = logical_hash(with_workflow)
+
+    status_drift = with_workflow.model_copy(
+        update={
+            "trace": trace.model_copy(
+                update={
+                    "spans": [
+                        root,
+                        decision.model_copy(update={"status": SpanStatus.ERROR}),
+                    ]
+                }
+            )
+        }
+    )
+    attributes_drift = with_workflow.model_copy(
+        update={
+            "trace": trace.model_copy(
+                update={
+                    "spans": [
+                        root,
+                        decision.model_copy(
+                            update={"attributes": {"workflow.state": "different"}}
+                        ),
+                    ]
+                }
+            )
+        }
+    )
+    assert logical_hash(status_drift) != baseline
+    assert logical_hash(attributes_drift) != baseline
+
+    shift = timedelta(days=1)
+    physical_trace = TraceIR(
+        trace_id="f" * 32,
+        run_id=trace.run_id,
+        spans=[
+            root.model_copy(
+                update={
+                    "trace_id": "f" * 32,
+                    "span_id": "1" * 16,
+                    "started_at": root.started_at + shift,
+                    "ended_at": root.ended_at + shift,
+                }
+            ),
+            decision.model_copy(
+                update={
+                    "trace_id": "f" * 32,
+                    "span_id": "2" * 16,
+                    "parent_span_id": "1" * 16,
+                    "started_at": decision.started_at + shift,
+                    "ended_at": decision.ended_at + shift,
+                }
+            ),
+        ],
+    )
+    physical_only = with_workflow.model_copy(
+        update={
+            "trace": physical_trace,
+            "started_at": with_workflow.started_at + shift,
+            "completed_at": with_workflow.completed_at + shift,
+        }
+    )
+    assert logical_hash(physical_only) == baseline

@@ -29,7 +29,6 @@ from spanvouch.labs.runtime import (
     ParityResult,
     RuntimeConfig,
     ScenarioParityValidator,
-    logical_execution_payload,
 )
 
 _FRAMEWORK_ORDER = (FrameworkId.LANGGRAPH, FrameworkId.AUTOGEN)
@@ -223,8 +222,23 @@ async def generate_phase5_corpus(
 
 def logical_corpus_record_payload(record: ExecutionRecord) -> dict[str, JsonValue]:
     """Project one record while excluding only approved physical corpus fields."""
+    execution = record.model_dump(
+        mode="json",
+        exclude={
+            "trace",
+            "trace_sha256",
+            "framework_version",
+            "started_at",
+            "completed_at",
+            "latency_seconds",
+            "steps",
+            "tool_calls",
+            "provenance",
+        },
+    )
+    execution["trace"] = _logical_corpus_trace_payload(record)
     return {
-        "execution": cast(JsonValue, logical_execution_payload(record)),
+        "execution": cast(JsonValue, execution),
         "framework_version": record.framework_version,
         "steps": record.steps,
         "tool_calls": record.tool_calls,
@@ -233,6 +247,58 @@ def logical_corpus_record_payload(record: ExecutionRecord) -> dict[str, JsonValu
             record.provenance.model_dump(mode="json", exclude={"git_commit"}),
         ),
     }
+
+
+def _logical_corpus_trace_payload(record: ExecutionRecord) -> dict[str, JsonValue]:
+    span_ordinals = {
+        span.span_id: ordinal for ordinal, span in enumerate(record.trace.spans)
+    }
+    spans: list[JsonValue] = []
+    for ordinal, span in enumerate(record.trace.spans):
+        raw_span = span.model_dump(mode="json")
+        raw_events = raw_span.get("events", [])
+        spans.append(
+            {
+                "ordinal": ordinal,
+                "parent_ordinal": (
+                    span_ordinals[span.parent_span_id]
+                    if span.parent_span_id is not None
+                    else None
+                ),
+                "name": span.name,
+                "kind": span.kind.value,
+                "status": span.status.value,
+                "attributes": cast(JsonValue, span.attributes),
+                "events": _normalize_trace_events(cast(JsonValue, raw_events)),
+            }
+        )
+    return {
+        "schema_name": record.trace.schema_name,
+        "schema_version": record.trace.schema_version,
+        "run_id": record.trace.run_id,
+        "spans": spans,
+    }
+
+
+def _normalize_trace_events(value: JsonValue) -> JsonValue:
+    """Retain event semantics while removing absolute timing and duration fields."""
+    if isinstance(value, dict):
+        return {
+            key: _normalize_trace_events(item)
+            for key, item in sorted(value.items())
+            if key
+            not in {
+                "timestamp",
+                "timestamp_utc",
+                "started_at",
+                "ended_at",
+                "duration",
+                "duration_seconds",
+            }
+        }
+    if isinstance(value, list):
+        return [_normalize_trace_events(item) for item in value]
+    return value
 
 
 def _logical_corpus_metadata_payload(
@@ -266,6 +332,8 @@ def _logical_corpus_metadata_payload(
         ),
         "parity_results_sha256": metadata.parity_results_sha256,
     }
+
+
 def _require_record_matches_cell(
     record: ExecutionRecord, cell: CorpusPlanCell
 ) -> None:
