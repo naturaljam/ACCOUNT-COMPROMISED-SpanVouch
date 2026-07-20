@@ -354,6 +354,14 @@ class OwnedDirectoryIdentity:
 
 
 @dataclass(frozen=True)
+class OwnedDirectoryRootIdentity:
+    """No-follow root identity fixed immediately after staging creation."""
+
+    device: int
+    inode: int
+
+
+@dataclass(frozen=True)
 class VerifiedDirectorySnapshot:
     """Byte-exact directory contents captured through pinned/no-follow handles."""
 
@@ -361,8 +369,10 @@ class VerifiedDirectorySnapshot:
     directories: frozenset[str]
 
 
-def create_owned_staging_directory(destination: Path) -> Path:
-    """Create a sibling staging tree for later identity-bound publication."""
+def create_owned_staging_directory(
+    destination: Path,
+) -> tuple[Path, OwnedDirectoryRootIdentity]:
+    """Create sibling staging and immediately fix its no-follow root identity."""
     if os.path.lexists(destination):
         raise FileExistsError(f"artifact bundle destination already exists: {destination}")
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -373,7 +383,8 @@ def create_owned_staging_directory(destination: Path) -> Path:
             prefix=f".{destination.name}.tmp-",
         )
     )
-    return staging
+    metadata = staging.stat(follow_symlinks=False)
+    return staging, OwnedDirectoryRootIdentity(metadata.st_dev, metadata.st_ino)
 
 
 def capture_owned_directory_identity(staging: Path) -> OwnedDirectoryIdentity:
@@ -434,6 +445,41 @@ def delete_owned_staging_directory(
         return False
     except Exception:
         raise RuntimeError("artifact staging cleanup conflict") from None
+
+
+def quarantine_owned_staging_directory(
+    staging: Path, identity: OwnedDirectoryRootIdentity
+) -> bool:
+    """Move an identity-matching partial staging root out of the temp namespace.
+
+    The quarantine is retained.  Cleanup errors never replace the operation's
+    original exception, and a root already replaced before validation is untouched.
+    """
+    try:
+        metadata = staging.stat(follow_symlinks=False)
+    except (FileNotFoundError, OSError):
+        return False
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or _is_reparse_point(metadata)
+        or (metadata.st_dev, metadata.st_ino) != (identity.device, identity.inode)
+    ):
+        return False
+    quarantine = _posix_cleanup_tombstone(staging)
+    try:
+        _publish_no_replace(staging, quarantine)
+    except (FileNotFoundError, OSError, RuntimeError):
+        return False
+    try:
+        quarantined = quarantine.stat(follow_symlinks=False)
+    except (FileNotFoundError, OSError):
+        return False
+    return (
+        stat.S_ISDIR(quarantined.st_mode)
+        and not _is_reparse_point(quarantined)
+        and (quarantined.st_dev, quarantined.st_ino)
+        == (identity.device, identity.inode)
+    )
 
 
 def read_verified_directory_tree(root: Path) -> VerifiedDirectorySnapshot:

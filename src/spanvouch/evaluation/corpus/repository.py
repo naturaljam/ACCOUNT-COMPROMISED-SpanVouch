@@ -16,6 +16,7 @@ from spanvouch.evaluation.artifacts import (
     create_owned_staging_directory,
     delete_owned_staging_directory,
     publish_directory_no_replace,
+    quarantine_owned_staging_directory,
     read_verified_directory_tree,
     require_safe_artifact_content,
 )
@@ -109,7 +110,7 @@ class TraceReplayRepository:
             cls._bind_payload(payloads, entry.record_path, canonical_bytes(record))
             cls._bind_payload(payloads, entry.trace_path, canonical_bytes(record.trace))
 
-        staging = create_owned_staging_directory(destination)
+        staging, root_identity = create_owned_staging_directory(destination)
         identity = None
         try:
             for relative in sorted(_DIRECTORIES, key=lambda value: (value.count("/"), value)):
@@ -121,8 +122,11 @@ class TraceReplayRepository:
             publish_directory_no_replace(staging, destination)
             _fsync_directory(destination.parent)
         except Exception:
-            if os.path.lexists(staging) and identity is not None:
-                delete_owned_staging_directory(staging, identity)
+            if os.path.lexists(staging):
+                if identity is not None:
+                    delete_owned_staging_directory(staging, identity)
+                else:
+                    quarantine_owned_staging_directory(staging, root_identity)
             raise
         return cls(
             destination,

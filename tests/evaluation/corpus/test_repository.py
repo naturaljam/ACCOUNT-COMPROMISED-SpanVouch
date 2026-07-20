@@ -289,6 +289,82 @@ def test_failed_publish_cleans_or_quarantines_only_the_owned_staging_tree(
         assert (tombstones[0] / "manifest.json").is_file()
 
 
+@pytest.mark.parametrize("failure_stage", ("write", "file_fsync", "directory_fsync"))
+def test_pre_identity_failure_quarantines_partial_owned_staging(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    record: ExecutionRecord,
+    parity_results: tuple[ParityResult, ...],
+    manifest_metadata: CorpusManifestMetadata,
+    failure_stage: str,
+) -> None:
+    destination = tmp_path / "corpus"
+
+    if failure_stage == "write":
+        monkeypatch.setattr(
+            TraceReplayRepository,
+            "_write_synced",
+            staticmethod(lambda _path, _content: (_ for _ in ()).throw(OSError("write failed"))),
+        )
+        message = "write failed"
+    elif failure_stage == "file_fsync":
+        monkeypatch.setattr(
+            repository_module.os,
+            "fsync",
+            lambda _descriptor: (_ for _ in ()).throw(OSError("file fsync failed")),
+        )
+        message = "file fsync failed"
+    else:
+        monkeypatch.setattr(
+            repository_module,
+            "_fsync_directory",
+            lambda _path: (_ for _ in ()).throw(OSError("directory fsync failed")),
+        )
+        message = "directory fsync failed"
+
+    with pytest.raises(OSError, match=message):
+        _freeze(destination, record, parity_results, manifest_metadata)
+
+    assert not tuple(tmp_path.glob(".corpus.tmp-*"))
+    tombstones = tuple(tmp_path.glob(".corpus.rollback-*"))
+    assert len(tombstones) == 1
+
+
+def test_pre_identity_cleanup_does_not_touch_replaced_root_or_mask_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    record: ExecutionRecord,
+    parity_results: tuple[ParityResult, ...],
+    manifest_metadata: CorpusManifestMetadata,
+) -> None:
+    destination = tmp_path / "corpus"
+    foreign_root: Path | None = None
+    displaced_owned: Path | None = None
+
+    def replace_root_then_fail(path: Path, _content: bytes) -> None:
+        nonlocal foreign_root, displaced_owned
+        staging = next(
+            parent for parent in path.parents if parent.name.startswith(".corpus.tmp-")
+        )
+        displaced_owned = staging.with_name(".corpus.interrupted-owned")
+        staging.rename(displaced_owned)
+        staging.mkdir()
+        foreign_root = staging
+        (foreign_root / "foreign.txt").write_bytes(b"preserve")
+        raise OSError("write failed")
+
+    monkeypatch.setattr(
+        TraceReplayRepository, "_write_synced", staticmethod(replace_root_then_fail)
+    )
+    with pytest.raises(OSError, match="write failed"):
+        _freeze(destination, record, parity_results, manifest_metadata)
+
+    assert foreign_root is not None
+    assert (foreign_root / "foreign.txt").read_bytes() == b"preserve"
+    assert displaced_owned is not None and displaced_owned.is_dir()
+    assert not tuple(tmp_path.glob(".corpus.rollback-*"))
+
+
 def test_failed_publish_preserves_foreign_staging_replacement(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
