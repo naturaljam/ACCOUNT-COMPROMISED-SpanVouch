@@ -83,7 +83,11 @@ uv run --no-sync python -m spanvouch.evaluation.offline_acceptance `
 Compare `config.json`, `metrics.json`, `structured-events.jsonl`, `README.md`, and
 their manifest payload digests byte-for-byte. The committed `manifest.json` file
 has SHA-256
-`7945b2183df777ee37a6c6ca722e6e999ba5ff65d455fe154db9dae9f35674df`.
+`17899e14a53f685498b37707fae25263ff6a76cebc80c2060ee86c9de13550bb`.
+The accepted bundle was generated from clean code-under-test commit
+`73b40480609325f8e80d41629573a6bab754ade0`. The command refuses a dirty Git
+worktree; tests may inject an explicit deterministic fixture identity only for
+non-accepted reproducibility checks.
 
 ## 5. Verify the delivery gates
 

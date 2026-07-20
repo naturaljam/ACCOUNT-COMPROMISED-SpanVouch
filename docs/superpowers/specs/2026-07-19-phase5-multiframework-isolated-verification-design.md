@@ -144,6 +144,12 @@ The record cannot contain a gold diagnosis, expected verifier finding, split ide
 
 Stage A writes traces and records into an immutable corpus. Each payload is named by content hash, referenced by a corpus manifest, and verified before replay. Stage B rejects missing, unknown, duplicate, or hash-mismatched payloads. A formal trace is never regenerated to repair a Stage B result.
 
+Accepted reference generation discovers the full 40-hex code-under-test commit
+from Git and refuses a dirty worktree. That discovered identity is threaded into
+execution, corpus, environment, and artifact provenance. Explicit injected
+identities are reserved for deterministic tests and must still declare a clean
+fixture; they cannot justify a checked-in accepted reference.
+
 ## 5. Lab design
 
 ### 5.1 SupportLab
