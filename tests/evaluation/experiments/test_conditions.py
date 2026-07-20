@@ -328,6 +328,40 @@ async def test_condition_result_carries_only_hash_bound_sanitized_evaluation_evi
         type(result).model_validate(tampered)
 
 
+def test_condition_context_rejects_diagnosis_hash_and_message_history_drift() -> None:
+    context = _context(ConditionId.B0)
+    plan_payload = context.plan.model_dump(mode="python", exclude={"plan_id"})
+    drifted_plan = ConditionPlan.from_payload(
+        **{**plan_payload, "diagnosis_sha256": "f" * 64}
+    )
+    with pytest.raises(ValidationError, match="plan diagnosis"):
+        ConditionExecutionContext(
+            plan=drifted_plan,
+            verification_input=context.verification_input,
+            diagnosis_messages=context.diagnosis_messages,
+        )
+    with pytest.raises(ValidationError, match="history"):
+        ConditionExecutionContext(
+            plan=context.plan,
+            verification_input=context.verification_input,
+            diagnosis_messages=context.diagnosis_messages[:-1],
+        )
+
+
+@pytest.mark.asyncio
+async def test_executor_converts_invalid_copied_context_to_typed_failure() -> None:
+    context = _context(ConditionId.B0).model_copy(update={"diagnosis_messages": ()})
+    result = await ConditionExecutor().execute(
+        context,
+        deterministic=_RecordingVerifier(VerifierVerdict.VERIFIED),
+        deepseek=object(),
+        qwen=object(),
+    )
+    assert result.status is ConditionStatus.FAILED
+    assert result.failure is not None
+    assert result.failure.category is ExperimentFailureCategory.CONTRACT_INVALID
+
+
 @pytest.mark.parametrize("condition", [ConditionId.B2, ConditionId.B3, ConditionId.B4])
 @pytest.mark.asyncio
 async def test_semantic_conditions_call_the_selected_provider_and_accept_verified(

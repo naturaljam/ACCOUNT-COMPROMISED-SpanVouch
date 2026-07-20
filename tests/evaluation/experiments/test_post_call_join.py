@@ -3,11 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
-from spanvouch.contracts.versioning import canonical_sha256
+from spanvouch.contracts.versioning import canonical_bytes, canonical_sha256
+from spanvouch.evaluation import evaluate_phase5_matrix
 from spanvouch.evaluation.corpus.labels import GoldLabel, GoldLabelManifest
 from spanvouch.evaluation.evaluate_phase5_matrix import (
+    EvaluatedConditionResult,
+    EvaluationPhaseManifest,
     EvaluationPhaseRepository,
+    EvaluationResultEntry,
     PostCallEvaluator,
     _evaluate,
 )
@@ -153,6 +158,96 @@ def test_post_call_evaluator_signature_has_no_provider_or_live_arguments() -> No
     assert "api_key" not in signature
     assert "allow_live" not in signature
     assert "formal_run" not in signature
+
+
+def test_evaluation_models_reject_correctness_path_count_and_duplicate_drift() -> None:
+    plans, matrix = _plans_and_matrix()
+    plan = plans[0]
+    outcome = ProviderPlanOutcome(
+        plan=plan,
+        status=OutcomeStatus.COMPLETED,
+        result=_result(plan),
+    )
+    evaluated = _evaluate(outcome, "e" * 64, _labels(matrix).labels[0])
+    payload = evaluated.model_dump(mode="python")
+    with pytest.raises(ValidationError, match="non-completed"):
+        EvaluatedConditionResult.model_validate(
+            {**payload, "status": OutcomeStatus.PAUSED, "is_correct": True}
+        )
+    with pytest.raises(ValidationError, match="operational failure"):
+        EvaluatedConditionResult.model_validate(
+            {
+                **payload,
+                "failure_category": ExperimentFailureCategory.PROVIDER,
+                "is_correct": True,
+            }
+        )
+
+    entry = EvaluationResultEntry(
+        plan_id=plan.plan_id,
+        result_sha256="f" * 64,
+        result_path=f"results/{plan.plan_id}.json",
+    )
+    with pytest.raises(ValidationError, match="path"):
+        EvaluationResultEntry.model_validate(
+            {**entry.model_dump(), "result_path": "results/wrong.json"}
+        )
+    manifest = EvaluationPhaseManifest(
+        provider_manifest_sha256="1" * 64,
+        sealed_labels_manifest_sha256="2" * 64,
+        labels_sha256="3" * 64,
+        entries=(entry,),
+        evaluated_count=1,
+    )
+    with pytest.raises(ValidationError, match="count"):
+        EvaluationPhaseManifest.model_validate(
+            {**manifest.model_dump(), "evaluated_count": 2}
+        )
+    with pytest.raises(ValidationError, match="unique"):
+        EvaluationPhaseManifest.model_validate(
+            {**manifest.model_dump(), "entries": (entry, entry), "evaluated_count": 2}
+        )
+
+
+def test_evaluation_repository_and_default_cli_fail_closed_on_invalid_parents(
+    tmp_path: Path,
+) -> None:
+    existing = tmp_path / "existing"
+    existing.mkdir()
+    with pytest.raises(FileExistsError):
+        EvaluationPhaseRepository(existing)
+    repository = EvaluationPhaseRepository(tmp_path / "missing")
+    with pytest.raises(ValueError, match="SHA-256"):
+        repository.load("bad")
+    missing_root = tmp_path / "missing-manifest"
+    missing_root.mkdir()
+    (missing_root / "results").mkdir()
+    missing_repository = EvaluationPhaseRepository(tmp_path / "unused")
+    missing_repository.root = missing_root
+    with pytest.raises(ValueError, match="manifest is missing"):
+        missing_repository.verify()
+    with pytest.raises(ValueError, match="existing directory"):
+        evaluate_phase5_matrix.main(
+            [
+                "--provider-results", str(tmp_path / "absent"),
+                "--sealed-labels", str(tmp_path / "labels"),
+                "--output-dir", str(tmp_path / "out"),
+            ]
+        )
+
+    plans, matrix = _plans_and_matrix()
+    labels = _labels(matrix)
+    labels_dir = tmp_path / "labels"
+    labels_dir.mkdir()
+    (labels_dir / "manifest.json").write_bytes(canonical_bytes(labels) + b" ")
+    with pytest.raises(ValueError, match="not canonical"):
+        evaluate_phase5_matrix.main(
+            [
+                "--provider-results", str(existing),
+                "--sealed-labels", str(labels_dir),
+                "--output-dir", str(tmp_path / "out"),
+            ]
+        )
 
 
 def test_gold_join_scores_causal_subset_and_grounding_then_fails_closed() -> None:

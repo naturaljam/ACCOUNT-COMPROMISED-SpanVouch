@@ -366,3 +366,140 @@ async def test_invalid_verifier_instruction_fails_typed_before_provider_call(
     assert str(caught.value) == "invalid verifier instruction"
     assert provider.calls == 0
     assert not repository.exists(entry.cell)
+
+
+@pytest.mark.asyncio
+async def test_frozen_candidate_rejects_every_reconstructive_binding_drift(
+    tmp_path: Path,
+) -> None:
+    corpus, entry = _corpus(tmp_path)
+    candidate = await generate_and_freeze_diagnosis(
+        corpus=corpus,
+        cell=entry.cell,
+        expected_corpus_manifest_sha256=corpus.manifest_sha256,
+        expected_record_sha256=entry.record_sha256,
+        expected_trace_sha256=entry.trace_sha256,
+        provider=OfflineProvider(),
+        generation=GenerationConfig(),
+        repository=DiagnosisCandidateRepository(tmp_path / "candidates"),
+        verifier_instruction="Critique evidence sufficiency only.",
+    )
+    payload = candidate.model_dump(mode="python")
+    report = candidate.report.model_dump(mode="python")
+    provenance = candidate.report.provenance.model_dump(mode="python")
+    cases = (
+        {**payload, "diagnostic_context_sha256": "f" * 64},
+        {**payload, "evidence_catalog": ()},
+        {**payload, "evidence_catalog_sha256": "f" * 64},
+        {**payload, "report_sha256": "f" * 64},
+        {**payload, "generation_sha256": "f" * 64},
+        {**payload, "prompt_version": "drifted-prompt"},
+        {**payload, "report": {**report, "trace_id": "drifted-trace"}},
+        {
+            **payload,
+            "report": {
+                **report,
+                "provenance": {**provenance, "provider": "other-provider"},
+            },
+        },
+        {
+            **payload,
+            "usage": {**candidate.usage.model_dump(mode="python"), "request_id": "raw"},
+        },
+    )
+    for changed in cases:
+        with pytest.raises(ValueError):
+            FrozenDiagnosisCandidate.model_validate(changed)
+
+    altered = candidate.model_copy(
+        update={"shared_verifier_messages_sha256": "f" * 64}
+    )
+    with pytest.raises(ValueError, match="pre-call audit hash"):
+        reconstruct_shared_verifier_messages(
+            altered, "Critique evidence sufficiency only."
+        )
+
+
+@pytest.mark.asyncio
+async def test_candidate_repository_rejects_invalid_hashes_layout_and_address(
+    tmp_path: Path,
+) -> None:
+    corpus, entry = _corpus(tmp_path)
+    repository = DiagnosisCandidateRepository(tmp_path / "candidates")
+    candidate = await generate_and_freeze_diagnosis(
+        corpus=corpus,
+        cell=entry.cell,
+        expected_corpus_manifest_sha256=corpus.manifest_sha256,
+        expected_record_sha256=entry.record_sha256,
+        expected_trace_sha256=entry.trace_sha256,
+        provider=OfflineProvider(),
+        generation=GenerationConfig(),
+        repository=repository,
+        verifier_instruction="Critique evidence sufficiency only.",
+    )
+    digest = canonical_sha256(candidate)
+    with pytest.raises(ValueError, match="expected_candidate_sha256"):
+        repository.load(
+            entry.cell,
+            expected_candidate_sha256="bad",
+            expected_corpus_manifest_sha256=corpus.manifest_sha256,
+        )
+    with pytest.raises(ValueError, match="expected_corpus_manifest_sha256"):
+        repository.load(
+            entry.cell,
+            expected_candidate_sha256=digest,
+            expected_corpus_manifest_sha256="bad",
+        )
+
+    payload = next((tmp_path / "candidates/cells").rglob("*.json"))
+    renamed = payload.with_name(f"{'f' * 64}.json")
+    payload.rename(renamed)
+    with pytest.raises(ValueError, match="content address"):
+        repository.load(
+            entry.cell,
+            expected_candidate_sha256=digest,
+            expected_corpus_manifest_sha256=corpus.manifest_sha256,
+        )
+    renamed.rename(payload)
+    (payload.parent / "extra.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="unexpected layout"):
+        repository.load(
+            entry.cell,
+            expected_candidate_sha256=digest,
+            expected_corpus_manifest_sha256=corpus.manifest_sha256,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing_identity", [False, True])
+async def test_generation_rejects_provider_provenance_or_usage_identity(
+    tmp_path: Path, missing_identity: bool
+) -> None:
+    corpus, entry = _corpus(tmp_path)
+
+    class InvalidProvider(OfflineProvider):
+        async def complete(
+            self, messages: tuple[ChatMessage, ...], config: GenerationConfig
+        ) -> ProviderResponse:
+            response = await super().complete(messages, config)
+            if missing_identity:
+                return response.model_copy(
+                    update={
+                        "usage": response.usage.model_copy(update={"request_id": None})
+                    }
+                )
+            return response.model_copy(update={"model": "wrong-model"})
+
+    with pytest.raises(DiagnosisExperimentFailure) as caught:
+        await generate_and_freeze_diagnosis(
+            corpus=corpus,
+            cell=entry.cell,
+            expected_corpus_manifest_sha256=corpus.manifest_sha256,
+            expected_record_sha256=entry.record_sha256,
+            expected_trace_sha256=entry.trace_sha256,
+            provider=InvalidProvider(),
+            generation=GenerationConfig(),
+            repository=DiagnosisCandidateRepository(tmp_path / "candidates"),
+            verifier_instruction="Critique evidence sufficiency only.",
+        )
+    assert caught.value.code == "contract_failure"
