@@ -54,6 +54,7 @@ from spanvouch.evaluation.experiments.models import (
     ConditionPlan,
     ConditionResult,
     ConditionStatus,
+    ExperimentFailureCategory,
     ExperimentMatrixManifest,
     SelectiveAction,
 )
@@ -554,7 +555,16 @@ def _observations(
                 confidence=1.0,
                 completion=joined.status.value == "completed",
                 operational_failure=(
-                    joined.failure_category.value if joined.failure_category is not None else None
+                    joined.failure_category.value
+                    if joined.failure_category
+                    in {
+                        ExperimentFailureCategory.FRAMEWORK_EXECUTION,
+                        ExperimentFailureCategory.FRAMEWORK_INCOMPATIBILITY,
+                        ExperimentFailureCategory.INFRASTRUCTURE,
+                        ExperimentFailureCategory.PROVIDER,
+                        ExperimentFailureCategory.CONTRACT_INVALID,
+                    }
+                    else None
                 ),
                 family_correct=joined.is_correct,
                 causal_correct=joined.is_correct,

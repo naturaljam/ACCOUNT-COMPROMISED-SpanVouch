@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import socket
 from pathlib import Path
 
@@ -50,6 +51,11 @@ async def test_zero_provider_pipeline_is_network_free_and_logically_deterministi
     assert first.provider_calls == 0
     assert first.gpu_calls == 0
     assert first.fake_evidence is True
+    metrics = json.loads((tmp_path / "first" / "bundle" / "metrics.json").read_text())
+    condition_metrics = metrics["statistics"]["condition_metrics"]
+    assert all(values["accepted_count"] == 4 for values in condition_metrics.values())
+    assert all(values["coverage"] == 1.0 for values in condition_metrics.values())
+    assert all(values["false_acceptance_risk"] == 1.0 for values in condition_metrics.values())
     assert read_verified_directory_tree(tmp_path / "first" / "bundle").files == (
         read_verified_directory_tree(tmp_path / "second" / "bundle").files
     )

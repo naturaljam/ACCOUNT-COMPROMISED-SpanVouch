@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, field_validator
 
 from spanvouch.contracts.artifacts import ArtifactManifest, CodeProvenance
 from spanvouch.contracts.versioning import SHA256_PATTERN, canonical_bytes, canonical_sha256
@@ -978,6 +978,12 @@ def _validate_config(value: Any) -> None:
     if isinstance(value, Phase5BundleConfig):
         Phase5BundleConfig.model_validate(value.model_dump(mode="python"))
         return
+    try:
+        Phase5BundleConfig.model_validate(value)
+    except ValidationError:
+        pass
+    else:
+        return
     _require_safe("config", value)
     if not isinstance(value, Mapping):
         _unsafe_artifact_content()
@@ -1230,4 +1236,7 @@ def _require_safe(location: str, value: Any) -> None:
 
 def require_safe_artifact_content(location: str, value: Any) -> None:
     """Apply the fail-closed artifact classifier at a named persistence boundary."""
+    if location == "config":
+        _validate_config(value)
+        return
     _require_safe(location, value)

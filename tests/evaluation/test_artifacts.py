@@ -82,6 +82,28 @@ def test_phase5_bundle_config_is_typed_extra_forbid_and_canonical(
         Phase5BundleConfig.model_validate({**payload, "api_key": {"value": "secret"}})
 
 
+def test_public_artifact_safety_boundary_validates_serialized_phase5_config() -> None:
+    payload = Phase5BundleConfig(
+        experiment_id="phase5-fixture",
+        mode="pilot",
+        config_sha256="0123456789abcdef" * 4,
+        corpus_manifest_sha256="123456789abcdef0" * 4,
+        candidate_manifest_sha256="23456789abcdef01" * 4,
+        matrix_manifest_sha256="3456789abcdef012" * 4,
+        provider_manifest_sha256="456789abcdef0123" * 4,
+        evaluated_results_manifest_sha256="56789abcdef01234" * 4,
+        analysis_seed=20260720,
+        bootstrap_draws=128,
+        policy_versions=("offline-smoke-v1",),
+    ).model_dump(mode="json")
+
+    artifacts_module.require_safe_artifact_content("config", payload)
+    with pytest.raises(ValueError, match="unsafe artifact content"):
+        artifacts_module.require_safe_artifact_content(
+            "config", {**payload, "untrusted_sha256": "6789abcdef012345" * 4}
+        )
+
+
 def test_phase4_legacy_config_bytes_remain_unchanged(
     tmp_path: Path, artifact_manifest: object
 ) -> None:
