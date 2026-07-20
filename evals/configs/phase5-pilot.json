@@ -60,11 +60,11 @@
   "live_provenance": {
     "deepseek": {
       "provider": "deepseek",
-      "model": "deepseek-chat",
+      "model": "deepseek-v4-flash",
       "endpoint_class": "chat-completions",
       "base_url_sha256": "a34e2a4708ed1c61008a151688838dcf1c44d4e7f08054633e72ba7c0b16cfc1",
       "pricing": {
-        "canonical_sha256": "3e8fcf52ed24ef0c21b2d3f99be333d5e737036b7999e33bce0d5172e7b0149d",
+        "canonical_sha256": "daee0780aa41958fe7daed76038ddd1f2e7d15e3e0a24db102c5432734810606",
         "source_url": "https://pricing.example.invalid/source",
         "effective_date": "2026-07-20",
         "currency": "CNY"

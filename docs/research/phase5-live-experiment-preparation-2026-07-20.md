@@ -32,6 +32,16 @@ These sizes are engineering estimates, not Qwen or vLLM guarantees. The official
    - Require Transport Layer Security (TLS) and a source-IP allowlist if traffic leaves the host
    - Set a short-lived server key as `VLLM_API_KEY`, the client copy as `SPANVOUCH_VLLM_API_KEY`, and the endpoint as `SPANVOUCH_VLLM_BASE_URL`
 
+Before composition, export `SPANVOUCH_DEEPSEEK_BASE_URL`,
+`SPANVOUCH_PHASE5_DEEPSEEK_PRICING_PATH`,
+`SPANVOUCH_PHASE5_QWEN_PRICING_PATH`,
+`SPANVOUCH_VLLM_CONTAINER_REPO_DIGEST`, `SPANVOUCH_VLLM_HF_REVISION`,
+`SPANVOUCH_VLLM_CHAT_TEMPLATE_SHA256`, `SPANVOUCH_VLLM_DTYPE`, and
+`SPANVOUCH_VLLM_MAX_MODEL_LEN`. SpanVouch normalizes the two base URLs and
+requires every secret-free deployment and pricing identity to match the frozen
+experiment configuration before it constructs a provider or opens the paid-run
+cache and budget ledger.
+
 Do not expose vLLM directly to the Internet. vLLM states that its API key protects OpenAI-compatible path prefixes but does not protect every endpoint on the server. Restrict the firewall to the minimum required surface. ([vLLM security guidance](https://docs.vllm.ai/en/latest/usage/security/))
 
 ## Freeze the deployment identity

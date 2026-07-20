@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 from typing import cast
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from pydantic import SecretStr
@@ -17,14 +20,22 @@ from spanvouch.adapters.models.openai_compatible import (
     OpenAICompatibleProvider,
 )
 from spanvouch.contracts.verification import ReviewInputSnapshot, VerificationInput
-from spanvouch.contracts.versioning import canonical_json, canonical_sha256
+from spanvouch.contracts.versioning import (
+    canonical_bytes,
+    canonical_json,
+    canonical_sha256,
+)
 from spanvouch.diagnosis.protocols import ChatMessage, ModelProvider
 from spanvouch.evaluation.experiments.budget import BudgetLedger, Pricing
 from spanvouch.evaluation.experiments.conditions import (
     ConditionExecutionContext,
     ConditionExecutor,
 )
-from spanvouch.evaluation.experiments.config import ConditionId, Phase5ExperimentConfig
+from spanvouch.evaluation.experiments.config import (
+    ConditionId,
+    EndpointDeploymentProvenance,
+    Phase5ExperimentConfig,
+)
 from spanvouch.evaluation.experiments.diagnosis import (
     FrozenDiagnosisCandidate,
     reconstruct_shared_verifier_messages,
@@ -53,12 +64,55 @@ def _required_environment(environ: Mapping[str, str], name: str) -> str:
     return value
 
 
-def _load_pricing(path: str, provider: str, model: str) -> Pricing:
+def _normalized_base_url(value: str) -> tuple[str, str]:
     try:
-        pricing = Pricing.model_validate_json(Path(path).read_text(encoding="utf-8"))
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or parsed.hostname is None
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError
+        port = parsed.port
+    except ValueError as error:
+        raise ProviderConfigurationError("provider base URL is invalid") from error
+    default_port = (parsed.scheme == "https" and port == 443) or (
+        parsed.scheme == "http" and port == 80
+    )
+    host = parsed.hostname.lower()
+    if ":" in host:
+        host = f"[{host}]"
+    authority = host if port is None or default_port else f"{host}:{port}"
+    normalized = urlunsplit(
+        (parsed.scheme.lower(), authority, parsed.path.rstrip("/"), "", "")
+    )
+    return normalized, sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _load_pricing(path: str, provenance: EndpointDeploymentProvenance) -> Pricing:
+    try:
+        content = Path(path).read_bytes()
+        payload = json.loads(content)
+        if canonical_bytes(payload) != content:
+            raise ValueError("pricing file is not canonical")
+        pricing = Pricing.model_validate(payload)
+        pricing.require_endpoint(provenance.provider, provenance.model)
+        if (
+            sha256(content).hexdigest() != provenance.pricing.canonical_sha256
+            or pricing.source_url != provenance.pricing.source_url
+            or pricing.effective_date != provenance.pricing.effective_date
+            or pricing.currency != provenance.pricing.currency
+            or pricing.provider != provenance.provider
+            or pricing.model != provenance.model
+        ):
+            raise ValueError("pricing identity drift")
     except (OSError, ValueError) as error:
-        raise ProviderConfigurationError("provider pricing is missing or invalid") from error
-    pricing.require_endpoint(provider, model)
+        raise ProviderConfigurationError(
+            "provider pricing provenance is missing or invalid"
+        ) from error
     return pricing
 
 
@@ -84,32 +138,59 @@ def _compose_live_providers(
         or qwen_endpoint.provider != "qwen"
     ):
         raise ProviderConfigurationError("experiment provider endpoints are unsupported")
+    deepseek_provenance = config.live_provenance.deepseek
+    qwen_provenance = config.live_provenance.qwen
+    deepseek_base_url, deepseek_base_url_sha256 = _normalized_base_url(
+        _required_environment(environ, "SPANVOUCH_DEEPSEEK_BASE_URL")
+    )
+    qwen_base_url, qwen_base_url_sha256 = _normalized_base_url(
+        _required_environment(environ, "SPANVOUCH_VLLM_BASE_URL")
+    )
+    qwen_repo_digest = _required_environment(
+        environ, "SPANVOUCH_VLLM_CONTAINER_REPO_DIGEST"
+    )
+    qwen_hf_revision = _required_environment(environ, "SPANVOUCH_VLLM_HF_REVISION")
+    try:
+        qwen_max_model_len = int(
+            _required_environment(environ, "SPANVOUCH_VLLM_MAX_MODEL_LEN")
+        )
+    except ValueError as error:
+        raise ProviderConfigurationError("provider provenance mismatch") from error
+    if (
+        deepseek_base_url_sha256 != deepseek_provenance.base_url_sha256
+        or qwen_base_url_sha256 != qwen_provenance.base_url_sha256
+        or qwen_repo_digest != qwen_provenance.container_repo_digest
+        or qwen_hf_revision != qwen_provenance.hf_revision
+        or _required_environment(environ, "SPANVOUCH_VLLM_CHAT_TEMPLATE_SHA256")
+        != qwen_provenance.chat_template_sha256
+        or _required_environment(environ, "SPANVOUCH_VLLM_DTYPE")
+        != qwen_provenance.dtype
+        or qwen_max_model_len != qwen_provenance.max_model_len
+    ):
+        raise ProviderConfigurationError("provider provenance mismatch")
+    deepseek_pricing = _load_pricing(
+        _required_environment(environ, "SPANVOUCH_PHASE5_DEEPSEEK_PRICING_PATH"),
+        deepseek_provenance,
+    )
+    qwen_pricing = _load_pricing(
+        _required_environment(environ, "SPANVOUCH_PHASE5_QWEN_PRICING_PATH"),
+        qwen_provenance,
+    )
     deepseek_key = _required_environment(environ, "DEEPSEEK_API_KEY")
     qwen_key = _required_environment(environ, "SPANVOUCH_VLLM_API_KEY")
     qwen_config = OpenAICompatibleConfig(
         api_key=SecretStr(qwen_key),
-        base_url=_required_environment(environ, "SPANVOUCH_VLLM_BASE_URL"),
+        base_url=qwen_base_url,
         expected_model=qwen_endpoint.model,
         endpoint_class=qwen_endpoint.endpoint_class,
         smoke_only=False,
-        container_repo_digest=_required_environment(
-            environ, "SPANVOUCH_VLLM_CONTAINER_REPO_DIGEST"
-        ),
-        hf_revision=_required_environment(environ, "SPANVOUCH_VLLM_HF_REVISION"),
+        container_repo_digest=qwen_repo_digest,
+        hf_revision=qwen_hf_revision,
     ).validate_for_experiment(config.mode.value)
-    deepseek_pricing = _load_pricing(
-        _required_environment(environ, "SPANVOUCH_PHASE5_DEEPSEEK_PRICING_PATH"),
-        deepseek_endpoint.provider,
-        deepseek_endpoint.model,
-    )
-    qwen_pricing = _load_pricing(
-        _required_environment(environ, "SPANVOUCH_PHASE5_QWEN_PRICING_PATH"),
-        qwen_endpoint.provider,
-        qwen_endpoint.model,
-    )
     return _LiveProviderComposition(
         deepseek=DeepSeekProvider(
-            DeepSeekConfig(api_key=SecretStr(deepseek_key)), client=deepseek_client
+            DeepSeekConfig(api_key=SecretStr(deepseek_key), base_url=deepseek_base_url),
+            client=deepseek_client,
         ),
         qwen=OpenAICompatibleProvider(qwen_config, client=qwen_client),
         pricing={"deepseek": deepseek_pricing, "qwen": qwen_pricing},

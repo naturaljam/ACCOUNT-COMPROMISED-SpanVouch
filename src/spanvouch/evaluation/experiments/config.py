@@ -215,7 +215,7 @@ class EndpointDeploymentProvenance(BaseModel):
 
     @property
     def sha256(self) -> str:
-        return canonical_sha256(self)
+        return canonical_sha256(cast(JsonValue, self.model_dump(mode="json")))
 
 
 class LiveDeploymentProvenance(BaseModel):

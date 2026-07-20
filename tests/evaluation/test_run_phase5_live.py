@@ -9,6 +9,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from spanvouch.contracts.versioning import canonical_bytes
 from spanvouch.evaluation import phase5_live_composition, run_phase5_matrix
 from spanvouch.evaluation.experiments.budget import Pricing
 from spanvouch.evaluation.experiments.config import (
@@ -33,7 +34,7 @@ def _pricing(path: Path, provider: str, model: str) -> Path:
         gpu_hourly=Decimal("0"),
         amounts="estimated",
     )
-    path.write_text(value.model_dump_json(), encoding="utf-8")
+    path.write_bytes(canonical_bytes(json.loads(value.model_dump_json())))
     return path
 
 
@@ -42,10 +43,14 @@ def _environment(tmp_path: Path) -> dict[str, str]:
     deepseek_key_name = "DEEPSEEK" + "_API_KEY"
     return {
         deepseek_key_name: deepseek_secret,
+        "SPANVOUCH_DEEPSEEK_BASE_URL": "https://api.deepseek.com/",
         "SPANVOUCH_VLLM_API_KEY": qwen_secret,
-        "SPANVOUCH_VLLM_BASE_URL": "https://qwen.example.invalid/v1",
+        "SPANVOUCH_VLLM_BASE_URL": "https://qwen.example.invalid/v1/",
         "SPANVOUCH_VLLM_CONTAINER_REPO_DIGEST": "vllm/vllm-openai@sha256:" + "a" * 64,
         "SPANVOUCH_VLLM_HF_REVISION": "b" * 40,
+        "SPANVOUCH_VLLM_CHAT_TEMPLATE_SHA256": "c" * 64,
+        "SPANVOUCH_VLLM_DTYPE": "bfloat16",
+        "SPANVOUCH_VLLM_MAX_MODEL_LEN": "32768",
         "SPANVOUCH_PHASE5_DEEPSEEK_PRICING_PATH": str(
             _pricing(tmp_path / "deepseek-price.json", "deepseek", "deepseek-v4-flash")
         ),
@@ -192,6 +197,77 @@ def test_live_composition_rejects_missing_env_endpoint_or_price_before_call(
         )
     assert calls == 0
     asyncio.run(client.aclose())
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("SPANVOUCH_DEEPSEEK_BASE_URL", "https://deepseek.example.invalid/v1"),
+        ("SPANVOUCH_VLLM_BASE_URL", "https://other.example.invalid/v1"),
+        (
+            "SPANVOUCH_VLLM_CONTAINER_REPO_DIGEST",
+            "vllm/vllm-openai@sha256:" + "d" * 64,
+        ),
+        ("SPANVOUCH_VLLM_HF_REVISION", "d" * 40),
+        ("SPANVOUCH_VLLM_CHAT_TEMPLATE_SHA256", "d" * 64),
+        ("SPANVOUCH_VLLM_DTYPE", "float16"),
+        ("SPANVOUCH_VLLM_MAX_MODEL_LEN", "16384"),
+    ],
+)
+def test_live_composition_rejects_deployment_provenance_drift(
+    tmp_path: Path, name: str, value: str
+) -> None:
+    environ = _environment(tmp_path)
+    environ[name] = value
+
+    with pytest.raises(ProviderConfigurationError, match="provenance mismatch") as raised:
+        phase5_live_composition._compose_live_providers(
+            load_experiment_config(Path("evals/configs/phase5-pilot.json")),
+            environ=environ,
+        )
+
+    assert value not in str(raised.value)
+
+
+@pytest.mark.parametrize("provider", ["deepseek", "qwen"])
+@pytest.mark.parametrize("noncanonical", [False, True])
+def test_live_composition_rejects_pricing_identity_drift(
+    tmp_path: Path, provider: str, noncanonical: bool
+) -> None:
+    environ = _environment(tmp_path)
+    path = Path(environ[f"SPANVOUCH_PHASE5_{provider.upper()}_PRICING_PATH"])
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if noncanonical:
+        path.write_bytes(canonical_bytes(payload) + b"\n")
+    else:
+        payload["source_url"] = "https://drift.example.invalid/source"
+        path.write_bytes(canonical_bytes(payload))
+
+    with pytest.raises(ProviderConfigurationError, match="pricing provenance"):
+        phase5_live_composition._compose_live_providers(
+            load_experiment_config(Path("evals/configs/phase5-pilot.json")),
+            environ=environ,
+        )
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("SPANVOUCH_DEEPSEEK_BASE_URL", "https://user:secret@api.deepseek.com"),
+        ("SPANVOUCH_VLLM_BASE_URL", "https://qwen.example.invalid/v1?token=secret"),
+    ],
+)
+def test_live_composition_rejects_non_secret_free_base_url(
+    tmp_path: Path, name: str, value: str
+) -> None:
+    environ = _environment(tmp_path)
+    environ[name] = value
+    with pytest.raises(ProviderConfigurationError, match="base URL is invalid") as raised:
+        phase5_live_composition._compose_live_providers(
+            load_experiment_config(Path("evals/configs/phase5-pilot.json")),
+            environ=environ,
+        )
+    assert "secret" not in str(raised.value)
 
 
 def test_formal_live_cli_defers_to_paid_authorization_before_provider_env(

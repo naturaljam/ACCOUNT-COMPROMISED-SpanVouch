@@ -39,6 +39,14 @@ chat template supports `chat_template_kwargs.enable_thinking=false`; Phase 5 sen
 that setting on every structured generation and does not retain hidden reasoning.
 Record the complete command with secret values redacted.
 
+Export the frozen client-side provenance as
+`SPANVOUCH_VLLM_CONTAINER_REPO_DIGEST`, `SPANVOUCH_VLLM_HF_REVISION`,
+`SPANVOUCH_VLLM_CHAT_TEMPLATE_SHA256`, `SPANVOUCH_VLLM_DTYPE`, and
+`SPANVOUCH_VLLM_MAX_MODEL_LEN`. Set the canonical Qwen pricing file path as
+`SPANVOUCH_PHASE5_QWEN_PRICING_PATH`. These values are not credentials, but they
+must match the approved experiment manifest exactly. SpanVouch rejects missing,
+noncanonical, or drifted values before provider construction.
+
 ## 3. Smoke-test before authorization
 
 First verify `/v1/models` returns exactly the expected served ID:
