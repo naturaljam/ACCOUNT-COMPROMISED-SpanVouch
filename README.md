@@ -2,6 +2,35 @@
 
 SpanVouch is a production-oriented agent diagnosis and review system. IVAD is its research method for independently verified agent diagnosis. Phase 1 provides the reproducible SupportLab target agent, TraceIR v1, and 20 frozen traces. Phase 2 adds deterministic and explicitly enabled DeepSeek diagnosis. Phase 3 adds deterministic and optional semantic verification, a one-revision bound, SQLite recovery, and mandatory human `confirm`, `correct`, or `reject` decisions through API and CLI.
 
+## Phase 5 research laboratory
+
+Phase 5 adds a two-stage, research-only laboratory. Stage A executes the same
+SupportLab and OpsLab scenarios through isolated LangGraph and AutoGen adapters,
+then freezes sanitized traces before any gold label is available to a model.
+Stage B replays those frozen inputs and compares the preregistered B0-B5
+verification conditions. Provider execution, the post-call label join, statistics,
+and paper assets are separate boundaries.
+
+The zero-provider checks are an **offline engineering acceptance** gate. They prove
+determinism, framework/data isolation, contract conformance, and secret hygiene;
+they are **not paper evidence** and do not establish that independent verification
+improves diagnosis reliability. Formal DeepSeek/Qwen evidence: not collected.
+Cloud GPU: unapproved.
+
+From a clean committed checkout, run the offline boundary gate and regenerate the
+Stage A pilot corpus without provider credentials:
+
+```bash
+uv run pytest tests/architecture/test_phase5_boundaries.py -v
+uv run spanvouch labs corpus --mode pilot --config evals/configs/phase5-pilot.json --output-dir .cache/phase5-pilot-corpus
+uv run spanvouch labs labels --corpus-dir .cache/phase5-pilot-corpus --output-dir .cache/phase5-pilot-labels-sealed
+```
+
+Corpus execution uses scripted lab agents and makes no DeepSeek or Qwen request.
+Label generation is deliberately separate and writes outside the corpus root. See
+`docs/evaluation/phase5-reproduction-runbook.md` for the full offline sequence and
+`docs/evaluation/phase5-acceptance.md` for the current evidence status.
+
 ## Requirements
 
 - Python 3.12

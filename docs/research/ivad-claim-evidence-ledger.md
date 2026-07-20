@@ -18,3 +18,8 @@ establish a paper effectiveness result.
 
 The frozen 36-candidate deterministic results are a regression guard for known
 engineering behavior, not statistical evidence of general effectiveness.
+
+Phase 5 architecture and CI checks are offline engineering acceptance evidence
+only; they are not paper evidence. Formal DeepSeek/Qwen evidence: not collected.
+Cloud GPU: unapproved. Until a complete frozen formal matrix produces a verified
+analysis manifest and claim-gate JSON, the Phase 5 rows above remain unchanged.

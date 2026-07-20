@@ -38,3 +38,23 @@ uv run spanvouch evaluate review --output .cache/phase4-reproduction/metrics.jso
 Compare `.cache/phase4-reproduction/metrics.json` with
 `evals/reports/reference/phase4-offline-bundle/metrics.json` byte-for-byte and
 compare the generated manifest hash with the published reference manifest.
+
+## Phase 5 evidence classes
+
+Phase 5 maintains two evidence classes that must never be conflated:
+
+1. **Offline engineering acceptance** covers deterministic lab execution,
+   LangGraph/AutoGen parity, Stage A/Stage B separation, label isolation, B0-B5
+   plumbing, architecture tests, and sanitized reproducible artifacts.
+2. **Formal research evidence** requires an explicitly approved, frozen run using
+   the registered DeepSeek generator/verifiers and isolated Qwen verifier. It must
+   include complete paired cells, provider/GPU provenance, cost records, post-call
+   label joining, preregistered statistics, and claim-gate outputs.
+
+Offline fixtures and fake-provider results are not paper evidence. Formal
+DeepSeek/Qwen evidence: not collected. Cloud GPU: unapproved. H1-H5 therefore stay
+planned or unresolved; no documentation gate can advance the claim ledger.
+
+The exact offline sequence and hash checks are in
+`docs/evaluation/phase5-reproduction-runbook.md`. Current completion criteria and
+explicitly missing evidence are in `docs/evaluation/phase5-acceptance.md`.
