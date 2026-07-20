@@ -612,6 +612,10 @@ def test_secret_classifier_keeps_corpus_identifier_exemptions_narrow(
             ("corpus_manifest", "parity_entries", "result_sha256"),
             "a" * 64,
         ),
+        (
+            ("corpus_manifest", "parity_payloads_sha256"),
+            "a" * 64,
+        ),
     ),
 )
 def test_secret_classifier_allows_only_typed_phase5_parity_identifiers(
@@ -642,6 +646,28 @@ def test_secret_classifier_keeps_phase5_parity_exemptions_path_and_grammar_exact
 ) -> None:
     with pytest.raises(ValueError, match="unsafe artifact content"):
         artifacts_module.ArtifactSecretClassifier().require_safe(value, path=path)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("result_sha256", "0123456789abcdef" * 4),
+        ("parity_payloads_sha256", "0123456789abcdef" * 4),
+        ("result_sha256", _LOWERCASE_OPAQUE_TOKEN),
+        ("parity_payloads_sha256", _LOWERCASE_OPAQUE_TOKEN),
+        ("result_sha256", "sk-" + "0123456789abcdefghijklmnop"),
+        ("parity_payloads_sha256", "sk-" + "0123456789abcdefghijklmnop"),
+    ),
+)
+def test_secret_classifier_rejects_parity_hash_names_at_arbitrary_trace_depth(
+    field: str,
+    value: str,
+) -> None:
+    with pytest.raises(ValueError, match="unsafe artifact content"):
+        artifacts_module.ArtifactSecretClassifier().require_safe(
+            value,
+            path=("corpus_trace", "spans", "attributes", field),
+        )
 
 
 @pytest.mark.parametrize(

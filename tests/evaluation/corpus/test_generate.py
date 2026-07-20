@@ -1,3 +1,4 @@
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
@@ -5,12 +6,21 @@ from pathlib import Path
 import pytest
 
 from spanvouch.contracts.trace import SpanKind, SpanStatus, TraceIR, TraceSpan
-from spanvouch.evaluation.corpus import CorpusManifest, TraceReplayRepository
+from spanvouch.contracts.versioning import canonical_bytes, canonical_sha256
+from spanvouch.evaluation.corpus import (
+    CorpusCell,
+    CorpusManifest,
+    CorpusManifestMetadata,
+    Phase5CorpusPlan,
+    TraceReplayRepository,
+)
 from spanvouch.evaluation.corpus.generate import (
     build_corpus_plan,
     generate_phase5_corpus,
 )
 from spanvouch.evaluation.experiments import (
+    ConditionId,
+    ExperimentMode,
     FormalFreezePolicy,
     Phase5ExperimentConfig,
     freeze_formal_config,
@@ -71,6 +81,12 @@ EXPECTED_SCENARIO_ORDER = (
     ("opslab", "resume-duplicate", "resume-duplicate"),
     ("opslab", "workflow-state-drift", "workflow-state-drift"),
     ("opslab", "recovery-control", "recovery-control"),
+)
+INVALID_CONFIG_UPDATES = (
+    ({"repetitions": 1}, "greater than or equal to 3"),
+    ({"mode": ExperimentMode.FORMAL}, "formal configuration must be frozen"),
+    ({"frameworks": ("langgraph",)}, "both frameworks exactly once"),
+    ({"conditions": tuple(ConditionId)[:-1]}, "all six conditions exactly once"),
 )
 
 
@@ -149,11 +165,57 @@ class _RecordingAdapter:
         )
 
 
+class _FailIfExecutedAdapter:
+    framework_version = "must-not-execute"
+
+    def __init__(self, framework_id: FrameworkId) -> None:
+        self.framework_id = framework_id
+
+    async def execute(
+        self, scenario: LabScenario, run_config: RuntimeConfig
+    ) -> ExecutionRecord:
+        raise AssertionError("invalid configuration reached adapter execution")
+
+
 def test_pilot_corpus_plan_is_complete() -> None:
     plan = build_corpus_plan(_pilot_config())
 
     assert len(plan) == EXPECTED_PILOT_CELLS == 216
     assert len({cell.identity for cell in plan}) == 216
+
+
+@pytest.mark.parametrize(("update", "message"), INVALID_CONFIG_UPDATES)
+def test_build_corpus_plan_round_trip_revalidates_copied_config(
+    update: dict[str, object],
+    message: str,
+) -> None:
+    invalid = _pilot_config().model_copy(update=update)
+
+    with pytest.raises(ValueError, match=message):
+        build_corpus_plan(invalid)
+
+
+@pytest.mark.parametrize(("update", "message"), INVALID_CONFIG_UPDATES)
+async def test_generation_round_trip_revalidates_copied_config_before_execution(
+    tmp_path: Path,
+    update: dict[str, object],
+    message: str,
+) -> None:
+    invalid = _pilot_config().model_copy(update=update)
+    destination = tmp_path / "invalid-corpus"
+
+    with pytest.raises(ValueError, match=message):
+        await generate_phase5_corpus(
+            config=invalid,
+            destination=destination,
+            adapters={
+                FrameworkId.LANGGRAPH: _FailIfExecutedAdapter(FrameworkId.LANGGRAPH),
+                FrameworkId.AUTOGEN: _FailIfExecutedAdapter(FrameworkId.AUTOGEN),
+            },
+            provenance=_provenance(),
+        )
+
+    assert not destination.exists()
 
 
 def test_pilot_corpus_plan_orders_each_seeded_framework_pair_together() -> None:
@@ -186,6 +248,44 @@ def test_pilot_corpus_plan_locks_the_full_ordered_identity_and_seed_sequence() -
 
     assert tuple(cell.identity for cell in plan) == tuple(expected_identities)
     assert tuple(cell.seed for cell in plan) == tuple(expected_seeds)
+
+
+def test_formal_plan_binding_uses_validated_frozen_repetitions() -> None:
+    pilot = _pilot_config()
+    policy = FormalFreezePolicy.model_validate_json(
+        Path("evals/configs/phase5-formal-policy.json").read_text(encoding="utf-8")
+    )
+    formal = freeze_formal_config(
+        pilot,
+        policy,
+        repetitions=policy.minimum_repetitions,
+        coverage_loss_tolerance=0.05,
+        frozen_at_utc=datetime(2026, 7, 19, tzinfo=UTC),
+    )
+    plan = build_corpus_plan(formal)
+    config_sha256 = canonical_sha256(formal.model_dump(mode="json"))
+    binding = Phase5CorpusPlan.from_cells(
+        mode="formal",
+        repetitions=formal.repetitions,
+        experiment_config_sha256=config_sha256,
+        ordered_cells=tuple(
+            CorpusCell(
+                domain=cell.scenario.domain,
+                template_id=cell.scenario.template_id,
+                scenario_id=cell.scenario.scenario_id,
+                framework_id=cell.framework_id,
+                repetition=cell.repetition,
+                seed=cell.seed,
+            )
+            for cell in plan
+        ),
+    )
+
+    assert binding.repetitions == policy.minimum_repetitions == 5
+    assert len(binding.ordered_cells) == 36 * 2 * binding.repetitions == 360
+    copied = binding.model_copy(update={"repetitions": 6})
+    with pytest.raises(ValueError, match="plan_identity_sha256"):
+        Phase5CorpusPlan.model_validate(copied.model_dump(mode="python"))
     assert all(
         not ({"condition", "condition_id", "model", "model_id"} & set(cell.__dict__))
         for cell in plan
@@ -228,6 +328,25 @@ async def test_generation_executes_pairs_validates_parity_and_freezes_once(
     manifest = result.repository.verify()
     assert manifest.metadata.expected_cell_count == 216
     assert manifest.metadata.expected_pair_count == 108
+    phase5_plan = manifest.metadata.phase5_plan
+    assert phase5_plan is not None
+    assert phase5_plan.mode == "pilot"
+    assert phase5_plan.repetitions == 3
+    assert len(phase5_plan.ordered_cells) == 216
+    assert len(phase5_plan.ordered_cells_sha256) == 64
+    assert len(phase5_plan.plan_identity_sha256) == 64
+    expected_plan_cells = tuple(
+        CorpusCell(
+            domain=cell.scenario.domain,
+            template_id=cell.scenario.template_id,
+            scenario_id=cell.scenario.scenario_id,
+            framework_id=cell.framework_id,
+            repetition=cell.repetition,
+            seed=cell.seed,
+        )
+        for cell in build_corpus_plan(_pilot_config())
+    )
+    assert phase5_plan.ordered_cells == expected_plan_cells
     assert len(manifest.parity_entries) == 108
     assert len({entry.pair_identity for entry in manifest.parity_entries}) == 108
     assert {
@@ -255,6 +374,26 @@ async def test_generation_executes_pairs_validates_parity_and_freezes_once(
     }
     with pytest.raises(ValueError, match="parity pair identities must be unique"):
         CorpusManifest.model_validate(duplicate)
+
+    copied_metadata = manifest.metadata.model_copy(update={"expected_cell_count": 1})
+    with pytest.raises(ValueError, match="Phase 5.*cell count"):
+        CorpusManifestMetadata.model_validate(copied_metadata.model_dump(mode="python"))
+
+    manifest_path = destination / "manifest.json"
+    original_manifest_bytes = manifest_path.read_bytes()
+    plan_tamper = deepcopy(manifest_payload)
+    plan_tamper["metadata"]["phase5_plan"]["ordered_cells"][0]["seed"] += 1
+    manifest_path.write_bytes(canonical_bytes(plan_tamper))
+    with pytest.raises(ValueError, match="ordered_cells_sha256"):
+        TraceReplayRepository(destination).verify()
+    manifest_path.write_bytes(original_manifest_bytes)
+
+    count_tamper = deepcopy(manifest_payload)
+    count_tamper["metadata"]["expected_cell_count"] = 1
+    manifest_path.write_bytes(canonical_bytes(count_tamper))
+    with pytest.raises(ValueError, match="Phase 5.*cell count"):
+        TraceReplayRepository(destination).verify()
+    manifest_path.write_bytes(original_manifest_bytes)
 
     parity_path = destination / manifest.parity_entries[0].result_path
     parity_path.write_bytes(b"{}")

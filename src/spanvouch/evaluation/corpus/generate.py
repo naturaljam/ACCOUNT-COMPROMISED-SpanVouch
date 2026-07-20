@@ -15,6 +15,7 @@ from spanvouch.evaluation.corpus.models import (
     CorpusCell,
     CorpusManifest,
     CorpusManifestMetadata,
+    Phase5CorpusPlan,
 )
 from spanvouch.evaluation.corpus.repository import TraceReplayRepository
 from spanvouch.evaluation.experiments import Phase5ExperimentConfig
@@ -74,6 +75,7 @@ class CorpusGenerationResult:
 
 def build_corpus_plan(config: Phase5ExperimentConfig) -> tuple[CorpusPlanCell, ...]:
     """Build all scenario/repetition pairs without condition or model metadata."""
+    config = Phase5ExperimentConfig.model_validate(config.model_dump(mode="json"))
     scenarios = (
         *build_support_lab_scenarios(config.seed),
         *(template.to_lab_scenario() for template in build_opslab_templates()),
@@ -103,6 +105,7 @@ async def generate_phase5_corpus(
     created_at_utc: datetime | None = None,
 ) -> CorpusGenerationResult:
     """Execute every matched pair once and publish one immutable corpus."""
+    config = Phase5ExperimentConfig.model_validate(config.model_dump(mode="json"))
     if destination.exists():
         raise FileExistsError("corpus destination must not already exist")
     if config.mode.value == "formal":
@@ -136,16 +139,35 @@ async def generate_phase5_corpus(
         parity_results.append(validator.validate(pair[0], pair[1]))
 
     frozen_parity = tuple(parity_results)
+    experiment_config_sha256 = canonical_sha256(config.model_dump(mode="json"))
+    ordered_cells = tuple(
+        CorpusCell(
+            domain=cell.scenario.domain,
+            template_id=cell.scenario.template_id,
+            scenario_id=cell.scenario.scenario_id,
+            framework_id=cell.framework_id,
+            repetition=cell.repetition,
+            seed=cell.seed,
+        )
+        for cell in plan
+    )
+    phase5_plan = Phase5CorpusPlan.from_cells(
+        mode=config.mode.value,
+        repetitions=config.repetitions,
+        experiment_config_sha256=experiment_config_sha256,
+        ordered_cells=ordered_cells,
+    )
     metadata = CorpusManifestMetadata(
         corpus_id=f"phase5-{config.mode.value}",
         mode=config.mode.value,
-        experiment_config_sha256=canonical_sha256(config.model_dump(mode="json")),
+        experiment_config_sha256=experiment_config_sha256,
         git_commit=provenance.git_commit,
         dependency_lock_sha256=provenance.dependency_lock_sha256,
         dataset_manifest_sha256=provenance.dataset_manifest_sha256,
         dirty_worktree=provenance.dirty_worktree,
         expected_cell_count=len(plan),
         expected_pair_count=len(plan) // 2,
+        phase5_plan=phase5_plan,
         created_at_utc=created_at_utc or datetime.now(UTC),
         parity_results_sha256=canonical_sha256(
             cast(

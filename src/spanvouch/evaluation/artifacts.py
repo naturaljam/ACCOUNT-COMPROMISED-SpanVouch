@@ -96,11 +96,9 @@ _CORPUS_HASH_FIELDS = frozenset(
         "experimentconfigsha256",
         "injectiontriggersha256",
         "parityresultssha256",
-        "paritypayloadssha256",
         "payloadssha256",
         "recordsha256",
         "recordssha256",
-        "resultsha256",
         "runtimeconfigsha256",
         "scenarioinputsha256",
         "terminalpredicatesha256",
@@ -126,6 +124,10 @@ _CORPUS_SPAN_ID_PATHS = frozenset(
 )
 _CORPUS_EXACT_SHA256_PATHS = frozenset(
     {
+        ("corpus_manifest", "metadata", "phase5_plan", "ordered_cells_sha256"),
+        ("corpus_manifest", "metadata", "phase5_plan", "plan_identity_sha256"),
+        ("corpus_manifest", "parity_entries", "result_sha256"),
+        ("corpus_manifest", "parity_payloads_sha256"),
         ("corpus_parity_results", "mismatches", "reference_sha256"),
         ("corpus_parity_results", "mismatches", "candidate_sha256"),
         ("corpus_parity_results", "result", "mismatches", "reference_sha256"),

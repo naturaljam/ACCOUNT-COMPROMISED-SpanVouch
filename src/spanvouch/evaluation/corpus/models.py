@@ -149,6 +149,98 @@ class CorpusParityEntry(BaseModel):
         )
 
 
+class Phase5CorpusPlan(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schema_name: Literal["spanvouch.phase5-corpus-plan"] = (
+        "spanvouch.phase5-corpus-plan"
+    )
+    schema_version: Literal["1.0"] = "1.0"
+    mode: Literal["pilot", "formal"]
+    repetitions: int = Field(ge=3, le=20)
+    experiment_config_sha256: str = Field(pattern=SHA256_PATTERN)
+    ordered_cells: tuple[CorpusCell, ...] = Field(min_length=1)
+    ordered_cells_sha256: str = Field(pattern=SHA256_PATTERN)
+    plan_identity_sha256: str = Field(pattern=SHA256_PATTERN)
+
+    @model_validator(mode="after")
+    def validate_plan(self) -> Self:
+        if len(set(self.ordered_cells)) != len(self.ordered_cells):
+            raise ValueError("Phase 5 ordered plan cells must be unique")
+        cells_payload = cast(
+            JsonValue,
+            [cell.model_dump(mode="json") for cell in self.ordered_cells],
+        )
+        if canonical_sha256(cells_payload) != self.ordered_cells_sha256:
+            raise ValueError("ordered_cells_sha256 does not match Phase 5 plan cells")
+        identity_payload = {
+            "experiment_config_sha256": self.experiment_config_sha256,
+            "mode": self.mode,
+            "ordered_cells_sha256": self.ordered_cells_sha256,
+            "repetitions": self.repetitions,
+            "schema_name": self.schema_name,
+            "schema_version": self.schema_version,
+        }
+        if canonical_sha256(cast(JsonValue, identity_payload)) != self.plan_identity_sha256:
+            raise ValueError("plan_identity_sha256 does not match Phase 5 plan")
+
+        expected_cells = 36 * 2 * self.repetitions
+        if self.mode == "pilot" and self.repetitions != 3:
+            raise ValueError("Phase 5 pilot plan requires exactly three repetitions")
+        if self.mode == "formal" and self.repetitions < 5:
+            raise ValueError("Phase 5 formal plan requires at least five repetitions")
+        if len(self.ordered_cells) != expected_cells:
+            raise ValueError("Phase 5 plan cell count does not match validated repetitions")
+
+        pairs = tuple(zip(self.ordered_cells[::2], self.ordered_cells[1::2], strict=True))
+        if any(
+            reference.framework_id is not FrameworkId.LANGGRAPH
+            or candidate.framework_id is not FrameworkId.AUTOGEN
+            or reference.pair_identity != candidate.pair_identity
+            for reference, candidate in pairs
+        ):
+            raise ValueError("Phase 5 ordered plan must contain adjacent framework pairs")
+        scenarios: dict[tuple[str, str, str], set[int]] = {}
+        for reference, _candidate in pairs:
+            key = (reference.domain, reference.template_id, reference.scenario_id)
+            scenarios.setdefault(key, set()).add(reference.repetition)
+        if len(scenarios) != 36 or any(
+            repetitions != set(range(1, self.repetitions + 1))
+            for repetitions in scenarios.values()
+        ):
+            raise ValueError("Phase 5 plan repetition matrix is incomplete")
+        return self
+
+    @classmethod
+    def from_cells(
+        cls,
+        *,
+        mode: Literal["pilot", "formal"],
+        repetitions: int,
+        experiment_config_sha256: str,
+        ordered_cells: tuple[CorpusCell, ...],
+    ) -> Self:
+        cells_sha256 = canonical_sha256(
+            cast(JsonValue, [cell.model_dump(mode="json") for cell in ordered_cells])
+        )
+        identity_payload = {
+            "experiment_config_sha256": experiment_config_sha256,
+            "mode": mode,
+            "ordered_cells_sha256": cells_sha256,
+            "repetitions": repetitions,
+            "schema_name": "spanvouch.phase5-corpus-plan",
+            "schema_version": "1.0",
+        }
+        return cls(
+            mode=mode,
+            repetitions=repetitions,
+            experiment_config_sha256=experiment_config_sha256,
+            ordered_cells=ordered_cells,
+            ordered_cells_sha256=cells_sha256,
+            plan_identity_sha256=canonical_sha256(cast(JsonValue, identity_payload)),
+        )
+
+
 class CorpusManifestMetadata(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -161,6 +253,7 @@ class CorpusManifestMetadata(BaseModel):
     dirty_worktree: bool
     expected_cell_count: int = Field(ge=1)
     expected_pair_count: int = Field(ge=0)
+    phase5_plan: Phase5CorpusPlan | None = None
     created_at_utc: datetime
     parity_results_sha256: str = Field(pattern=SHA256_PATTERN)
 
@@ -170,6 +263,26 @@ class CorpusManifestMetadata(BaseModel):
         if value.tzinfo is None or value.utcoffset() != UTC.utcoffset(value):
             raise ValueError("created_at_utc must be UTC")
         return value
+
+    @model_validator(mode="after")
+    def validate_phase5_plan_binding(self) -> Self:
+        is_phase5 = self.corpus_id.startswith("phase5-")
+        if is_phase5 and self.phase5_plan is None:
+            raise ValueError("Phase 5 corpus metadata requires a canonical plan")
+        if not is_phase5 and self.phase5_plan is not None:
+            raise ValueError("generic corpus metadata forbids a Phase 5 plan")
+        if self.phase5_plan is None:
+            return self
+        plan = self.phase5_plan
+        if self.mode != plan.mode:
+            raise ValueError("Phase 5 corpus mode does not match its plan")
+        if self.experiment_config_sha256 != plan.experiment_config_sha256:
+            raise ValueError("Phase 5 experiment config hash does not match its plan")
+        if self.expected_cell_count != len(plan.ordered_cells):
+            raise ValueError("Phase 5 expected cell count does not match its plan")
+        if self.expected_pair_count != len(plan.ordered_cells) // 2:
+            raise ValueError("Phase 5 expected pair count does not match its plan")
+        return self
 
 
 class CorpusManifest(BaseModel):
@@ -213,6 +326,24 @@ class CorpusManifest(BaseModel):
             len(covered_cells) != len(cells) or set(covered_cells) != set(cells)
         ):
             raise ValueError("parity entries must provide complete corpus pair coverage")
+        plan = self.metadata.phase5_plan
+        if plan is not None:
+            if set(plan.ordered_cells) != set(cells):
+                raise ValueError("Phase 5 plan cells do not match corpus entries")
+            planned_pairs = tuple(
+                (reference, candidate)
+                for reference, candidate in zip(
+                    plan.ordered_cells[::2],
+                    plan.ordered_cells[1::2],
+                    strict=True,
+                )
+            )
+            manifest_pairs = tuple(
+                (entry.reference_cell, entry.candidate_cell)
+                for entry in self.parity_entries
+            )
+            if manifest_pairs != planned_pairs:
+                raise ValueError("Phase 5 parity entries do not match ordered plan pairs")
         (
             records_sha256,
             traces_sha256,

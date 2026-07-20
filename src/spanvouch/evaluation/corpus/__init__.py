@@ -5,6 +5,7 @@ from spanvouch.evaluation.corpus.models import (
     CorpusManifestMetadata,
     CorpusParityEntry,
     CorpusParityPayload,
+    Phase5CorpusPlan,
 )
 from spanvouch.evaluation.corpus.repository import TraceReplayRepository
 
@@ -15,5 +16,6 @@ __all__ = [
     "CorpusManifestMetadata",
     "CorpusParityEntry",
     "CorpusParityPayload",
+    "Phase5CorpusPlan",
     "TraceReplayRepository",
 ]
