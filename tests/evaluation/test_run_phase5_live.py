@@ -46,6 +46,9 @@ def _environment(tmp_path: Path) -> dict[str, str]:
     deepseek_key_name = "DEEPSEEK" + "_API_KEY"
     return {
         deepseek_key_name: deepseek_secret,
+        "SPANVOUCH_PHASE5_BUDGET_LEDGER_PATH": str(
+            (tmp_path / "global-budget.sqlite3").resolve()
+        ),
         "SPANVOUCH_DEEPSEEK_BASE_URL": "https://api.deepseek.com/",
         "SPANVOUCH_VLLM_API_KEY": qwen_secret,
         "SPANVOUCH_VLLM_BASE_URL": "https://qwen.example.invalid/v1/",
@@ -127,6 +130,10 @@ def test_pilot_live_cli_routes_deepseek_and_qwen_without_persisting_secrets(
         phase5_live_composition,
         "_compose_live_providers",
         lambda config, **kwargs: providers,
+    )
+    monkeypatch.setenv(
+        "SPANVOUCH_PHASE5_BUDGET_LEDGER_PATH",
+        str((tmp_path / "global-budget.sqlite3").resolve()),
     )
     approved_manifest = "a" * 64
 
@@ -376,3 +383,70 @@ def test_direct_composition_rejects_unbound_authorization_before_composition(
     assert raised.value.__cause__ is None
     assert config.experiment_id not in str(raised.value)
     assert matrix_manifest_sha256 not in str(raised.value)
+
+
+def test_live_composition_uses_one_absolute_ledger_across_manifests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = load_experiment_config(Path("evals/configs/phase5-pilot.json"))
+    ledger_path = (tmp_path / "global" / "phase5-budget.sqlite3").resolve()
+    pricing = {
+        "deepseek": Pricing(
+            provider="deepseek", model="deepseek-v4-flash", currency="CNY",
+            effective_date=date(2026, 7, 20), source_url="https://example.invalid",
+            input_per_million=Decimal("1"), output_per_million=Decimal("1"),
+            gpu_hourly=Decimal("0"), amounts="estimated",
+        ),
+        "qwen": Pricing(
+            provider="qwen", model="Qwen/Qwen3-14B", currency="CNY",
+            effective_date=date(2026, 7, 20), source_url="https://example.invalid",
+            input_per_million=Decimal("1"), output_per_million=Decimal("1"),
+            gpu_hourly=Decimal("1"), amounts="estimated",
+        ),
+    }
+    monkeypatch.setattr(
+        phase5_live_composition,
+        "_compose_live_providers",
+        lambda *args, **kwargs: phase5_live_composition._LiveProviderComposition(
+            deepseek=object(), qwen=object(), pricing=pricing
+        ),
+    )
+    monkeypatch.chdir(tmp_path)
+    executors = []
+    for manifest in ("a" * 64, "b" * 64):
+        executors.append(phase5_live_composition.compose_live_executor(
+            candidates=(), config=config,
+            authorization=PaidRunAuthorization(
+                experiment_id=config.experiment_id, allow_live_provider=True,
+                formal_run=False, frozen_manifest_sha256=manifest,
+            ),
+            matrix_manifest_sha256=manifest,
+            environ={"SPANVOUCH_PHASE5_BUDGET_LEDGER_PATH": str(ledger_path)},
+        ))
+
+    assert {executor._ledger.path for executor in executors} == {ledger_path}
+    assert executors[0]._cache.path != executors[1]._cache.path
+
+
+def test_live_composition_rejects_relative_ledger_before_provider_composition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = load_experiment_config(Path("evals/configs/phase5-pilot.json"))
+    calls = 0
+    def compose(*args: object, **kwargs: object) -> object:
+        nonlocal calls
+        calls += 1
+        raise AssertionError("provider composition reached")
+    monkeypatch.setattr(phase5_live_composition, "_compose_live_providers", compose)
+    manifest = "a" * 64
+    with pytest.raises(ProviderConfigurationError, match="budget ledger"):
+        phase5_live_composition.compose_live_executor(
+            candidates=(), config=config,
+            authorization=PaidRunAuthorization(
+                experiment_id=config.experiment_id, allow_live_provider=True,
+                frozen_manifest_sha256=manifest,
+            ),
+            matrix_manifest_sha256=manifest,
+            environ={"SPANVOUCH_PHASE5_BUDGET_LEDGER_PATH": "relative.sqlite3"},
+        )
+    assert calls == 0

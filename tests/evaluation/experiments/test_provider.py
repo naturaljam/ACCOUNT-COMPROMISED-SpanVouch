@@ -182,6 +182,31 @@ def guarded(
     )
 
 
+def test_guarded_provider_allows_matrix_cache_and_global_ledger_paths(
+    tmp_path: Path,
+) -> None:
+    cache = ProviderResultCache(tmp_path / "matrix-cache.sqlite3")
+    ledger = BudgetLedger(tmp_path / "global-budget.sqlite3", BudgetPolicy(
+        monthly_cap_cny=Decimal("100"),
+        pilot_fraction=Decimal("0.10"),
+        stop_fraction=Decimal("0.80"),
+    ))
+
+    provider = GuardedProvider(
+        delegate=CountingProvider(),
+        cache=cache,
+        ledger=ledger,
+        pricing=pricing(),
+        authorization=PaidRunAuthorization(
+            experiment_id="phase5-pilot", allow_live_provider=True
+        ),
+        mode=ExperimentMode.PILOT,
+        identity=base_identity(),
+    )
+
+    assert provider.cache.path != provider.ledger.path
+
+
 @pytest.mark.asyncio
 async def test_cache_hit_preserves_usage_cost_and_makes_no_second_call(
     tmp_path: Path,

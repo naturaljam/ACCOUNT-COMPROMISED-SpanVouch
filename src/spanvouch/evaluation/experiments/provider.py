@@ -363,8 +363,6 @@ class GuardedProvider:
         identity: RequestIdentity,
         at_utc: Callable[[], datetime] | None = None,
     ) -> None:
-        if cache.path != ledger.path:
-            raise ValueError("provider cache and budget ledger must share one SQLite file")
         self.delegate = delegate
         self.cache = cache
         self.ledger = ledger

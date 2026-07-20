@@ -94,6 +94,14 @@ def _required_environment(environ: Mapping[str, str], name: str) -> str:
     return value
 
 
+def _required_absolute_path(environ: Mapping[str, str], name: str) -> Path:
+    value = _required_environment(environ, name)
+    path = Path(value)
+    if value.startswith("file:") or value == ":memory:" or not path.is_absolute():
+        raise ProviderConfigurationError("Phase 5 budget ledger path must be absolute")
+    return path.resolve()
+
+
 def _normalized_base_url(value: str) -> tuple[str, str]:
     try:
         parsed = urlsplit(value)
@@ -293,15 +301,16 @@ class _LiveConditionExecutor:
         config: Phase5ExperimentConfig,
         providers: _LiveProviderComposition,
         authorization: PaidRunAuthorization,
-        database_path: Path,
+        cache_path: Path,
+        ledger_path: Path,
         condition_executor: ConditionExecutor | None = None,
     ) -> None:
         self._candidates = {candidate.cell: candidate for candidate in candidates}
         self._config = config
         self._providers = providers
         self._authorization = authorization
-        self._cache = ProviderResultCache(database_path)
-        self._ledger = BudgetLedger(database_path, config.budget)
+        self._cache = ProviderResultCache(cache_path)
+        self._ledger = BudgetLedger(ledger_path, config.budget)
         self._conditions = condition_executor or ConditionExecutor()
 
     @staticmethod
@@ -426,9 +435,13 @@ def compose_live_executor(
     config, authorization = _require_live_composition_authorization(
         config, authorization, matrix_manifest_sha256
     )
+    runtime_environ = os.environ if environ is None else environ
+    ledger_path = _required_absolute_path(
+        runtime_environ, "SPANVOUCH_PHASE5_BUDGET_LEDGER_PATH"
+    )
     providers = _compose_live_providers(
         config,
-        environ=os.environ if environ is None else environ,
+        environ=runtime_environ,
         deepseek_client=deepseek_client,
         qwen_client=qwen_client,
     )
@@ -441,5 +454,6 @@ def compose_live_executor(
         config=config,
         providers=providers,
         authorization=authorization,
-        database_path=state_path,
+        cache_path=state_path,
+        ledger_path=ledger_path,
     )
