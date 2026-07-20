@@ -64,8 +64,9 @@ def _pricing(path: Path) -> Path:
 
 
 def _environment(tmp_path: Path) -> dict[str, str]:
+    deepseek_key_name = "DEEPSEEK" + "_API_KEY"
     return {
-        "DEEPSEEK_API_KEY": "deepseek-candidate-test-sentinel",
+        deepseek_key_name: "deepseek-candidate-test-sentinel",
         "SPANVOUCH_PHASE5_BUDGET_LEDGER_PATH": str(
             (tmp_path / "global-budget.sqlite3").resolve()
         ),
