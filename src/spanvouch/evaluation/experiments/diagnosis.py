@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from enum import StrEnum
 from hashlib import sha256
 from pathlib import Path
@@ -36,6 +37,7 @@ from spanvouch.evaluation.artifacts import (
     publish_directory_no_replace,
     quarantine_owned_staging_directory,
     read_verified_directory_tree,
+    require_safe_artifact_content,
 )
 from spanvouch.evaluation.corpus import CorpusCell, CorpusEntry, TraceReplayRepository
 from spanvouch.trace.diagnostic_view import TraceProjector
@@ -218,13 +220,27 @@ class DiagnosisCandidateRepository:
             raise
         return candidate_sha256
 
-    def load(self, cell: CorpusCell) -> FrozenDiagnosisCandidate:
+    def load(
+        self,
+        cell: CorpusCell,
+        *,
+        expected_candidate_sha256: str,
+        expected_corpus_manifest_sha256: str,
+    ) -> FrozenDiagnosisCandidate:
+        if re.fullmatch(SHA256_PATTERN, expected_candidate_sha256) is None:
+            raise ValueError("expected_candidate_sha256 must be a SHA-256 digest")
+        if re.fullmatch(SHA256_PATTERN, expected_corpus_manifest_sha256) is None:
+            raise ValueError(
+                "expected_corpus_manifest_sha256 must be a SHA-256 digest"
+            )
         destination = self._destination(cell)
         snapshot = read_verified_directory_tree(destination)
         if snapshot.directories or len(snapshot.files) != 1:
             raise ValueError("candidate repository cell has unexpected layout")
         relative, content = next(iter(snapshot.files.items()))
         digest = sha256(content).hexdigest()
+        if digest != expected_candidate_sha256:
+            raise ValueError("trusted candidate SHA-256 mismatch")
         if relative != f"{digest}.json":
             raise ValueError("candidate content address does not match payload")
         candidate = FrozenDiagnosisCandidate.model_validate_json(content)
@@ -232,6 +248,8 @@ class DiagnosisCandidateRepository:
             raise ValueError("candidate payload is not canonical JSON")
         if candidate.cell != CorpusCell.model_validate(cell.model_dump(mode="python")):
             raise ValueError("candidate cell does not match repository identity")
+        if candidate.corpus_manifest_sha256 != expected_corpus_manifest_sha256:
+            raise ValueError("trusted corpus manifest SHA-256 mismatch")
         return candidate
 
 
@@ -275,6 +293,14 @@ async def generate_and_freeze_diagnosis(
     """Make exactly one provider call after verifying every frozen corpus input."""
     if repository.exists(cell):
         raise FileExistsError("candidate already exists for corpus cell")
+    builder = DiagnosisPromptBuilder()
+    try:
+        builder.validate_verifier_instruction(verifier_instruction)
+    except (TypeError, ValueError) as error:
+        raise DiagnosisExperimentFailure(
+            DiagnosisExperimentFailureCode.CONTRACT_FAILURE,
+            "invalid verifier instruction",
+        ) from error
     try:
         manifest = corpus.verify()
         if corpus.manifest_sha256 != expected_corpus_manifest_sha256:
@@ -297,7 +323,6 @@ async def generate_and_freeze_diagnosis(
     context = DiagnosticContext.model_validate(context.model_dump(mode="python"))
     evidence = EvidenceCatalog.from_context(context)
     validated_generation = GenerationConfig.model_validate(generation.model_dump(mode="python"))
-    builder = DiagnosisPromptBuilder()
     prepared = builder.prepare(context, evidence, validated_generation)
     diagnoser = LlmDiagnoser(
         provider,
@@ -339,6 +364,16 @@ async def generate_and_freeze_diagnosis(
         diagnoser="deepseek",
         execution=sanitized_execution,
     )
+    try:
+        for claim in report.causal_chain:
+            require_safe_artifact_content("model_derived_text", claim.statement)
+        for item in report.evidence:
+            require_safe_artifact_content("model_derived_text", item.description)
+    except ValueError as error:
+        raise DiagnosisExperimentFailure(
+            DiagnosisExperimentFailureCode.CONTRACT_FAILURE,
+            "model-derived diagnosis content is unsafe",
+        ) from error
     shared_messages = builder.shared_verifier_messages(
         prepared, report, verifier_instruction
     )

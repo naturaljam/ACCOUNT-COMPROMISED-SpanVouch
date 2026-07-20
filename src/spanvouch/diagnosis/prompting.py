@@ -86,14 +86,20 @@ class DiagnosisPromptBuilder:
     ) -> tuple[ChatMessage, ...]:
         validated = PreparedDiagnosis.model_validate(prepared.model_dump(mode="python"))
         report = DiagnosisReport.model_validate(frozen_report.model_dump(mode="python"))
-        instruction = verifier_instruction.strip()
-        if not instruction:
-            raise ValueError("verifier instruction must not be empty")
+        instruction = self.validate_verifier_instruction(verifier_instruction)
         return (
             *validated.messages,
             ChatMessage(role="assistant", content=canonical_json(report)),
             ChatMessage(role="user", content=instruction),
         )
+
+    @staticmethod
+    def validate_verifier_instruction(verifier_instruction: str) -> str:
+        """Reject empty or non-canonical instructions without silently rewriting them."""
+        if not verifier_instruction or verifier_instruction != verifier_instruction.strip():
+            raise ValueError("verifier instruction must be non-empty canonical text")
+        ChatMessage(role="user", content=verifier_instruction)
+        return verifier_instruction
 
     @staticmethod
     def _evidence_value_sha256(catalog: EvidenceCatalog, canonical: str) -> str:
