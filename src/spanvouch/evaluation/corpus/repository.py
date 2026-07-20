@@ -34,7 +34,15 @@ _ModelT = TypeVar("_ModelT", bound=BaseModel)
 
 
 class TraceReplayRepository:
-    """Verified read/replay access to an immutable content-addressed trace corpus."""
+    """Verified read/replay access to an immutable content-addressed trace corpus.
+
+    Security boundary: the repository defends path traversal, symlink/reparse
+    traversal, static source replacement before and after publication, byte/hash/
+    model tampering, and destination overwrite.  Publication uses OS no-replace
+    semantics and verifies the published tree against the captured source identity.
+    A same-account active source swap in the final validation-to-OS-rename interval
+    is out of scope because the supported OS APIs do not condition rename on inode.
+    """
 
     def __init__(
         self,
@@ -120,6 +128,8 @@ class TraceReplayRepository:
             cls._sync_directories(staging)
             identity = capture_owned_directory_identity(staging)
             publish_directory_no_replace(staging, destination)
+            if capture_owned_directory_identity(destination) != identity:
+                raise RuntimeError("published corpus ownership verification failed")
             _fsync_directory(destination.parent)
         except Exception:
             if os.path.lexists(staging):

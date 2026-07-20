@@ -86,6 +86,13 @@ def test_freeze_atomically_publishes_exact_content_addressed_layout(
     assert not tuple(tmp_path.glob(".corpus.tmp-*"))
 
 
+def test_repository_documents_binding_threat_model() -> None:
+    documentation = TraceReplayRepository.__doc__ or ""
+    assert "static source replacement before and after publication" in documentation
+    assert "same-account active source swap" in documentation
+    assert "out of scope" in documentation
+
+
 def test_freeze_rejects_second_write_without_changing_first_publication(
     tmp_path: Path,
     record: ExecutionRecord,
@@ -293,6 +300,30 @@ def test_failed_publish_cleans_or_quarantines_only_the_owned_staging_tree(
         assert (tombstones[0] / "manifest.json").is_file()
 
 
+def test_publication_detects_replaced_source_after_rename(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    record: ExecutionRecord,
+    parity_results: tuple[ParityResult, ...],
+    manifest_metadata: CorpusManifestMetadata,
+) -> None:
+    destination = tmp_path / "corpus"
+    real_publish = repository_module.publish_directory_no_replace
+
+    def publish_replacement(source: Path, target: Path) -> None:
+        source.rename(source.with_name(f"{source.name}.owned"))
+        source.mkdir()
+        (source / "foreign.txt").write_bytes(b"foreign")
+        real_publish(source, target)
+
+    monkeypatch.setattr(
+        repository_module, "publish_directory_no_replace", publish_replacement
+    )
+    with pytest.raises(RuntimeError, match="published corpus ownership"):
+        _freeze(destination, record, parity_results, manifest_metadata)
+    assert (destination / "foreign.txt").read_bytes() == b"foreign"
+
+
 @pytest.mark.parametrize("failure_stage", ("write", "file_fsync", "directory_fsync"))
 def test_pre_identity_failure_quarantines_partial_owned_staging(
     tmp_path: Path,
@@ -347,8 +378,11 @@ def test_pre_identity_cleanup_does_not_touch_replaced_root_or_mask_error(
 
     def replace_root_then_fail(path: Path, _content: bytes) -> None:
         nonlocal foreign_root, displaced_owned
+        staging_prefix = (
+            ".corpus.tmp-" if sys.platform == "win32" else ".corpus.rollback-"
+        )
         staging = next(
-            parent for parent in path.parents if parent.name.startswith(".corpus.tmp-")
+            parent for parent in path.parents if parent.name.startswith(staging_prefix)
         )
         displaced_owned = staging.with_name(".corpus.interrupted-owned")
         staging.rename(displaced_owned)
