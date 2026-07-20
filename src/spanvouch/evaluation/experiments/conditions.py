@@ -19,6 +19,7 @@ from spanvouch.contracts.versioning import canonical_json, canonical_sha256
 from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig, ProviderResponse
 from spanvouch.evaluation.experiments.config import ConditionId
 from spanvouch.evaluation.experiments.models import (
+    ConditionEvaluationEvidence,
     ConditionPlan,
     ConditionResult,
     ConditionStatus,
@@ -115,7 +116,7 @@ class ConditionExecutor:
         input_ = validated.verification_input
         condition = plan.condition_id
         if condition is ConditionId.B0:
-            return self._result(plan, started, SelectiveAction.ACCEPT)
+            return self._result(plan, input_, started, SelectiveAction.ACCEPT)
         if condition is ConditionId.B1:
             return await self._deterministic_only(plan, input_, deterministic, started)
         if condition is ConditionId.B2:
@@ -152,6 +153,7 @@ class ConditionExecutor:
             )
         return self._result(
             plan,
+            input_,
             started,
             self._action(report),
             verifier_reports=(report,),
@@ -203,6 +205,7 @@ class ConditionExecutor:
             )
         return self._result(
             plan,
+            input_,
             started,
             self._action(report),
             verifier_reports=(*prior_reports, report),
@@ -229,6 +232,7 @@ class ConditionExecutor:
         if deterministic_report.verdict is not VerifierVerdict.VERIFIED:
             return self._result(
                 plan,
+                input_,
                 started,
                 SelectiveAction.REVIEW,
                 status=ConditionStatus.NOT_INVOKED_BY_POLICY,
@@ -311,6 +315,7 @@ class ConditionExecutor:
     def _result(
         self,
         plan: ConditionPlan,
+        input_: VerificationInput,
         started: datetime,
         action: SelectiveAction,
         *,
@@ -342,6 +347,10 @@ class ConditionExecutor:
                 canonical_sha256(report) for report in verifier_reports
             ),
             request_audit_sha256s=audit_hashes,
+            evaluation_evidence=ConditionEvaluationEvidence.from_reports(
+                input_.report,
+                verifier_reports,
+            ),
             usage=usage,
             cost_cny=cost,
             cache_status=(

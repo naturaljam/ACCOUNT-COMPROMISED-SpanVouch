@@ -11,10 +11,13 @@ from pathlib import Path
 
 import pytest
 
-from spanvouch.contracts.diagnosis import ProviderUsage
+from spanvouch.contracts.diagnosis import DiagnosisStatus, ProviderUsage
+from spanvouch.contracts.verification import VerifierVerdict
+from spanvouch.contracts.versioning import canonical_sha256
 from spanvouch.evaluation.corpus import CorpusCell
 from spanvouch.evaluation.experiments.config import ConditionId, ModelEndpointConfig
 from spanvouch.evaluation.experiments.models import (
+    ConditionEvaluationEvidence,
     ConditionPlan,
     ConditionResult,
     ConditionStatus,
@@ -22,6 +25,7 @@ from spanvouch.evaluation.experiments.models import (
     ExperimentMatrixManifest,
     ProviderPlanStatus,
     SelectiveAction,
+    VerifierEvaluationEvidence,
 )
 from spanvouch.evaluation.experiments.runner import (
     ExecutionAdmission,
@@ -122,12 +126,45 @@ def _result(plan: ConditionPlan, *, failed: bool = False) -> ConditionResult:
                 code="offline-provider-failed", source=FailureSource.PROVIDER_RUNNER,
             ),
         )
+    verifier_hashes = () if plan.condition_id is ConditionId.B0 else ("8" * 64,)
+    evidence_payload = {
+        "diagnosis_report_sha256": plan.diagnosis_sha256,
+        "diagnosis_status": DiagnosisStatus.NO_FAILURE,
+        "diagnosis_family": "no_failure",
+        "causal_stages": (),
+        "causal_tokens": (),
+        "diagnosis_selectors": ("span-root::attributes.run.outcome",),
+        "verifier_reports": tuple(
+            VerifierEvaluationEvidence(
+                artifact_sha256=digest,
+                verdict=VerifierVerdict.VERIFIED,
+                finding_codes=(),
+                selectors=(),
+            )
+            for digest in verifier_hashes
+        ),
+    }
+    evidence = ConditionEvaluationEvidence.model_validate(
+        {
+            **evidence_payload,
+            "projection_sha256": canonical_sha256(
+                {
+                    **evidence_payload,
+                    "verifier_reports": [
+                        item.model_dump(mode="json")
+                        for item in evidence_payload["verifier_reports"]
+                    ],
+                }
+            ),
+        }
+    )
     return ConditionResult(
         plan_id=plan.plan_id, cell=plan.cell,
         record_sha256=plan.record_sha256, trace_sha256=plan.trace_sha256,
         diagnosis_sha256=plan.diagnosis_sha256, condition_id=plan.condition_id,
         status=ConditionStatus.COMPLETED, selective_action=SelectiveAction.ACCEPT,
-        verifier_report_sha256s=("8" * 64,), request_audit_sha256s=("9" * 64,),
+        verifier_report_sha256s=verifier_hashes, request_audit_sha256s=("9" * 64,),
+        evaluation_evidence=evidence,
         usage=ProviderUsage(input_tokens=2, output_tokens=1, total_tokens=3,
                             latency_ms=1.0, request_id=None),
         cost_cny=Decimal("0.01"), cache_status="miss",

@@ -4,6 +4,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from spanvouch.contracts.diagnosis import ProviderUsage
 from spanvouch.contracts.verification import (
@@ -294,6 +295,37 @@ async def test_b1_accepts_only_deterministic_verified(
     )
     assert result.selective_action is action
     assert deterministic.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_condition_result_carries_only_hash_bound_sanitized_evaluation_evidence() -> None:
+    context = _context(ConditionId.B1)
+    result = await ConditionExecutor().execute(
+        context,
+        deterministic=_RecordingVerifier(VerifierVerdict.VERIFIED),
+        deepseek=object(),
+        qwen=object(),
+    )
+
+    evidence = result.evaluation_evidence
+    assert evidence is not None
+    assert evidence.diagnosis_report_sha256 == context.verification_input.report_sha256
+    assert evidence.diagnosis_family == "policy_violation"
+    assert evidence.causal_stages == ("cause",)
+    assert {"refund", "tool", "rejected", "request"} <= set(evidence.causal_tokens)
+    assert evidence.diagnosis_selectors == (
+        "span-tool::attributes.tool.error.type",
+    )
+    assert evidence.verifier_reports[0].verdict is VerifierVerdict.VERIFIED
+    assert evidence.verifier_reports[0].artifact_sha256 == result.verifier_report_sha256s[0]
+    serialized = evidence.model_dump_json().casefold()
+    assert "the refund tool rejected the request" not in serialized
+    assert all(term not in serialized for term in ("prompt", "message", "response", "body"))
+
+    tampered = result.model_dump(mode="python")
+    tampered["evaluation_evidence"]["diagnosis_family"] = "wrong_tool"
+    with pytest.raises(ValidationError, match="projection hash mismatch"):
+        type(result).model_validate(tampered)
 
 
 @pytest.mark.parametrize("condition", [ConditionId.B2, ConditionId.B3, ConditionId.B4])

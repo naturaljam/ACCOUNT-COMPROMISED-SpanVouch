@@ -9,17 +9,22 @@ from spanvouch.evaluation.corpus.labels import GoldLabel, GoldLabelManifest
 from spanvouch.evaluation.evaluate_phase5_matrix import (
     EvaluationPhaseRepository,
     PostCallEvaluator,
+    _evaluate,
 )
 from spanvouch.evaluation.experiments.config import ConditionId
+from spanvouch.evaluation.experiments.models import ExperimentFailureCategory
 from spanvouch.evaluation.experiments.runner import (
     ExperimentRunner,
+    OutcomeStatus,
     ProviderPhaseRepository,
+    ProviderPlanOutcome,
 )
 
 from .test_runner import (
     Admission,
     FakeExecutor,
     _plans_and_matrix,
+    _result,
 )
 
 
@@ -79,6 +84,10 @@ async def test_join_attaches_gold_only_in_separate_verified_evaluation_directory
     assert evaluated.split == "pilot"
     assert evaluated.family == "no_failure"
     assert evaluated.is_correct is True
+    assert evaluated.diagnosis_correct is True
+    assert evaluated.causal_chain_correct is True
+    assert evaluated.grounding_correct is True
+    assert evaluated.verification_correct is None
     provider_bytes = "".join(
         path.read_text("utf-8")
         for path in (tmp_path / "provider-results").rglob("*.json")
@@ -144,3 +153,57 @@ def test_post_call_evaluator_signature_has_no_provider_or_live_arguments() -> No
     assert "api_key" not in signature
     assert "allow_live" not in signature
     assert "formal_run" not in signature
+
+
+def test_gold_join_scores_causal_subset_and_grounding_then_fails_closed() -> None:
+    plans, _ = _plans_and_matrix()
+    plan = next(item for item in plans if item.condition_id is ConditionId.B1)
+    result = _result(plan)
+    assert result.evaluation_evidence is not None
+    evidence_payload = result.evaluation_evidence.model_dump(
+        mode="json", exclude={"projection_sha256"}
+    )
+    evidence_payload.update(
+        diagnosis_family="wrong_tool",
+        causal_tokens=("tool_selection", "noise", "unexpected_tool"),
+        diagnosis_selectors=("span-tool::attributes.tool.name",),
+    )
+    evidence = result.evaluation_evidence.model_validate(
+        {
+            **evidence_payload,
+            "projection_sha256": canonical_sha256(evidence_payload),
+        }
+    )
+    outcome = ProviderPlanOutcome(
+        plan=plan,
+        status=OutcomeStatus.COMPLETED,
+        result=result.model_copy(update={"evaluation_evidence": evidence}),
+    )
+    label = GoldLabel(
+        cell_identity=_identity(plan.cell),
+        scenario_id=plan.cell.scenario_id,
+        expected_failure_type="wrong_tool",
+        causal_chain_expectations=("tool_selection", "unexpected_tool"),
+        evidence_expectations=("tool.name",),
+        control=False,
+        split="pilot",
+        record_sha256=plan.record_sha256,
+        trace_sha256=plan.trace_sha256,
+    )
+
+    scored = _evaluate(outcome, "a" * 64, label)
+    assert scored.diagnosis_correct is True
+    assert scored.causal_chain_correct is True
+    assert scored.grounding_correct is True
+    assert scored.verification_correct is True
+
+    missing = ProviderPlanOutcome(
+        plan=plan,
+        status=OutcomeStatus.COMPLETED,
+        result=result.model_copy(update={"evaluation_evidence": None}),
+    )
+    failed_closed = _evaluate(missing, "b" * 64, label)
+    assert failed_closed.diagnosis_error is True
+    assert failed_closed.verification_error is True
+    assert failed_closed.failure_category is ExperimentFailureCategory.VERIFICATION
+    assert failed_closed.is_correct is False

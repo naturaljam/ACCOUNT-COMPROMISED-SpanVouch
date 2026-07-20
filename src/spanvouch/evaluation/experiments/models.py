@@ -10,8 +10,15 @@ from typing import Any, Literal, Self, cast
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
-from spanvouch.contracts.diagnosis import ProviderUsage
+from spanvouch.contracts.diagnosis import (
+    ClaimStage,
+    DiagnosisReport,
+    DiagnosisStatus,
+    ProviderUsage,
+)
+from spanvouch.contracts.verification import FindingCode, VerifierReport, VerifierVerdict
 from spanvouch.contracts.versioning import SHA256_PATTERN, canonical_sha256
+from spanvouch.evaluation.artifacts import require_safe_artifact_content
 from spanvouch.evaluation.corpus import CorpusCell
 from spanvouch.evaluation.experiments.config import (
     ConditionId,
@@ -53,6 +60,126 @@ class FailureSource(StrEnum):
 class ProviderPlanStatus(StrEnum):
     NOT_REQUIRED = "not_required"
     REQUIRED = "required"
+
+
+class VerifierEvaluationEvidence(BaseModel):
+    """Parsed verifier facts safe to persist outside raw provider responses."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    artifact_sha256: str = Field(pattern=SHA256_PATTERN)
+    verdict: VerifierVerdict
+    finding_codes: tuple[FindingCode, ...]
+    selectors: tuple[str, ...]
+
+
+class ConditionEvaluationEvidence(BaseModel):
+    """Self-hashed label-free projection used only by the post-call evaluator."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    diagnosis_report_sha256: str = Field(pattern=SHA256_PATTERN)
+    diagnosis_status: DiagnosisStatus
+    diagnosis_family: str | None = None
+    causal_stages: tuple[ClaimStage, ...]
+    causal_tokens: tuple[str, ...]
+    diagnosis_selectors: tuple[str, ...]
+    verifier_reports: tuple[VerifierEvaluationEvidence, ...]
+    projection_sha256: str = Field(pattern=SHA256_PATTERN)
+
+    @model_validator(mode="after")
+    def validate_projection(self) -> Self:
+        payload = cast(
+            JsonValue,
+            self.model_dump(mode="json", exclude={"projection_sha256"}),
+        )
+        if canonical_sha256(payload) != self.projection_sha256:
+            raise ValueError("evaluation evidence projection hash mismatch")
+        if self.causal_tokens != tuple(dict.fromkeys(self.causal_tokens)) or any(
+            re.fullmatch(r"[a-z][a-z0-9_]*", token) is None
+            for token in self.causal_tokens
+        ):
+            raise ValueError("causal tokens must be unique safe identifiers")
+        if self.diagnosis_selectors != tuple(sorted(set(self.diagnosis_selectors))):
+            raise ValueError("diagnosis selectors must be sorted and unique")
+        return self
+
+    @classmethod
+    def from_reports(
+        cls,
+        diagnosis: DiagnosisReport,
+        verifier_reports: tuple[VerifierReport, ...],
+    ) -> ConditionEvaluationEvidence:
+        token_groups = tuple(
+            tuple(re.findall(r"[a-z][a-z0-9_]*", claim.statement.casefold()))
+            for claim in diagnosis.causal_chain
+        )
+        if any(not group for group in token_groups):
+            raise ValueError("diagnosis claim cannot be projected to safe causal tokens")
+        tokens = tuple(dict.fromkeys(token for group in token_groups for token in group))
+        projected_verifiers = tuple(
+            VerifierEvaluationEvidence(
+                artifact_sha256=canonical_sha256(report),
+                verdict=report.verdict,
+                finding_codes=tuple(finding.code for finding in report.findings),
+                selectors=tuple(
+                    sorted(
+                        {
+                            selector
+                            for finding in report.findings
+                            for selector in finding.related_selectors
+                        }
+                        | {
+                            selector
+                            for gap in report.evidence_gaps
+                            for selector in gap.allowed_selectors
+                        }
+                    )
+                ),
+            )
+            for report in verifier_reports
+        )
+        payload: dict[str, object] = {
+            "diagnosis_report_sha256": canonical_sha256(diagnosis),
+            "diagnosis_status": diagnosis.status,
+            "diagnosis_family": diagnosis.failure_type,
+            "causal_stages": tuple(claim.stage for claim in diagnosis.causal_chain),
+            "causal_tokens": tokens,
+            "diagnosis_selectors": tuple(
+                sorted({evidence.canonical for evidence in diagnosis.evidence})
+            ),
+            "verifier_reports": projected_verifiers,
+        }
+        require_safe_artifact_content(
+            "condition_evidence",
+            (
+                *tokens,
+                *(evidence.canonical for evidence in diagnosis.evidence),
+                *(
+                    selector
+                    for report in projected_verifiers
+                    for selector in report.selectors
+                ),
+            ),
+        )
+        projection_payload = cast(
+            JsonValue,
+            {
+                "diagnosis_report_sha256": canonical_sha256(diagnosis),
+                "diagnosis_status": diagnosis.status.value,
+                "diagnosis_family": diagnosis.failure_type,
+                "causal_stages": [claim.stage.value for claim in diagnosis.causal_chain],
+                "causal_tokens": list(tokens),
+                "diagnosis_selectors": sorted(
+                    {evidence.canonical for evidence in diagnosis.evidence}
+                ),
+                "verifier_reports": [
+                    report.model_dump(mode="json") for report in projected_verifiers
+                ],
+            },
+        )
+        projection_hash = canonical_sha256(projection_payload)
+        return cls.model_validate({**payload, "projection_sha256": projection_hash})
 
 
 class ExperimentFailure(BaseModel):
@@ -148,6 +275,7 @@ class ConditionResult(BaseModel):
     selective_action: SelectiveAction
     verifier_report_sha256s: tuple[str, ...]
     request_audit_sha256s: tuple[str, ...]
+    evaluation_evidence: ConditionEvaluationEvidence | None = None
     usage: ProviderUsage | None = None
     cost_cny: Decimal | None = Field(default=None, ge=0)
     cache_status: Literal[
@@ -189,6 +317,15 @@ class ConditionResult(BaseModel):
             )
         if self.usage is not None and self.usage.request_id is not None:
             raise ValueError("condition usage must not retain a raw request ID")
+        if self.evaluation_evidence is not None and (
+            self.evaluation_evidence.diagnosis_report_sha256 != self.diagnosis_sha256
+            or tuple(
+                report.artifact_sha256
+                for report in self.evaluation_evidence.verifier_reports
+            )
+            != self.verifier_report_sha256s
+        ):
+            raise ValueError("condition evaluation evidence does not bind result hashes")
         return self
 
 

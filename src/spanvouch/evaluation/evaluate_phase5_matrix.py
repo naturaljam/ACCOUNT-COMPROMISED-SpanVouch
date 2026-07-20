@@ -47,8 +47,13 @@ class EvaluatedConditionResult(BaseModel):
     selective_action: SelectiveAction | None
     failure_category: ExperimentFailureCategory | None
     is_correct: bool | None
+    diagnosis_correct: bool | None
+    causal_chain_correct: bool | None
+    grounding_correct: bool | None
+    verification_correct: bool | None
     diagnosis_error: bool | None
     verification_error: bool | None
+    evaluation_evidence_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
     family: str = Field(min_length=1)
     control: bool
     split: Literal["pilot", "train", "validation", "test"]
@@ -253,14 +258,55 @@ def _evaluate(
     result = outcome.result
     failure = result.failure if result is not None else None
     action = result.selective_action if result is not None else None
-    is_correct: bool | None = None
-    if outcome.status is OutcomeStatus.COMPLETED and action is not None:
-        is_correct = (
-            action is SelectiveAction.ACCEPT
-            if label.control
-            else action is not SelectiveAction.ACCEPT
-        )
     category = failure.category if failure is not None else None
+    evidence = result.evaluation_evidence if result is not None else None
+    diagnosis_correct: bool | None = None
+    causal_correct: bool | None = None
+    grounding_correct: bool | None = None
+    verification_correct: bool | None = None
+    is_correct: bool | None = None
+    diagnosis_error: bool | None = None
+    verification_error: bool | None = None
+    operational = {
+        ExperimentFailureCategory.FRAMEWORK_EXECUTION,
+        ExperimentFailureCategory.FRAMEWORK_INCOMPATIBILITY,
+        ExperimentFailureCategory.INFRASTRUCTURE,
+        ExperimentFailureCategory.PROVIDER,
+        ExperimentFailureCategory.CONTRACT_INVALID,
+    }
+    if outcome.status is OutcomeStatus.COMPLETED and category not in operational:
+        family_correct = (
+            evidence is not None
+            and evidence.diagnosis_family == label.expected_failure_type
+        )
+        causal_correct = evidence is not None and _ordered_token_subset(
+            label.causal_chain_expectations,
+            evidence.causal_tokens,
+        )
+        grounding_correct = evidence is not None and all(
+            any(
+                selector.partition("::")[2].endswith(expected)
+                for selector in evidence.diagnosis_selectors
+            )
+            for expected in label.evidence_expectations
+        )
+        diagnosis_correct = family_correct and causal_correct and grounding_correct
+        diagnosis_error = not diagnosis_correct
+        if outcome.plan.condition_id is ConditionId.B0:
+            is_correct = diagnosis_correct
+        else:
+            has_verifier = evidence is not None and bool(evidence.verifier_reports)
+            verification_correct = (
+                has_verifier
+                and action is not None
+                and (action is SelectiveAction.ACCEPT) == diagnosis_correct
+            )
+            verification_error = not verification_correct
+            is_correct = verification_correct
+        if verification_error:
+            category = ExperimentFailureCategory.VERIFICATION
+        elif diagnosis_error:
+            category = ExperimentFailureCategory.DIAGNOSIS
     return EvaluatedConditionResult(
         plan_id=outcome.plan.plan_id,
         cell=outcome.plan.cell,
@@ -270,16 +316,31 @@ def _evaluate(
         selective_action=action,
         failure_category=category,
         is_correct=is_correct,
-        diagnosis_error=(
-            category is ExperimentFailureCategory.DIAGNOSIS if category is not None else None
-        ),
-        verification_error=(
-            category is ExperimentFailureCategory.VERIFICATION if category is not None else None
+        diagnosis_correct=diagnosis_correct,
+        causal_chain_correct=causal_correct,
+        grounding_correct=grounding_correct,
+        verification_correct=verification_correct,
+        diagnosis_error=diagnosis_error,
+        verification_error=verification_error,
+        evaluation_evidence_sha256=(
+            evidence.projection_sha256 if evidence is not None else None
         ),
         family=label.expected_failure_type,
         control=label.control,
         split=label.split,
     )
+
+
+def _ordered_token_subset(expected: tuple[str, ...], actual: tuple[str, ...]) -> bool:
+    required = tuple(
+        token
+        for item in expected
+        for token in re.findall(r"[a-z][a-z0-9_]*", item.casefold())
+    )
+    if not required:
+        return True
+    cursor = iter(actual)
+    return all(any(candidate == token for candidate in cursor) for token in required)
 
 
 @dataclass(frozen=True)
