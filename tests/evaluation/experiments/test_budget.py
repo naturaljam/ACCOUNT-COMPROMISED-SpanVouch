@@ -314,6 +314,154 @@ def test_batch_claim_conflict_rolls_back_every_new_request(tmp_path: Path) -> No
     ledger.release(retry, at_utc=at)
 
 
+def _remove_provider_claims_table(path: Path) -> None:
+    with sqlite3.connect(path) as connection:
+        connection.execute("DROP TABLE provider_request_claims")
+
+
+def test_legacy_active_claim_is_backfilled_and_can_release_or_commit(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "phase5.sqlite3"
+    at = datetime(2026, 7, 20, tzinfo=UTC)
+    legacy = BudgetLedger(path, policy())
+    released = legacy.reserve(
+        request_sha256="a" * 64,
+        experiment_id="phase5-pilot",
+        amount=Decimal("1"),
+        mode=ExperimentMode.PILOT,
+        at_utc=at,
+    )
+    committed = legacy.reserve(
+        request_sha256="b" * 64,
+        experiment_id="phase5-pilot",
+        amount=Decimal("1"),
+        mode=ExperimentMode.PILOT,
+        at_utc=at,
+    )
+    _remove_provider_claims_table(path)
+
+    upgraded = BudgetLedger(path, policy())
+    with pytest.raises(ProviderRequestClaimError):
+        upgraded.reserve(
+            request_sha256="a" * 64,
+            experiment_id="phase5-pilot",
+            amount=Decimal("1"),
+            mode=ExperimentMode.PILOT,
+            at_utc=at,
+        )
+    upgraded.release(released, at_utc=at)
+    upgraded.commit(committed, actual_amount=Decimal("0.5"), at_utc=at)
+
+    retry = upgraded.reserve(
+        request_sha256="a" * 64,
+        experiment_id="phase5-pilot",
+        amount=Decimal("1"),
+        mode=ExperimentMode.PILOT,
+        at_utc=at,
+    )
+    upgraded.release(retry, at_utc=at)
+    with pytest.raises(ProviderRequestClaimError):
+        upgraded.reserve(
+            request_sha256="b" * 64,
+            experiment_id="phase5-pilot",
+            amount=Decimal("1"),
+            mode=ExperimentMode.PILOT,
+            at_utc=at,
+        )
+
+
+def test_legacy_committed_claim_is_backfilled_but_released_is_retryable(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "phase5.sqlite3"
+    at = datetime(2026, 7, 20, tzinfo=UTC)
+    legacy = BudgetLedger(path, policy())
+    charged = legacy.reserve(
+        request_sha256="a" * 64,
+        experiment_id="phase5-pilot",
+        amount=Decimal("1"),
+        mode=ExperimentMode.PILOT,
+        at_utc=at,
+    )
+    legacy.commit(charged, actual_amount=Decimal("0.5"), at_utc=at)
+    closed = legacy.reserve(
+        request_sha256="b" * 64,
+        experiment_id="phase5-pilot",
+        amount=Decimal("1"),
+        mode=ExperimentMode.PILOT,
+        at_utc=at,
+    )
+    legacy.release(closed, at_utc=at)
+    _remove_provider_claims_table(path)
+
+    upgraded = BudgetLedger(path, policy())
+    with pytest.raises(ProviderRequestClaimError):
+        upgraded.reserve(
+            request_sha256="a" * 64,
+            experiment_id="phase5-pilot",
+            amount=Decimal("1"),
+            mode=ExperimentMode.PILOT,
+            at_utc=at,
+        )
+    retry = upgraded.reserve(
+        request_sha256="b" * 64,
+        experiment_id="phase5-pilot",
+        amount=Decimal("1"),
+        mode=ExperimentMode.PILOT,
+        at_utc=at,
+    )
+    upgraded.release(retry, at_utc=at)
+
+
+def test_legacy_duplicate_active_claims_fail_without_partial_migration(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "phase5.sqlite3"
+    at = datetime(2026, 7, 20, tzinfo=UTC)
+    legacy = BudgetLedger(path, policy())
+    first = legacy.reserve(
+        request_sha256="a" * 64,
+        experiment_id="phase5-pilot",
+        amount=Decimal("1"),
+        mode=ExperimentMode.PILOT,
+        at_utc=at,
+    )
+    other = legacy.reserve(
+        request_sha256="b" * 64,
+        experiment_id="phase5-pilot",
+        amount=Decimal("1"),
+        mode=ExperimentMode.PILOT,
+        at_utc=at,
+    )
+    _remove_provider_claims_table(path)
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """INSERT INTO reservation_events
+               (reservation_id, request_sha256, experiment_id, month_key,
+                amount, mode, action, created_at_utc)
+               VALUES (?, ?, ?, ?, ?, ?, 'reserved', ?)""",
+            (
+                "legacy-conflict",
+                first.request_sha256,
+                first.experiment_id,
+                first.month_key,
+                str(first.amount),
+                first.mode.value,
+                at.isoformat(),
+            ),
+        )
+
+    with pytest.raises(ProviderRequestClaimError, match="legacy"):
+        BudgetLedger(path, policy())
+    with sqlite3.connect(path) as connection:
+        count = connection.execute(
+            "SELECT COUNT(*) FROM provider_request_claims"
+        ).fetchone()
+    assert count == (0,)
+    assert other.request_sha256 != first.request_sha256
+
+
 def test_busy_database_fails_typed_instead_of_bypassing_reservation(
     tmp_path: Path,
 ) -> None:

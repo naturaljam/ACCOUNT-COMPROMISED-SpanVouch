@@ -228,6 +228,100 @@ class BudgetLedger:
                     ON budget_stop_events(request_sha256, reason);
                 """
             )
+            self._migrate_provider_request_claims(connection)
+
+    def _migrate_provider_request_claims(
+        self, connection: sqlite3.Connection
+    ) -> None:
+        """Backfill the global request state machine from pre-claim ledgers."""
+        self._begin(connection)
+        try:
+            active = connection.execute(
+                """SELECT reserved.request_sha256, reserved.reservation_id,
+                          reserved.experiment_id, reserved.month_key,
+                          'active', reserved.created_at_utc
+                   FROM reservation_events AS reserved
+                   WHERE reserved.action = 'reserved'
+                     AND NOT EXISTS (
+                       SELECT 1 FROM reservation_events AS closed
+                       WHERE closed.reservation_id = reserved.reservation_id
+                         AND closed.action IN ('released','committed')
+                     )"""
+            ).fetchall()
+            committed = connection.execute(
+                """SELECT request_sha256, reservation_id, experiment_id,
+                          month_key, 'committed', created_at_utc
+                   FROM charges
+                   WHERE category = 'provider'
+                     AND request_sha256 IS NOT NULL
+                     AND reservation_id IS NOT NULL"""
+            ).fetchall()
+            claims: dict[str, tuple[str, str, str, str, str]] = {}
+            reservations: dict[str, str] = {}
+            for row in (*active, *committed):
+                request_sha256 = str(row[0])
+                claim = (
+                    str(row[1]),
+                    str(row[2]),
+                    str(row[3]),
+                    str(row[4]),
+                    str(row[5]),
+                )
+                reservation_id = claim[0]
+                previous = claims.get(request_sha256)
+                reservation_request = reservations.get(reservation_id)
+                if (
+                    (previous is not None and previous != claim)
+                    or (
+                        reservation_request is not None
+                        and reservation_request != request_sha256
+                    )
+                ):
+                    raise ProviderRequestClaimError(
+                        "legacy provider request claims conflict"
+                    )
+                claims[request_sha256] = claim
+                reservations[reservation_id] = request_sha256
+
+            for request_sha256, claim in claims.items():
+                reservation_id, experiment_id, month_key, state, created_at = claim
+                existing = connection.execute(
+                    """SELECT reservation_id, experiment_id, month_key, state
+                       FROM provider_request_claims
+                       WHERE request_sha256 = ?""",
+                    (request_sha256,),
+                ).fetchone()
+                expected = (reservation_id, experiment_id, month_key, state)
+                if existing is not None:
+                    if existing != expected:
+                        raise ProviderRequestClaimError(
+                            "legacy provider request claims conflict"
+                        )
+                    continue
+                try:
+                    connection.execute(
+                        """INSERT INTO provider_request_claims
+                           (request_sha256, reservation_id, experiment_id,
+                            month_key, state, created_at_utc, updated_at_utc)
+                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            request_sha256,
+                            reservation_id,
+                            experiment_id,
+                            month_key,
+                            state,
+                            created_at,
+                            created_at,
+                        ),
+                    )
+                except sqlite3.IntegrityError:
+                    raise ProviderRequestClaimError(
+                        "legacy provider request claims conflict"
+                    ) from None
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=1.0, isolation_level=None)
