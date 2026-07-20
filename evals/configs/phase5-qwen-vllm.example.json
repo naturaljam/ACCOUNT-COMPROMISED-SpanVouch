@@ -1,0 +1,22 @@
+{
+  "base_url": "http://127.0.0.1:8000/v1",
+  "expected_model": "Qwen/Qwen3-14B",
+  "endpoint_class": "self-hosted-vllm",
+  "connect_timeout_seconds": 5.0,
+  "read_timeout_seconds": 60.0,
+  "max_retries": 1,
+  "backoff_seconds": 0.25,
+  "smoke_only": true,
+  "container_repo_digest": null,
+  "hf_revision": null,
+  "generation": {
+    "model": "Qwen/Qwen3-14B",
+    "max_tokens": 2048,
+    "temperature": 0.0,
+    "extra_body": {
+      "chat_template_kwargs": {
+        "enable_thinking": false
+      }
+    }
+  }
+}
