@@ -33,6 +33,11 @@ coverage/
 *.sqlite
 *.sqlite3
 .cache/
+.cache/phase5/
+*.provider-credentials.json
+*.gpu-credentials.json
+*.provider-token
+*.gpu-token
 tmp/
 postgres_data/
 redis_data/
