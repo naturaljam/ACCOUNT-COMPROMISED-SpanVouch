@@ -35,12 +35,30 @@ These sizes are engineering estimates, not Qwen or vLLM guarantees. The official
 Before composition, export `SPANVOUCH_DEEPSEEK_BASE_URL`,
 `SPANVOUCH_PHASE5_DEEPSEEK_PRICING_PATH`,
 `SPANVOUCH_PHASE5_QWEN_PRICING_PATH`,
+`SPANVOUCH_PHASE5_BUDGET_LEDGER_PATH`, `SPANVOUCH_PHASE5_GPU_LEASE_PATH`,
 `SPANVOUCH_VLLM_CONTAINER_REPO_DIGEST`, `SPANVOUCH_VLLM_HF_REVISION`,
 `SPANVOUCH_VLLM_CHAT_TEMPLATE_SHA256`, `SPANVOUCH_VLLM_DTYPE`, and
 `SPANVOUCH_VLLM_MAX_MODEL_LEN`. SpanVouch normalizes the two base URLs and
 requires every secret-free deployment and pricing identity to match the frozen
 experiment configuration before it constructs a provider or opens the paid-run
-cache and budget ledger.
+cache and budget ledger. The two new paths must be absolute filesystem paths.
+Every candidate and matrix manifest keeps its own cache, while all pilot and
+formal manifests use the single user-selected budget ledger. The DeepSeek-only
+candidate command requires the budget ledger path but does not require a GPU
+lease record.
+
+Before composing the Qwen matrix provider, write the GPU lease file as canonical
+JSON (UTF-8, sorted compact keys, no trailing newline). It has this schema:
+
+```json
+{"cloud_provider":"example-cloud","duration_hours":"1","ended_at_utc":"2026-07-20T01:00:00Z","instance_type":"gpu-48gb","lease_id":"lease-20260720-001","region":"test-region-1","started_at_utc":"2026-07-20T00:00:00Z"}
+```
+
+The provider, region, instance type, duration, and price-derived cost must fit
+the approval frozen in the experiment config. SpanVouch records the lease and
+GPU charge atomically in the global ledger before provider composition. Reusing
+the same lease ID with identical canonical content is idempotent across matrix
+manifests; reusing it with changed content fails closed.
 
 Do not expose vLLM directly to the Internet. vLLM states that its API key protects OpenAI-compatible path prefixes but does not protect every endpoint on the server. Restrict the firewall to the minimum required surface. ([vLLM security guidance](https://docs.vllm.ai/en/latest/usage/security/))
 
@@ -96,8 +114,8 @@ Follow this sequence:
    ```
 
    This command validates config, corpus, experiment mode, manifest, model, and
-   deployment bindings before reading credentials or opening the shared provider
-   cache and budget ledger. The resulting repository is the `--candidate-dir`
+   deployment bindings before reading credentials or opening its manifest cache
+   and the global budget ledger. It does not read or charge a GPU lease. The resulting repository is the `--candidate-dir`
    input to the B0-B5 matrix command.
 4. Freeze and approve the resulting matrix identity separately, then run the smoke
    checks and pilot matrix with `--allow-live-provider` and its exact

@@ -20,6 +20,7 @@ Formal DeepSeek/Qwen evidence: not collected. Cloud GPU: unapproved.
 | Offline full suite and coverage | complete | 1,610 passed, 1 skipped; 93.58% coverage on the final integrated branch |
 | Reproducible wheel and Docker acceptance | complete | repeated wheel hash; non-root, health, writable persistence, restart, teardown, and no-residue checks passed |
 | Offline CI gates | complete | architecture, security, coverage, wheel, and Docker gates are configured without provider credentials |
+| Global paid-run budget and GPU lease guard | complete offline | absolute shared ledger, manifest-scoped caches, canonical approval-bound GPU provenance, atomic idempotent charging, and pre-provider fail-closed tests |
 | Paid pilot approval and evidence | blocked by explicit approval | no approved spend or provider run |
 | Frozen formal experiment approval | pending pilot review | no formal manifest approved |
 | Complete paired DeepSeek/Qwen formal matrix | not collected | no paper-effectiveness result |

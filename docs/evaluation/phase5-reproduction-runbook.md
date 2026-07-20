@@ -129,3 +129,11 @@ command, and rollback. Approval of this offline runbook is not spend approval.
 Follow the [live experiment preparation
 checklist](../research/phase5-live-experiment-preparation-2026-07-20.md) before
 requesting that approval.
+
+For any approved live checkpoint, set `SPANVOUCH_PHASE5_BUDGET_LEDGER_PATH` to
+one stable absolute path shared by candidate, pilot, formal, and resumed runs.
+Set `SPANVOUCH_PHASE5_GPU_LEASE_PATH` to an absolute canonical-JSON lease file
+only for the Qwen matrix path. Candidate generation is DeepSeek-only and does
+not require that GPU variable. Matrix caches remain manifest-scoped; the global
+ledger records an approved lease once, treats identical lease ID/content as an
+idempotent replay, and rejects conflicting content before provider composition.
