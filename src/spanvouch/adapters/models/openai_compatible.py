@@ -157,12 +157,16 @@ class OpenAICompatibleProvider:
         messages: tuple[ChatMessage, ...],
         config: GenerationConfig,
     ) -> ProviderResponse:
-        if config.model != self._config.expected_model:
+        try:
+            generation = GenerationConfig.model_validate(config.model_dump(mode="python"))
+        except ValidationError as exc:
+            raise ProviderConfigurationError("invalid generation configuration") from exc
+        if generation.model != self._config.expected_model:
             raise ProviderConfigurationError("generation model does not match expected model")
         if self._client is not None:
-            return await self._complete_with_client(self._client, messages, config)
+            return await self._complete_with_client(self._client, messages, generation)
         async with httpx.AsyncClient(timeout=self._timeout()) as client:
-            return await self._complete_with_client(client, messages, config)
+            return await self._complete_with_client(client, messages, generation)
 
     async def _complete_with_client(
         self,

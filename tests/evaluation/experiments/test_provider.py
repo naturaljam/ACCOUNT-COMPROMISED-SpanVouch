@@ -14,7 +14,11 @@ from spanvouch.diagnosis.protocols import (
     GenerationConfig,
     ProviderResponse,
 )
-from spanvouch.evaluation.experiments.budget import BudgetLedger, Pricing
+from spanvouch.evaluation.experiments.budget import (
+    BudgetLedger,
+    BudgetOverrunError,
+    Pricing,
+)
 from spanvouch.evaluation.experiments.config import BudgetPolicy, ExperimentMode
 from spanvouch.evaluation.experiments.provider import (
     CacheIntegrityError,
@@ -209,6 +213,35 @@ async def test_provider_failure_releases_reservation(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError, match="offline fake failure"):
         await provider.complete(MESSAGES, GENERATION)
     assert provider.ledger.active_reserved_total(datetime(2026, 7, 20, tzinfo=UTC)) == 0
+
+
+@pytest.mark.asyncio
+async def test_provider_overrun_records_charge_without_masking_typed_stop(
+    tmp_path: Path,
+) -> None:
+    class OverrunProvider(CountingProvider):
+        async def complete(
+            self, messages: tuple[ChatMessage, ...], config: GenerationConfig
+        ) -> ProviderResponse:
+            response = await super().complete(messages, config)
+            return response.model_copy(
+                update={
+                    "usage": response.usage.model_copy(
+                        update={"output_tokens": 10_000, "total_tokens": 10_100}
+                    )
+                }
+            )
+
+    delegate = OverrunProvider()
+    provider = guarded(tmp_path, delegate)
+    at = datetime(2026, 7, 20, tzinfo=UTC)
+
+    with pytest.raises(BudgetOverrunError):
+        await provider.complete(MESSAGES, GENERATION)
+
+    assert delegate.calls == 1
+    assert provider.ledger.committed_total(at) > 0
+    assert provider.ledger.active_reserved_total(at) == 0
 
 
 @pytest.mark.asyncio

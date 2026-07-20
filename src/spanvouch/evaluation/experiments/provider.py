@@ -27,6 +27,7 @@ from spanvouch.diagnosis.protocols import (
 from spanvouch.evaluation.artifacts import require_safe_artifact_content
 from spanvouch.evaluation.experiments.budget import (
     BudgetLedger,
+    BudgetOverrunError,
     BudgetReservation,
     Pricing,
 )
@@ -486,7 +487,13 @@ class GuardedProvider:
                 original_usage=response.usage,
                 cost_cny=actual,
             )
-            self.ledger.commit(reservation, actual_amount=actual, at_utc=self._at_utc())
+            try:
+                self.ledger.commit(
+                    reservation, actual_amount=actual, at_utc=self._at_utc()
+                )
+            except BudgetOverrunError:
+                reservation = None
+                raise
             reservation = None
             self.cache.put(self.identity, cached_result, self._at_utc())
             audit = self._audit(

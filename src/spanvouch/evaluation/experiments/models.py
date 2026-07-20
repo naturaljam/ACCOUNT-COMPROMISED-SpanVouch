@@ -254,12 +254,19 @@ class ExperimentMatrixManifest(BaseModel):
         config: Phase5ExperimentConfig,
         candidate_manifest_sha256: str,
         ineligible: tuple[IneligibleCell, ...],
+        expected_cells: tuple[CorpusCell, ...],
     ) -> ExperimentMatrixManifest:
         if not candidates:
             raise ValueError("matrix requires eligible candidates")
         from spanvouch.evaluation.experiments.planner import VerificationMatrixPlanner
 
-        VerificationMatrixPlanner().validate(plans, candidates, config)
+        VerificationMatrixPlanner().validate(
+            plans,
+            candidates,
+            config,
+            expected_cells=expected_cells,
+            ineligible=ineligible,
+        )
         corpus_hashes = {candidate.corpus_manifest_sha256 for candidate in candidates}
         if len(corpus_hashes) != 1:
             raise ValueError("eligible candidates must share one corpus manifest")

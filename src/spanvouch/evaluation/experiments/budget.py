@@ -22,6 +22,22 @@ class BudgetExceededError(RuntimeError):
     """Raised before a reservation that would cross its preregistered stop rule."""
 
 
+class BudgetOverrunError(BudgetExceededError):
+    """Raised after an over-reservation charge is durably recorded and stops the month."""
+
+    def __init__(
+        self,
+        *,
+        reservation_id: str,
+        reserved_amount: Decimal,
+        actual_amount: Decimal,
+    ) -> None:
+        super().__init__("actual provider charge exceeded reservation; budget is stopped")
+        self.reservation_id = reservation_id
+        self.reserved_amount = reserved_amount
+        self.actual_amount = actual_amount
+
+
 class BudgetBusyError(RuntimeError):
     """Raised when another process owns the SQLite budget write lock."""
 
@@ -125,6 +141,18 @@ class BudgetLedger:
                     ON charges(reservation_id) WHERE reservation_id IS NOT NULL;
                 CREATE UNIQUE INDEX IF NOT EXISTS one_gpu_lease
                     ON charges(request_sha256) WHERE category = 'gpu';
+                CREATE TABLE IF NOT EXISTS budget_stop_events (
+                    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    request_sha256 TEXT NOT NULL,
+                    experiment_id TEXT NOT NULL,
+                    month_key TEXT NOT NULL,
+                    reason TEXT NOT NULL CHECK(reason = 'reservation_overrun'),
+                    reserved_amount TEXT NOT NULL,
+                    actual_amount TEXT NOT NULL,
+                    created_at_utc TEXT NOT NULL
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS one_budget_stop_per_request
+                    ON budget_stop_events(request_sha256, reason);
                 """
             )
 
@@ -176,6 +204,15 @@ class BudgetLedger:
             month,
         )
 
+    @staticmethod
+    def _require_not_stopped(connection: sqlite3.Connection, month: str) -> None:
+        stopped = connection.execute(
+            "SELECT 1 FROM budget_stop_events WHERE month_key = ? LIMIT 1",
+            (month,),
+        ).fetchone()
+        if stopped is not None:
+            raise BudgetExceededError("Phase 5 budget is stopped for this month")
+
     def reserve(
         self,
         *,
@@ -219,6 +256,11 @@ class BudgetLedger:
         with self._connect() as connection:
             self._begin(connection)
             month = reservations[0].month_key
+            try:
+                self._require_not_stopped(connection, month)
+            except BudgetExceededError:
+                connection.rollback()
+                raise
             projected = (
                 self._committed(connection, month)
                 + self._active(connection, month)
@@ -308,6 +350,7 @@ class BudgetLedger:
         with self._connect() as connection:
             self._begin(connection)
             self._require_active(connection, validated)
+            overrun = actual_amount > validated.amount
             connection.execute(
                 """INSERT INTO charges
                    (reservation_id, request_sha256, experiment_id, month_key,
@@ -336,13 +379,35 @@ class BudgetLedger:
                     at_utc.isoformat(),
                 ),
             )
+            if overrun:
+                connection.execute(
+                    """INSERT INTO budget_stop_events
+                       (request_sha256, experiment_id, month_key, reason,
+                        reserved_amount, actual_amount, created_at_utc)
+                       VALUES (?, ?, ?, 'reservation_overrun', ?, ?, ?)""",
+                    (
+                        validated.request_sha256,
+                        validated.experiment_id,
+                        validated.month_key,
+                        str(validated.amount),
+                        str(actual_amount),
+                        at_utc.isoformat(),
+                    ),
+                )
             connection.commit()
+        if overrun:
+            raise BudgetOverrunError(
+                reservation_id=validated.reservation_id,
+                reserved_amount=validated.amount,
+                actual_amount=actual_amount,
+            )
 
     def record_gpu_lease(
         self,
         *,
         lease_id: str,
         experiment_id: str,
+        mode: ExperimentMode,
         hours: Decimal,
         pricing: Pricing,
         at_utc: datetime,
@@ -351,12 +416,17 @@ class BudgetLedger:
         cost = pricing.gpu_cost(hours)
         with self._connect() as connection:
             self._begin(connection)
+            try:
+                self._require_not_stopped(connection, month)
+            except BudgetExceededError:
+                connection.rollback()
+                raise
             projected = (
                 self._committed(connection, month)
                 + self._active(connection, month)
                 + cost
             )
-            if projected > self._limit(ExperimentMode.FORMAL):
+            if projected > self._limit(mode):
                 connection.rollback()
                 raise BudgetExceededError("Phase 5 budget stop rule reached")
             connection.execute(

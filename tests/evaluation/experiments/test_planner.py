@@ -8,7 +8,12 @@ from pydantic import ValidationError
 from spanvouch.contracts.diagnosis import ProviderUsage
 from spanvouch.contracts.versioning import canonical_sha256
 from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig, ProviderResponse
-from spanvouch.evaluation.corpus import CorpusEntry, CorpusManifestMetadata, TraceReplayRepository
+from spanvouch.evaluation.corpus import (
+    CorpusCell,
+    CorpusEntry,
+    CorpusManifestMetadata,
+    TraceReplayRepository,
+)
 from spanvouch.evaluation.experiments.config import ConditionId, load_experiment_config
 from spanvouch.evaluation.experiments.diagnosis import (
     DiagnosisCandidateRepository,
@@ -97,13 +102,21 @@ async def _candidate_pair(tmp_path: Path) -> tuple[FrozenDiagnosisCandidate, ...
     return tuple(candidates)
 
 
+def _expected_cells(
+    candidates: tuple[FrozenDiagnosisCandidate, ...],
+) -> tuple[CorpusCell, ...]:
+    return tuple(candidate.cell for candidate in candidates)
+
+
 @pytest.mark.asyncio
 async def test_planner_emits_exactly_six_ordered_conditions_per_candidate(
     tmp_path: Path,
 ) -> None:
     candidates = await _candidate_pair(tmp_path)
     config = load_experiment_config(Path("evals/configs/phase5-pilot.json"))
-    plans = VerificationMatrixPlanner().plan(candidates, config)
+    plans = VerificationMatrixPlanner().plan(
+        candidates, config, expected_cells=_expected_cells(candidates)
+    )
 
     assert len(plans) == 12
     for candidate in candidates:
@@ -126,7 +139,9 @@ async def test_planner_emits_exactly_six_ordered_conditions_per_candidate(
 async def test_plan_id_changes_for_every_causal_binding(tmp_path: Path) -> None:
     candidates = await _candidate_pair(tmp_path)
     config = load_experiment_config(Path("evals/configs/phase5-pilot.json"))
-    plan = VerificationMatrixPlanner().plan(candidates, config)[2]
+    plan = VerificationMatrixPlanner().plan(
+        candidates, config, expected_cells=_expected_cells(candidates)
+    )[2]
     payload = plan.model_dump(mode="python", exclude={"plan_id"})
 
     for field, value in (
@@ -153,14 +168,22 @@ async def test_validator_rejects_missing_duplicate_drift_and_unpaired_cells(
     candidates = await _candidate_pair(tmp_path)
     config = load_experiment_config(Path("evals/configs/phase5-pilot.json"))
     planner = VerificationMatrixPlanner()
-    plans = planner.plan(candidates, config)
+    expected_cells = _expected_cells(candidates)
+    plans = planner.plan(candidates, config, expected_cells=expected_cells)
 
     with pytest.raises(ValueError, match="six conditions"):
-        planner.validate(plans[:-1], candidates, config)
+        planner.validate(
+            plans[:-1], candidates, config, expected_cells=expected_cells
+        )
     with pytest.raises(ValueError, match="duplicate"):
-        planner.validate(plans[:-1] + (plans[0],), candidates, config)
+        planner.validate(
+            plans[:-1] + (plans[0],),
+            candidates,
+            config,
+            expected_cells=expected_cells,
+        )
     with pytest.raises(ValueError, match="paired"):
-        planner.plan(candidates[:1], config)
+        planner.plan(candidates[:1], config, expected_cells=expected_cells)
 
     drifted_payload = plans[2].model_dump(mode="python", exclude={"plan_id"})
     drifted_payload["provider"] = "drifted"
@@ -170,7 +193,30 @@ async def test_validator_rejects_missing_duplicate_drift_and_unpaired_cells(
     )
     drifted = ConditionPlan.from_payload(**drifted_payload)
     with pytest.raises(ValueError, match="provider"):
-        planner.validate((plans[0], plans[1], drifted, *plans[3:]), candidates, config)
+        planner.validate(
+            (plans[0], plans[1], drifted, *plans[3:]),
+            candidates,
+            config,
+            expected_cells=expected_cells,
+        )
+
+
+@pytest.mark.asyncio
+async def test_planner_rejects_whole_pair_omitted_from_expected_universe(
+    tmp_path: Path,
+) -> None:
+    candidates = await _candidate_pair(tmp_path)
+    config = load_experiment_config(Path("evals/configs/phase5-pilot.json"))
+    omitted_pair = tuple(
+        candidate.cell.model_copy(update={"repetition": 2}) for candidate in candidates
+    )
+
+    with pytest.raises(ValueError, match="exactly partition"):
+        VerificationMatrixPlanner().plan(
+            candidates,
+            config,
+            expected_cells=(*_expected_cells(candidates), *omitted_pair),
+        )
 
 
 @pytest.mark.asyncio
@@ -178,13 +224,15 @@ async def test_manifest_is_complete_and_contains_no_label_identity(tmp_path: Pat
     candidates = await _candidate_pair(tmp_path)
     config = load_experiment_config(Path("evals/configs/phase5-pilot.json"))
     planner = VerificationMatrixPlanner()
-    plans = planner.plan(candidates, config)
+    expected_cells = _expected_cells(candidates)
+    plans = planner.plan(candidates, config, expected_cells=expected_cells)
     manifest = ExperimentMatrixManifest.from_plans(
         plans=plans,
         candidates=candidates,
         config=config,
         candidate_manifest_sha256="e" * 64,
         ineligible=(),
+        expected_cells=expected_cells,
     )
 
     assert manifest.plan_ids == tuple(plan.plan_id for plan in plans)

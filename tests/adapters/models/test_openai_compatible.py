@@ -85,6 +85,27 @@ async def test_provider_sends_exact_openai_request_and_parses_usage() -> None:
     assert result.usage.total_tokens == 10
 
 
+@pytest.mark.asyncio
+async def test_provider_revalidates_generation_before_merging_extra_body() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return _success()
+
+    forged = GenerationConfig(model="Qwen/Qwen3-14B").model_copy(
+        update={"extra_body": {"model": "attacker/model"}}
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ProviderConfigurationError, match="generation configuration"):
+            await OpenAICompatibleProvider(_config(), client=client).complete(
+                (ChatMessage(role="user", content="Return JSON."),), forged
+            )
+
+    assert calls == 0
+
+
 @pytest.mark.parametrize(
     "base_url",
     [

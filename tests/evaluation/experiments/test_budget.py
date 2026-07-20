@@ -12,6 +12,7 @@ import pytest
 from spanvouch.evaluation.experiments.budget import (
     BudgetExceededError,
     BudgetLedger,
+    BudgetOverrunError,
     Pricing,
     UnknownPriceError,
 )
@@ -113,7 +114,7 @@ def test_reserve_many_is_all_or_nothing_for_paired_matrix(tmp_path: Path) -> Non
     assert ledger.active_reserved_total(at) == Decimal("0")
 
 
-def test_commit_actual_cost_and_release_are_append_only(tmp_path: Path) -> None:
+def test_commit_overrun_is_charged_and_stops_subsequent_work(tmp_path: Path) -> None:
     ledger = BudgetLedger(tmp_path / "phase5.sqlite3", policy())
     at = datetime(2026, 7, 20, tzinfo=UTC)
     reservation = ledger.reserve(
@@ -123,11 +124,20 @@ def test_commit_actual_cost_and_release_are_append_only(tmp_path: Path) -> None:
         mode=ExperimentMode.PILOT,
         at_utc=at,
     )
-    ledger.commit(reservation, actual_amount=Decimal("1.25"), at_utc=at)
+    with pytest.raises(BudgetOverrunError, match="exceeded reservation"):
+        ledger.commit(reservation, actual_amount=Decimal("1.25"), at_utc=at)
     assert ledger.committed_total(at) == Decimal("1.25")
     assert ledger.active_reserved_total(at) == Decimal("0")
     with pytest.raises(ValueError, match="closed"):
         ledger.release(reservation, at_utc=at)
+    with pytest.raises(BudgetExceededError, match="stopped"):
+        ledger.reserve(
+            request_sha256="b" * 64,
+            experiment_id="phase5-pilot",
+            amount=Decimal("1.00"),
+            mode=ExperimentMode.PILOT,
+            at_utc=at,
+        )
 
 
 def test_gpu_lease_is_charged_and_participates_in_stop_rule(tmp_path: Path) -> None:
@@ -136,12 +146,30 @@ def test_gpu_lease_is_charged_and_participates_in_stop_rule(tmp_path: Path) -> N
     cost = ledger.record_gpu_lease(
         lease_id="gpu-1",
         experiment_id="phase5-formal",
+        mode=ExperimentMode.FORMAL,
         hours=Decimal("2"),
         pricing=pricing(),
         at_utc=at,
     )
     assert cost == Decimal("10.000000")
     assert ledger.committed_total(at) == Decimal("10.000000")
+
+
+def test_pilot_gpu_lease_uses_pilot_cap(tmp_path: Path) -> None:
+    ledger = BudgetLedger(tmp_path / "phase5.sqlite3", policy())
+    at = datetime(2026, 7, 20, tzinfo=UTC)
+
+    with pytest.raises(BudgetExceededError):
+        ledger.record_gpu_lease(
+            lease_id="gpu-pilot-over-cap",
+            experiment_id="phase5-pilot",
+            mode=ExperimentMode.PILOT,
+            hours=Decimal("2.01"),
+            pricing=pricing(),
+            at_utc=at,
+        )
+
+    assert ledger.committed_total(at) == Decimal("0")
 
 
 def test_concurrent_reservation_cannot_overspend(tmp_path: Path) -> None:

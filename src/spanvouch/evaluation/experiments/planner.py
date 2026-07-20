@@ -8,6 +8,7 @@ from typing import cast
 from pydantic import JsonValue
 
 from spanvouch.contracts.versioning import canonical_sha256
+from spanvouch.evaluation.corpus import CorpusCell
 from spanvouch.evaluation.experiments.config import (
     ConditionId,
     ModelEndpointConfig,
@@ -16,6 +17,7 @@ from spanvouch.evaluation.experiments.config import (
 from spanvouch.evaluation.experiments.diagnosis import FrozenDiagnosisCandidate
 from spanvouch.evaluation.experiments.models import (
     ConditionPlan,
+    IneligibleCell,
     ProviderPlanStatus,
 )
 from spanvouch.labs.runtime import FrameworkId
@@ -33,6 +35,9 @@ class VerificationMatrixPlanner:
         self,
         candidates: tuple[FrozenDiagnosisCandidate, ...],
         config: Phase5ExperimentConfig,
+        *,
+        expected_cells: tuple[CorpusCell, ...],
+        ineligible: tuple[IneligibleCell, ...] = (),
     ) -> tuple[ConditionPlan, ...]:
         validated_config = Phase5ExperimentConfig.model_validate(
             config.model_dump(mode="python")
@@ -41,7 +46,18 @@ class VerificationMatrixPlanner:
             FrozenDiagnosisCandidate.model_validate(candidate.model_dump(mode="python"))
             for candidate in candidates
         )
+        validated_expected = tuple(
+            CorpusCell.model_validate(cell.model_dump(mode="python"))
+            for cell in expected_cells
+        )
+        validated_ineligible = tuple(
+            IneligibleCell.model_validate(item.model_dump(mode="python"))
+            for item in ineligible
+        )
         self._validate_candidate_set(validated_candidates)
+        self._validate_expected_partition(
+            validated_candidates, validated_ineligible, validated_expected
+        )
         config_sha256 = canonical_sha256(
             cast(JsonValue, validated_config.model_dump(mode="json"))
         )
@@ -92,6 +108,9 @@ class VerificationMatrixPlanner:
         plans: tuple[ConditionPlan, ...],
         candidates: tuple[FrozenDiagnosisCandidate, ...],
         config: Phase5ExperimentConfig,
+        *,
+        expected_cells: tuple[CorpusCell, ...],
+        ineligible: tuple[IneligibleCell, ...] = (),
     ) -> None:
         validated_plans = tuple(
             ConditionPlan.model_validate(plan.model_dump(mode="python")) for plan in plans
@@ -108,7 +127,12 @@ class VerificationMatrixPlanner:
             if set(counts) != set(ConditionId):
                 raise ValueError("matrix must contain all six conditions per candidate")
 
-        expected = self.plan(candidates, config)
+        expected = self.plan(
+            candidates,
+            config,
+            expected_cells=expected_cells,
+            ineligible=ineligible,
+        )
         expected_by_id = {(plan.cell, plan.condition_id): plan for plan in expected}
         if set(by_cell) != {candidate.cell for candidate in candidates}:
             raise ValueError("matrix candidate cells do not match eligible candidates")
@@ -171,3 +195,18 @@ class VerificationMatrixPlanner:
             count != 2 for count in pair_counts.values()
         ):
             raise ValueError("eligible candidates must contain paired framework/repetition cells")
+
+    @staticmethod
+    def _validate_expected_partition(
+        candidates: tuple[FrozenDiagnosisCandidate, ...],
+        ineligible: tuple[IneligibleCell, ...],
+        expected_cells: tuple[CorpusCell, ...],
+    ) -> None:
+        if not expected_cells or len(set(expected_cells)) != len(expected_cells):
+            raise ValueError("expected cells must be a non-empty unique universe")
+        eligible_cells = {candidate.cell for candidate in candidates}
+        ineligible_cells = {item.cell for item in ineligible}
+        if len(ineligible_cells) != len(ineligible) or eligible_cells & ineligible_cells:
+            raise ValueError("eligible and ineligible cells must be a disjoint partition")
+        if eligible_cells | ineligible_cells != set(expected_cells):
+            raise ValueError("eligible and ineligible cells must exactly partition expected cells")
