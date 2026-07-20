@@ -25,11 +25,22 @@ from spanvouch.evaluation.corpus.models import (
     CorpusEntry,
     CorpusManifest,
     CorpusManifestMetadata,
+    CorpusParityEntry,
+    CorpusParityPayload,
 )
 from spanvouch.labs.runtime import ExecutionRecord, ParityResult
 
 _MANIFEST = "manifest.json"
-_DIRECTORIES = frozenset({"records", "records/sha256", "traces", "traces/sha256"})
+_DIRECTORIES = frozenset(
+    {
+        "parity",
+        "parity/sha256",
+        "records",
+        "records/sha256",
+        "traces",
+        "traces/sha256",
+    }
+)
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
 
 
@@ -97,16 +108,46 @@ class TraceReplayRepository:
         metadata = CorpusManifestMetadata.model_validate(
             manifest_metadata.model_dump(mode="python")
         )
+        for record in validated_records:
+            cls._require_record_matches_manifest(record, metadata)
         parity_sha256 = canonical_sha256(cast(JsonValue, list(validated_parity)))
         if metadata.parity_results_sha256 != parity_sha256:
             raise ValueError("parity_results_sha256 does not match parity results")
+        phase5_corpus = metadata.corpus_id.startswith("phase5-")
+        if phase5_corpus and len(validated_records) != len(validated_parity) * 2:
+            raise ValueError("parity results must cover every corpus record pair")
+
+        parity_payloads = tuple(
+            CorpusParityPayload(
+                pair_identity=reference_cell.pair_identity,
+                reference_cell=reference_cell,
+                candidate_cell=candidate_cell,
+                result=result,
+            )
+            for reference, candidate, result in zip(
+                validated_records[::2],
+                validated_records[1::2],
+                validated_parity,
+                strict=True,
+            )
+            for reference_cell, candidate_cell in (
+                (CorpusEntry.from_record(reference).cell, CorpusEntry.from_record(candidate).cell),
+            )
+        ) if phase5_corpus else ()
+        parity_entries = tuple(
+            CorpusParityEntry.from_payload(payload) for payload in parity_payloads
+        )
 
         entries = tuple(CorpusEntry.from_record(record) for record in validated_records)
-        manifest = CorpusManifest.from_entries(entries=entries, metadata=metadata)
+        manifest = CorpusManifest.from_entries(
+            entries=entries,
+            parity_entries=parity_entries,
+            metadata=metadata,
+        )
         require_safe_artifact_content("corpus_manifest", manifest.model_dump(mode="python"))
         require_safe_artifact_content(
             "corpus_parity_results",
-            [result.model_dump(mode="python") for result in validated_parity],
+            [payload.model_dump(mode="python") for payload in parity_payloads],
         )
 
         payloads: dict[str, bytes] = {_MANIFEST: canonical_bytes(manifest)}
@@ -117,6 +158,12 @@ class TraceReplayRepository:
             )
             cls._bind_payload(payloads, entry.record_path, canonical_bytes(record))
             cls._bind_payload(payloads, entry.trace_path, canonical_bytes(record.trace))
+        for payload, parity_entry in zip(parity_payloads, parity_entries, strict=True):
+            cls._bind_payload(
+                payloads,
+                parity_entry.result_path,
+                canonical_bytes(payload),
+            )
 
         staging, root_identity = create_owned_staging_directory(destination)
         identity = None
@@ -186,7 +233,9 @@ class TraceReplayRepository:
 
         expected = {
             entry.record_path: entry.record_sha256 for entry in manifest.entries
-        } | {entry.trace_path: entry.trace_sha256 for entry in manifest.entries}
+        } | {entry.trace_path: entry.trace_sha256 for entry in manifest.entries} | {
+            entry.result_path: entry.result_sha256 for entry in manifest.parity_entries
+        }
         actual_files = set(snapshot.files)
         actual_directories = snapshot.directories
         if actual_directories != _DIRECTORIES:
@@ -218,6 +267,26 @@ class TraceReplayRepository:
                 raise ValueError("record trace does not equal trace payload")
             if CorpusEntry.from_record(record) != entry:
                 raise ValueError("corpus entry does not match execution record")
+            self._require_record_matches_manifest(record, manifest.metadata)
+        parity_results: list[ParityResult] = []
+        for parity_entry in manifest.parity_entries:
+            payload_bytes = self._read_hashed_payload(
+                snapshot.files,
+                parity_entry.result_path,
+                parity_entry.result_sha256,
+                payload_kind="parity payload",
+            )
+            payload = self._parse_model(payload_bytes, CorpusParityPayload)
+            if canonical_bytes(payload) != payload_bytes:
+                raise ValueError("corpus parity payload is not canonical JSON")
+            if CorpusParityEntry.from_payload(payload) != parity_entry:
+                raise ValueError("corpus parity entry does not match parity payload")
+            parity_results.append(payload.result)
+        parity_payload_values = [result.model_dump(mode="json") for result in parity_results]
+        if manifest.parity_entries and canonical_sha256(
+            cast(JsonValue, parity_payload_values)
+        ) != manifest.metadata.parity_results_sha256:
+            raise ValueError("parity_results_sha256 does not match parity payloads")
         return manifest
 
     def load(self, cell: CorpusCell) -> ExecutionRecord:
@@ -240,13 +309,39 @@ class TraceReplayRepository:
             raise ValueError("record trace does not equal trace payload")
         return record
 
+    def load_parity(self, pair_identity: str) -> CorpusParityPayload:
+        manifest = self.verify()
+        try:
+            entry = next(
+                entry
+                for entry in manifest.parity_entries
+                if entry.pair_identity == pair_identity
+            )
+        except StopIteration as error:
+            raise KeyError(pair_identity) from error
+        snapshot = read_verified_directory_tree(self._root)
+        payload_bytes = self._read_hashed_payload(
+            snapshot.files,
+            entry.result_path,
+            entry.result_sha256,
+            payload_kind="parity payload",
+        )
+        payload = self._parse_model(payload_bytes, CorpusParityPayload)
+        if canonical_bytes(payload) != payload_bytes:
+            raise ValueError("corpus parity payload is not canonical JSON")
+        return payload
+
     @staticmethod
     def _read_hashed_payload(
-        files: Mapping[str, bytes], relative: str, expected_sha256: str
+        files: Mapping[str, bytes],
+        relative: str,
+        expected_sha256: str,
+        *,
+        payload_kind: str = "payload",
     ) -> bytes:
         content = files[relative]
         if sha256(content).hexdigest() != expected_sha256:
-            raise ValueError(f"payload SHA-256 mismatch: {relative}")
+            raise ValueError(f"{payload_kind} SHA-256 mismatch: {relative}")
         return content
 
     @staticmethod
@@ -256,6 +351,25 @@ class TraceReplayRepository:
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise ValueError("corpus payload is not valid JSON") from error
         return model.model_validate(payload)
+
+    @staticmethod
+    def _require_record_matches_manifest(
+        record: ExecutionRecord,
+        metadata: CorpusManifestMetadata,
+    ) -> None:
+        provenance = record.provenance
+        if provenance.dirty_worktree or (
+            provenance.git_commit,
+            provenance.dependency_lock_sha256,
+            provenance.dataset_manifest_sha256,
+            provenance.dirty_worktree,
+        ) != (
+            metadata.git_commit,
+            metadata.dependency_lock_sha256,
+            metadata.dataset_manifest_sha256,
+            metadata.dirty_worktree,
+        ):
+            raise ValueError("execution record provenance does not match corpus manifest")
 
 
 def _fsync_directory(path: Path) -> None:

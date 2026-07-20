@@ -594,6 +594,57 @@ def test_secret_classifier_keeps_corpus_identifier_exemptions_narrow(
 
 
 @pytest.mark.parametrize(
+    ("path", "value"),
+    (
+        (
+            ("corpus_manifest", "parity_entries", "pair_identity"),
+            "supportlab:missing_precondition-01:missing_precondition-01:1:20260719",
+        ),
+        (
+            ("corpus_parity_results", "pair_identity"),
+            "opslab:timeout-no-retry:timeout-no-retry:3:20260781",
+        ),
+        (
+            ("corpus_manifest", "parity_entries", "result_path"),
+            f"parity/sha256/{'a' * 64}.json",
+        ),
+        (
+            ("corpus_manifest", "parity_entries", "result_sha256"),
+            "a" * 64,
+        ),
+    ),
+)
+def test_secret_classifier_allows_only_typed_phase5_parity_identifiers(
+    path: tuple[str, ...], value: str
+) -> None:
+    artifacts_module.ArtifactSecretClassifier().require_safe(value, path=path)
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    (
+        (
+            ("corpus_manifest", "parity_entries", "pair_identity"),
+            "supportlab:scenario:1:" + _LOWERCASE_OPAQUE_TOKEN,
+        ),
+        (
+            ("corpus_manifest", "parity_entries", "result_path"),
+            f"labels/sha256/{_LOWERCASE_OPAQUE_TOKEN}.json",
+        ),
+        (
+            ("corpus_record", "pair_identity"),
+            _LOWERCASE_OPAQUE_TOKEN,
+        ),
+    ),
+)
+def test_secret_classifier_keeps_phase5_parity_exemptions_path_and_grammar_exact(
+    path: tuple[str, ...], value: str
+) -> None:
+    with pytest.raises(ValueError, match="unsafe artifact content"):
+        artifacts_module.ArtifactSecretClassifier().require_safe(value, path=path)
+
+
+@pytest.mark.parametrize(
     "path",
     (
         ("corpus_record", "trace", "spans", "attributes", "tool.result"),

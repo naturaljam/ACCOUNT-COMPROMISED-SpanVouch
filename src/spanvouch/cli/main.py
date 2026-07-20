@@ -1,17 +1,26 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from collections.abc import Callable, Sequence
-
-from spanvouch.cli.review import main as review
-from spanvouch.evaluation.generate_dataset import main as generate_dataset
-from spanvouch.evaluation.generate_phase5_labels import main as generate_labels
-from spanvouch.evaluation.generate_review_dataset import main as generate_review
-from spanvouch.evaluation.run_diagnosis_eval import main as evaluate_diagnosis
-from spanvouch.evaluation.run_phase5_corpus import main as generate_corpus
-from spanvouch.evaluation.run_review_eval import main as evaluate_review
+from importlib import import_module
 
 Handler = Callable[[Sequence[str] | None], int]
+_HANDLER_IMPORTS = {
+    ("dataset", "generate"): ("spanvouch.evaluation.generate_dataset", "main"),
+    ("dataset", "generate-review"): (
+        "spanvouch.evaluation.generate_review_dataset",
+        "main",
+    ),
+    ("evaluate", "diagnosis"): (
+        "spanvouch.evaluation.run_diagnosis_eval",
+        "main",
+    ),
+    ("evaluate", "review"): ("spanvouch.evaluation.run_review_eval", "main"),
+    ("labs", "corpus"): ("spanvouch.evaluation.run_phase5_corpus", "main"),
+    ("labs", "labels"): ("spanvouch.evaluation.generate_phase5_labels", "main"),
+    ("review", ""): ("spanvouch.cli.review", "main"),
+}
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -21,26 +30,33 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _load_handler(command: str, subcommand: str) -> Handler:
+    module_name, attribute = _HANDLER_IMPORTS[(command, subcommand)]
+    handler = getattr(import_module(module_name), attribute)
+    return handler  # type: ignore[no-any-return]
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
     rest = tuple(arguments.rest)
     if arguments.command == "review":
-        return review(rest)
-    if not rest:
-        _parser().error(f"{arguments.command} requires a subcommand")
-    subcommand, forwarded = rest[0], rest[1:]
-    handlers: dict[tuple[str, str], Handler] = {
-        ("dataset", "generate"): generate_dataset,
-        ("dataset", "generate-review"): generate_review,
-        ("evaluate", "diagnosis"): evaluate_diagnosis,
-        ("evaluate", "review"): evaluate_review,
-        ("labs", "corpus"): generate_corpus,
-        ("labs", "labels"): generate_labels,
-    }
-    handler = handlers.get((arguments.command, subcommand))
-    if handler is None:
+        subcommand = ""
+        forwarded = rest
+    else:
+        if not rest:
+            _parser().error(f"{arguments.command} requires a subcommand")
+        subcommand, forwarded = rest[0], rest[1:]
+    if (arguments.command, subcommand) not in _HANDLER_IMPORTS:
         _parser().error(f"unknown {arguments.command} subcommand: {subcommand}")
-    return handler(forwarded)
+    handler = _load_handler(arguments.command, subcommand)
+    try:
+        return handler(forwarded)
+    except Exception:
+        label = arguments.command
+        if subcommand:
+            label = f"{label} {subcommand}"
+        print(f"spanvouch: {label} failed", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

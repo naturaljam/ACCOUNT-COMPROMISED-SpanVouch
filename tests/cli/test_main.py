@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 import pytest
 
 from spanvouch.cli import main as cli_main
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.parametrize(
@@ -42,9 +48,88 @@ def test_main_routes_to_one_public_command_tree(
 
         return handler
 
-    monkeypatch.setattr(cli_main, handler_name, record(handler_name))
+    monkeypatch.setattr(
+        cli_main,
+        "_load_handler",
+        lambda command, subcommand: record(handler_name),
+    )
     assert cli_main.main(list(argv)) == 0
     assert calls == [(handler_name, forwarded)]
+
+
+def test_real_console_entrypoint_loads_only_the_selected_corpus_branch() -> None:
+    script = """
+import importlib.metadata
+import json
+import sys
+
+entrypoint = next(
+    item
+    for item in importlib.metadata.distribution("spanvouch").entry_points
+    if item.group == "console_scripts" and item.name == "spanvouch"
+)
+main = entrypoint.load()
+try:
+    main(["labs", "corpus", "--help"])
+except SystemExit as error:
+    if error.code != 0:
+        raise
+forbidden = sorted(
+    name
+    for name in sys.modules
+    if name.startswith(
+        (
+            "spanvouch.evaluation.corpus.gold_specs",
+            "spanvouch.evaluation.corpus.labels",
+            "spanvouch.evaluation.generate_phase5_labels",
+            "spanvouch.evaluation.provider_view",
+            "spanvouch.evaluation.run_diagnosis_eval",
+            "spanvouch.evaluation.run_review_eval",
+        )
+    )
+)
+print("MODULES=" + json.dumps(forbidden))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+
+    assert result.returncode == 0, result.stderr
+    marker = next(line for line in result.stdout.splitlines() if line.startswith("MODULES="))
+    assert json.loads(marker.removeprefix("MODULES=")) == []
+
+
+@pytest.mark.parametrize(
+    ("argv", "failure"),
+    (
+        (("labs", "corpus"), FileNotFoundError("GOLD_SENTINEL missing config")),
+        (("labs", "corpus"), FileExistsError("GOLD_SENTINEL destination conflict")),
+        (("labs", "corpus"), RuntimeError("GOLD_SENTINEL generation failed")),
+        (("labs", "labels"), ValueError("GOLD_SENTINEL tampered label input")),
+    ),
+)
+def test_expected_command_failures_are_concise_and_do_not_leak_exception_details(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    argv: tuple[str, str],
+    failure: Exception,
+) -> None:
+    def fail(_arguments: Sequence[str] | None = None) -> int:
+        raise failure
+
+    monkeypatch.setattr(cli_main, "_load_handler", lambda command, subcommand: fail)
+
+    assert cli_main.main(argv) != 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == f"spanvouch: {argv[0]} {argv[1]} failed\n"
+    assert "Traceback" not in captured.err
+    assert "GOLD_SENTINEL" not in captured.err
 
 
 @pytest.mark.parametrize("argv", [("dataset",), ("evaluate",), ("labs",)])

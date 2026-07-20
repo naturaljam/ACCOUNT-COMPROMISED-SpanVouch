@@ -89,7 +89,8 @@ def test_manifest_sorts_entries_and_derives_payload_hashes(
     manifest_metadata: CorpusManifestMetadata,
 ) -> None:
     entries = (CorpusEntry.from_record(second_record), CorpusEntry.from_record(record))
-    manifest = CorpusManifest.from_entries(entries=entries, metadata=manifest_metadata)
+    metadata = manifest_metadata.model_copy(update={"expected_cell_count": 2})
+    manifest = CorpusManifest.from_entries(entries=entries, metadata=metadata)
     assert manifest.entries == tuple(sorted(entries, key=lambda item: item.cell.sort_key()))
     assert manifest.records_sha256 == canonical_sha256(
         sorted({item.record_sha256 for item in entries})
@@ -118,8 +119,9 @@ def test_manifest_rejects_duplicate_cells(
     entry: CorpusEntry,
     manifest_metadata: CorpusManifestMetadata,
 ) -> None:
+    metadata = manifest_metadata.model_copy(update={"expected_cell_count": 2})
     with pytest.raises(ValueError, match="corpus cells must be unique"):
-        CorpusManifest.from_entries(entries=(entry, entry), metadata=manifest_metadata)
+        CorpusManifest.from_entries(entries=(entry, entry), metadata=metadata)
 
 
 def test_manifest_direct_validation_rejects_unsorted_entries_and_derived_hash_mismatch(
@@ -128,7 +130,8 @@ def test_manifest_direct_validation_rejects_unsorted_entries_and_derived_hash_mi
     manifest_metadata: CorpusManifestMetadata,
 ) -> None:
     entries = (CorpusEntry.from_record(second_record), CorpusEntry.from_record(record))
-    valid = CorpusManifest.from_entries(entries=entries, metadata=manifest_metadata)
+    metadata = manifest_metadata.model_copy(update={"expected_cell_count": 2})
+    valid = CorpusManifest.from_entries(entries=entries, metadata=metadata)
     with pytest.raises(ValidationError, match="corpus entries must be sorted"):
         CorpusManifest.model_validate({**valid.model_dump(), "entries": entries})
     with pytest.raises(ValidationError, match="records_sha256 does not match"):

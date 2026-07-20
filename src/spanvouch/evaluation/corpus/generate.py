@@ -130,6 +130,7 @@ async def generate_phase5_corpus(
             )
             record = await adapters[cell.framework_id].execute(cell.scenario, run_config)
             _require_record_matches_cell(record, cell)
+            _require_record_provenance(record, provenance)
             pair.append(record)
             records.append(record)
         parity_results.append(validator.validate(pair[0], pair[1]))
@@ -142,6 +143,9 @@ async def generate_phase5_corpus(
         git_commit=provenance.git_commit,
         dependency_lock_sha256=provenance.dependency_lock_sha256,
         dataset_manifest_sha256=provenance.dataset_manifest_sha256,
+        dirty_worktree=provenance.dirty_worktree,
+        expected_cell_count=len(plan),
+        expected_pair_count=len(plan) // 2,
         created_at_utc=created_at_utc or datetime.now(UTC),
         parity_results_sha256=canonical_sha256(
             cast(
@@ -199,3 +203,22 @@ def _require_record_matches_cell(
         or record.seed != cell.seed
     ):
         raise ValueError("adapter execution record does not match its corpus cell")
+
+
+def _require_record_provenance(
+    record: ExecutionRecord,
+    expected: ExecutionProvenance,
+) -> None:
+    actual = record.provenance
+    if actual.dirty_worktree or (
+        actual.git_commit,
+        actual.dependency_lock_sha256,
+        actual.dataset_manifest_sha256,
+        actual.dirty_worktree,
+    ) != (
+        expected.git_commit,
+        expected.dependency_lock_sha256,
+        expected.dataset_manifest_sha256,
+        expected.dirty_worktree,
+    ):
+        raise ValueError("execution record provenance does not match corpus provenance")

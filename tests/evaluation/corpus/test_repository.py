@@ -20,7 +20,7 @@ from spanvouch.evaluation.corpus import (
     CorpusManifestMetadata,
     TraceReplayRepository,
 )
-from spanvouch.labs.runtime import ExecutionRecord, ParityResult
+from spanvouch.labs.runtime import ExecutionProvenance, ExecutionRecord, ParityResult
 
 
 def _freeze(
@@ -74,6 +74,8 @@ def test_freeze_atomically_publishes_exact_content_addressed_layout(
     assert repository.verify().entries == (entry,)
     assert {path.relative_to(destination).as_posix() for path in destination.rglob("*")} == {
         "manifest.json",
+        "parity",
+        "parity/sha256",
         "records",
         "records/sha256",
         entry.record_path,
@@ -212,6 +214,45 @@ def test_load_runs_verification_and_returns_hash_equal_immutable_record(
         loaded.seed = 1
 
 
+@pytest.mark.parametrize(
+    "changed_provenance",
+    (
+        {"git_commit": "f" * 40},
+        {"dependency_lock_sha256": "f" * 64},
+        {"dataset_manifest_sha256": "f" * 64},
+        {"dirty_worktree": True},
+    ),
+    ids=("stale-commit", "mixed-lock", "mixed-dataset", "dirty-record"),
+)
+def test_verify_rejects_record_provenance_not_bound_to_manifest(
+    tmp_path: Path,
+    record: ExecutionRecord,
+    parity_results: tuple[ParityResult, ...],
+    manifest_metadata: CorpusManifestMetadata,
+    changed_provenance: dict[str, object],
+) -> None:
+    destination = tmp_path / "corpus"
+    _freeze(destination, record, parity_results, manifest_metadata)
+    old_entry = CorpusEntry.from_record(record)
+    provenance = ExecutionProvenance.model_validate(
+        {**record.provenance.model_dump(mode="python"), **changed_provenance}
+    )
+    changed_record = ExecutionRecord.model_validate(
+        {**record.model_dump(mode="python"), "provenance": provenance}
+    )
+    changed_entry = CorpusEntry.from_record(changed_record)
+    (destination / old_entry.record_path).unlink()
+    (destination / changed_entry.record_path).write_bytes(canonical_bytes(changed_record))
+    manifest = CorpusManifest.from_entries(
+        entries=(changed_entry,),
+        metadata=manifest_metadata,
+    )
+    (destination / "manifest.json").write_bytes(canonical_bytes(manifest))
+
+    with pytest.raises(ValueError, match="provenance does not match corpus manifest"):
+        TraceReplayRepository(destination).verify()
+
+
 def test_load_rejects_record_whose_embedded_trace_differs_from_trace_payload(
     tmp_path: Path,
     record: ExecutionRecord,
@@ -256,6 +297,22 @@ def test_freeze_rejects_parity_hash_mismatch_and_cleans_staging(
     bad = manifest_metadata.model_copy(update={"parity_results_sha256": "a" * 64})
     with pytest.raises(ValueError, match="parity_results_sha256 does not match"):
         _freeze(destination, record, parity_results, bad)
+    assert not destination.exists()
+    assert not tuple(tmp_path.glob(".corpus.tmp-*"))
+
+
+def test_freeze_rejects_record_provenance_mismatch_before_publication(
+    tmp_path: Path,
+    record: ExecutionRecord,
+    parity_results: tuple[ParityResult, ...],
+    manifest_metadata: CorpusManifestMetadata,
+) -> None:
+    destination = tmp_path / "corpus"
+    stale = manifest_metadata.model_copy(update={"git_commit": "f" * 40})
+
+    with pytest.raises(ValueError, match="provenance does not match corpus manifest"):
+        _freeze(destination, record, parity_results, stale)
+
     assert not destination.exists()
     assert not tuple(tmp_path.glob(".corpus.tmp-*"))
 

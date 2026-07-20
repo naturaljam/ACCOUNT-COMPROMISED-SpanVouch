@@ -82,7 +82,10 @@ _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _OTEL_TRACE_ID = re.compile(r"^[0-9a-f]{32}$")
 _OTEL_SPAN_ID = re.compile(r"^[0-9a-f]{16}$")
 _CORPUS_PAYLOAD_PATH = re.compile(
-    r"^(?:records|traces)/sha256/[0-9a-f]{64}\.json$"
+    r"^(?:parity|records|traces)/sha256/[0-9a-f]{64}\.json$"
+)
+_CORPUS_PAIR_IDENTITY = re.compile(
+    r"^(?:supportlab|opslab):[a-z0-9_-]+:[a-z0-9_-]+:[1-9][0-9]*:-?[0-9]+$"
 )
 _CORPUS_HASH_FIELDS = frozenset(
     {
@@ -93,9 +96,11 @@ _CORPUS_HASH_FIELDS = frozenset(
         "experimentconfigsha256",
         "injectiontriggersha256",
         "parityresultssha256",
+        "paritypayloadssha256",
         "payloadssha256",
         "recordsha256",
         "recordssha256",
+        "resultsha256",
         "runtimeconfigsha256",
         "scenarioinputsha256",
         "terminalpredicatesha256",
@@ -123,6 +128,14 @@ _CORPUS_EXACT_SHA256_PATHS = frozenset(
     {
         ("corpus_parity_results", "mismatches", "reference_sha256"),
         ("corpus_parity_results", "mismatches", "candidate_sha256"),
+        ("corpus_parity_results", "result", "mismatches", "reference_sha256"),
+        ("corpus_parity_results", "result", "mismatches", "candidate_sha256"),
+        (
+            "corpus_parity_results",
+            "result",
+            "framework_incompatibility",
+            "error_sha256",
+        ),
         ("corpus_record", "failure", "error_sha256"),
     }
 )
@@ -990,6 +1003,12 @@ class ArtifactSecretClassifier:
             return True
         if path in _CORPUS_EXACT_SHA256_PATHS and _SHA256.fullmatch(value):
             return True
+        if (
+            path[0] in {"corpus_manifest", "corpus_parity_results"}
+            and path[-1] == "pair_identity"
+            and _CORPUS_PAIR_IDENTITY.fullmatch(value)
+        ):
+            return True
         field = path[-1]
         normalized = "".join(ArtifactSecretClassifier._key_tokens(field))
         if path in _HASH_PATHS and normalized in _HASH_FIELDS and _SHA256.fullmatch(value):
@@ -1008,7 +1027,7 @@ class ArtifactSecretClassifier:
             return True
         if (
             path[0] == "corpus_manifest"
-            and path[-1] in {"record_path", "trace_path"}
+            and path[-1] in {"record_path", "result_path", "trace_path"}
             and _CORPUS_PAYLOAD_PATH.fullmatch(value)
         ):
             return True

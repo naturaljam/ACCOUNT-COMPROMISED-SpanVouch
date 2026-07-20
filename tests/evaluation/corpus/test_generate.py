@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from spanvouch.contracts.trace import SpanKind, SpanStatus, TraceIR, TraceSpan
-from spanvouch.evaluation.corpus import TraceReplayRepository
+from spanvouch.evaluation.corpus import CorpusManifest, TraceReplayRepository
 from spanvouch.evaluation.corpus.generate import (
     build_corpus_plan,
     generate_phase5_corpus,
@@ -34,6 +34,44 @@ PILOT_REPETITIONS = 3
 EXPECTED_PILOT_CELLS = (
     (SUPPORTLAB_SCENARIOS + OPSLAB_TEMPLATES) * FRAMEWORKS * PILOT_REPETITIONS
 )
+EXPECTED_SCENARIO_ORDER = (
+    ("supportlab", "missing_precondition-01", "missing_precondition-01"),
+    ("supportlab", "invalid_final_state-01", "invalid_final_state-01"),
+    ("supportlab", "clean-01", "clean-01"),
+    ("supportlab", "clean-04", "clean-04"),
+    ("supportlab", "policy_violation-02", "policy_violation-02"),
+    ("supportlab", "invalid_final_state-02", "invalid_final_state-02"),
+    ("supportlab", "clean-02", "clean-02"),
+    ("supportlab", "ignored_tool_error-02", "ignored_tool_error-02"),
+    ("supportlab", "wrong_tool-01", "wrong_tool-01"),
+    ("supportlab", "context_corruption-02", "context_corruption-02"),
+    ("supportlab", "policy_violation-01", "policy_violation-01"),
+    ("supportlab", "invalid_argument-02", "invalid_argument-02"),
+    ("supportlab", "invalid_argument-01", "invalid_argument-01"),
+    ("supportlab", "clean-03", "clean-03"),
+    ("supportlab", "loop_or_budget_exhaustion-01", "loop_or_budget_exhaustion-01"),
+    ("supportlab", "context_corruption-01", "context_corruption-01"),
+    ("supportlab", "wrong_tool-02", "wrong_tool-02"),
+    ("supportlab", "ignored_tool_error-01", "ignored_tool_error-01"),
+    ("supportlab", "loop_or_budget_exhaustion-02", "loop_or_budget_exhaustion-02"),
+    ("supportlab", "missing_precondition-02", "missing_precondition-02"),
+    ("opslab", "timeout-no-retry", "timeout-no-retry"),
+    ("opslab", "timeout-unbounded-retry", "timeout-unbounded-retry"),
+    ("opslab", "retry-amplification", "retry-amplification"),
+    ("opslab", "timeout-control", "timeout-control"),
+    ("opslab", "rate-limit-unhandled", "rate-limit-unhandled"),
+    ("opslab", "resource-exhaustion", "resource-exhaustion"),
+    ("opslab", "degradation-missing", "degradation-missing"),
+    ("opslab", "resource-control", "resource-control"),
+    ("opslab", "lease-expiry", "lease-expiry"),
+    ("opslab", "lock-contention", "lock-contention"),
+    ("opslab", "deadlock-cycle", "deadlock-cycle"),
+    ("opslab", "concurrency-control", "concurrency-control"),
+    ("opslab", "checkpoint-stale", "checkpoint-stale"),
+    ("opslab", "resume-duplicate", "resume-duplicate"),
+    ("opslab", "workflow-state-drift", "workflow-state-drift"),
+    ("opslab", "recovery-control", "recovery-control"),
+)
 
 
 def _pilot_config() -> Phase5ExperimentConfig:
@@ -56,9 +94,16 @@ def _provenance(*, dirty: bool = False) -> ExecutionProvenance:
 class _RecordingAdapter:
     framework_version = "test-1.0"
 
-    def __init__(self, framework_id: FrameworkId, *, final_message: str = "complete") -> None:
+    def __init__(
+        self,
+        framework_id: FrameworkId,
+        *,
+        final_message: str = "complete",
+        provenance: ExecutionProvenance | None = None,
+    ) -> None:
         self.framework_id = framework_id
         self.final_message = final_message
+        self.provenance = provenance or _provenance()
         self.calls: list[tuple[str, int, int]] = []
 
     async def execute(
@@ -100,7 +145,7 @@ class _RecordingAdapter:
             failure=None,
             started_at=started,
             completed_at=started + timedelta(seconds=1),
-            provenance=_provenance(),
+            provenance=self.provenance,
         )
 
 
@@ -123,6 +168,24 @@ def test_pilot_corpus_plan_orders_each_seeded_framework_pair_together() -> None:
         == (FrameworkId.LANGGRAPH, FrameworkId.AUTOGEN)
         for left, right in pairs
     )
+
+
+def test_pilot_corpus_plan_locks_the_full_ordered_identity_and_seed_sequence() -> None:
+    plan = build_corpus_plan(_pilot_config())
+    expected_identities: list[str] = []
+    expected_seeds: list[int] = []
+    seed = 20260719
+    for domain, template_id, scenario_id in EXPECTED_SCENARIO_ORDER:
+        for repetition in (1, 2, 3):
+            for framework in ("langgraph", "autogen"):
+                expected_identities.append(
+                    f"{domain}:{template_id}:{scenario_id}:{framework}:{repetition}:{seed}"
+                )
+                expected_seeds.append(seed)
+            seed += 1
+
+    assert tuple(cell.identity for cell in plan) == tuple(expected_identities)
+    assert tuple(cell.seed for cell in plan) == tuple(expected_seeds)
     assert all(
         not ({"condition", "condition_id", "model", "model_id"} & set(cell.__dict__))
         for cell in plan
@@ -162,6 +225,41 @@ async def test_generation_executes_pairs_validates_parity_and_freezes_once(
     assert len(result.parity_results) == 108
     assert all(item.is_match for item in result.parity_results)
     assert len(result.repository.verify().entries) == 216
+    manifest = result.repository.verify()
+    assert manifest.metadata.expected_cell_count == 216
+    assert manifest.metadata.expected_pair_count == 108
+    assert len(manifest.parity_entries) == 108
+    assert len({entry.pair_identity for entry in manifest.parity_entries}) == 108
+    assert {
+        cell
+        for entry in manifest.parity_entries
+        for cell in (entry.reference_cell, entry.candidate_cell)
+    } == {entry.cell for entry in manifest.entries}
+    assert all(
+        result.repository.load_parity(entry.pair_identity).result.is_match
+        for entry in manifest.parity_entries
+    )
+    manifest_payload = manifest.model_dump(mode="json")
+    incomplete = {
+        **manifest_payload,
+        "parity_entries": manifest_payload["parity_entries"][:-1],
+    }
+    with pytest.raises(ValueError, match="complete corpus pair coverage"):
+        CorpusManifest.model_validate(incomplete)
+    duplicate = {
+        **manifest_payload,
+        "parity_entries": (
+            manifest_payload["parity_entries"][0],
+            *manifest_payload["parity_entries"][:-1],
+        ),
+    }
+    with pytest.raises(ValueError, match="parity pair identities must be unique"):
+        CorpusManifest.model_validate(duplicate)
+
+    parity_path = destination / manifest.parity_entries[0].result_path
+    parity_path.write_bytes(b"{}")
+    with pytest.raises(ValueError, match="parity payload SHA-256 mismatch"):
+        result.repository.verify()
     assert result.has_unapproved_parity_mismatches is False
     assert len(result.logical_payload_sha256) == 64
 
@@ -184,6 +282,39 @@ async def test_generation_retains_parity_mismatches_for_nonzero_cli_status(
 
     assert result.has_unapproved_parity_mismatches is True
     assert all(item.status == "mismatched" for item in result.parity_results)
+
+
+@pytest.mark.parametrize(
+    "record_provenance",
+    (
+        _provenance().model_copy(update={"git_commit": "e" * 40}),
+        _provenance().model_copy(update={"dependency_lock_sha256": "e" * 64}),
+        _provenance().model_copy(update={"dataset_manifest_sha256": "e" * 64}),
+        _provenance(dirty=True),
+    ),
+    ids=("stale-commit", "mixed-lock", "mixed-dataset", "dirty-record"),
+)
+async def test_generation_rejects_stale_dirty_or_mixed_record_provenance(
+    tmp_path: Path,
+    record_provenance: ExecutionProvenance,
+) -> None:
+    destination = tmp_path / "pilot-corpus"
+
+    with pytest.raises(ValueError, match="execution record provenance"):
+        await generate_phase5_corpus(
+            config=_pilot_config(),
+            destination=destination,
+            adapters={
+                FrameworkId.LANGGRAPH: _RecordingAdapter(
+                    FrameworkId.LANGGRAPH,
+                    provenance=record_provenance,
+                ),
+                FrameworkId.AUTOGEN: _RecordingAdapter(FrameworkId.AUTOGEN),
+            },
+            provenance=_provenance(),
+        )
+
+    assert not destination.exists()
 
 
 async def test_formal_generation_refuses_a_dirty_worktree_before_execution(
