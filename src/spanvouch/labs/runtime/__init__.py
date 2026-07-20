@@ -14,7 +14,10 @@ from spanvouch.labs.runtime.models import (
     RuntimeState,
     ToolObservation,
 )
-from spanvouch.labs.runtime.parity import ScenarioParityValidator
+from spanvouch.labs.runtime.parity import (
+    ScenarioParityValidator,
+    logical_execution_payload,
+)
 from spanvouch.labs.runtime.protocols import (
     AgentRuntimeAdapter,
     LabEnvironment,
@@ -40,4 +43,5 @@ __all__ = [
     "RuntimeState",
     "ScenarioParityValidator",
     "ToolObservation",
+    "logical_execution_payload",
 ]

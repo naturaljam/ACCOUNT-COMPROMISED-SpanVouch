@@ -30,16 +30,16 @@ class ScenarioParityValidator:
                 incompatibility_code=incompatibility.code,
             )
 
-        reference_payloads = _dimension_payloads(reference)
-        candidate_payloads = _dimension_payloads(candidate)
+        reference_payloads = logical_execution_payload(reference)
+        candidate_payloads = logical_execution_payload(candidate)
         mismatches = tuple(
             ParityMismatch(
                 dimension=dimension,
-                reference_sha256=canonical_sha256(reference_payloads[dimension]),
-                candidate_sha256=canonical_sha256(candidate_payloads[dimension]),
+                reference_sha256=canonical_sha256(reference_payloads[dimension.value]),
+                candidate_sha256=canonical_sha256(candidate_payloads[dimension.value]),
             )
             for dimension in _DIMENSION_ORDER
-            if reference_payloads[dimension] != candidate_payloads[dimension]
+            if reference_payloads[dimension.value] != candidate_payloads[dimension.value]
         )
         if mismatches:
             return ParityResult(status="mismatched", mismatches=mismatches)
@@ -61,31 +61,32 @@ def _typed_incompatibility(
     return None
 
 
-def _dimension_payloads(
+def logical_execution_payload(
     record: ExecutionRecord,
-) -> dict[ParityDimension, JsonValue]:
+) -> dict[str, JsonValue]:
+    """Project one execution through the approved Task 6 parity boundary."""
     tools = tuple(
         span for span in record.trace.spans if span.kind is SpanKind.TOOL
     )
     return {
-        ParityDimension.SCENARIO_INPUT: {
+        ParityDimension.SCENARIO_INPUT.value: {
             "scenario_id": record.scenario_id,
             "template_id": record.template_id,
             "domain": record.domain,
             "failure_family": record.failure_family,
             "scenario_input_sha256": record.scenario_input_sha256,
         },
-        ParityDimension.TOOL_SEQUENCE: [
+        ParityDimension.TOOL_SEQUENCE.value: [
             {
                 "span_name": span.name,
                 "tool_name": span.attributes.get("tool.name"),
             }
             for span in tools
         ],
-        ParityDimension.TOOL_ARGUMENTS: [
+        ParityDimension.TOOL_ARGUMENTS.value: [
             _attributes_with_prefix(span, "tool.arguments.") for span in tools
         ],
-        ParityDimension.TOOL_RESULTS: [
+        ParityDimension.TOOL_RESULTS.value: [
             {
                 "status": span.status.value,
                 "result": span.attributes.get("tool.result"),
@@ -94,7 +95,7 @@ def _dimension_payloads(
             }
             for span in tools
         ],
-        ParityDimension.INJECTION_TRIGGER: {
+        ParityDimension.INJECTION_TRIGGER.value: {
             "injection_trigger_id": record.injection_trigger_id,
             "injection_trigger_sha256": record.injection_trigger_sha256,
             "trace_markers": [
@@ -103,14 +104,14 @@ def _dimension_payloads(
                 if (markers := _attributes_with_prefix(span, "injection."))
             ],
         },
-        ParityDimension.RUNTIME_LIMIT: {
+        ParityDimension.RUNTIME_LIMIT.value: {
             "seed": record.seed,
             "repetition": record.repetition,
             "runtime_config": record.runtime_config.model_dump(mode="json"),
             "runtime_config_sha256": record.runtime_config_sha256,
         },
-        ParityDimension.TERMINAL_PREDICATE: record.terminal_predicate_sha256,
-        ParityDimension.OUTCOME: {
+        ParityDimension.TERMINAL_PREDICATE.value: record.terminal_predicate_sha256,
+        ParityDimension.OUTCOME.value: {
             "status": record.status.value,
             "failure": (
                 record.failure.model_dump(mode="json")
@@ -125,7 +126,7 @@ def _dimension_payloads(
                 and not _is_framework_only_workflow(span, record.domain)
             ],
         },
-        ParityDimension.EVIDENCE_SELECTOR: record.evidence_selector_sha256,
+        ParityDimension.EVIDENCE_SELECTOR.value: record.evidence_selector_sha256,
     }
 
 

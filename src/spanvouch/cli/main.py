@@ -5,8 +5,10 @@ from collections.abc import Callable, Sequence
 
 from spanvouch.cli.review import main as review
 from spanvouch.evaluation.generate_dataset import main as generate_dataset
+from spanvouch.evaluation.generate_phase5_labels import main as generate_labels
 from spanvouch.evaluation.generate_review_dataset import main as generate_review
 from spanvouch.evaluation.run_diagnosis_eval import main as evaluate_diagnosis
+from spanvouch.evaluation.run_phase5_corpus import main as generate_corpus
 from spanvouch.evaluation.run_review_eval import main as evaluate_review
 
 Handler = Callable[[Sequence[str] | None], int]
@@ -14,7 +16,7 @@ Handler = Callable[[Sequence[str] | None], int]
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="spanvouch")
-    parser.add_argument("command", choices=("dataset", "evaluate", "review"))
+    parser.add_argument("command", choices=("dataset", "evaluate", "labs", "review"))
     parser.add_argument("rest", nargs=argparse.REMAINDER)
     return parser
 
@@ -32,6 +34,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         ("dataset", "generate-review"): generate_review,
         ("evaluate", "diagnosis"): evaluate_diagnosis,
         ("evaluate", "review"): evaluate_review,
+        ("labs", "corpus"): generate_corpus,
+        ("labs", "labels"): generate_labels,
     }
     handler = handlers.get((arguments.command, subcommand))
     if handler is None:

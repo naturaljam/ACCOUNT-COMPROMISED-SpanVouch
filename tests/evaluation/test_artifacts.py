@@ -537,6 +537,96 @@ def test_secret_classifier_requires_exact_metrics_field_paths(
         )
 
 
+@pytest.mark.parametrize(
+    ("path", "value"),
+    (
+        (("corpus_record", "trace", "trace_id"), "0123456789abcdef" * 2),
+        (("corpus_record", "trace", "spans", "trace_id"), "0123456789abcdef" * 2),
+        (("corpus_record", "trace", "spans", "span_id"), "0123456789abcdef"),
+        (("corpus_record", "trace", "spans", "parent_span_id"), "0123456789abcdef"),
+        (("corpus_trace", "trace_id"), "0123456789abcdef" * 2),
+        (("corpus_trace", "spans", "trace_id"), "0123456789abcdef" * 2),
+        (("corpus_trace", "spans", "span_id"), "0123456789abcdef"),
+        (("corpus_trace", "spans", "parent_span_id"), "0123456789abcdef"),
+        (
+            ("corpus_parity_results", "mismatches", "reference_sha256"),
+            "0123456789abcdef" * 4,
+        ),
+        (
+            ("corpus_parity_results", "mismatches", "candidate_sha256"),
+            "0123456789abcdef" * 4,
+        ),
+        (("corpus_record", "failure", "error_sha256"), "0123456789abcdef" * 4),
+    ),
+)
+def test_secret_classifier_allows_exact_corpus_otel_identifier_paths(
+    path: tuple[str, ...], value: str
+) -> None:
+    artifacts_module.ArtifactSecretClassifier().require_safe(value, path=path)
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    (
+        (
+            ("corpus_record", "trace", "spans", "attributes", "trace_id"),
+            "0123456789abcdef" * 2,
+        ),
+        (
+            ("corpus_trace", "spans", "attributes", "span_id"),
+            "0123456789abcdef" * 2,
+        ),
+        (
+            ("corpus_record", "trace", "trace_id"),
+            "sk-" + "0123456789abcdefghijklmnop",
+        ),
+        (
+            ("corpus_record", "trace", "spans", "attributes", "reference_sha256"),
+            "0123456789abcdef" * 4,
+        ),
+    ),
+)
+def test_secret_classifier_keeps_corpus_identifier_exemptions_narrow(
+    path: tuple[str, ...], value: str
+) -> None:
+    with pytest.raises(ValueError, match="unsafe artifact content"):
+        artifacts_module.ArtifactSecretClassifier().require_safe(value, path=path)
+
+
+@pytest.mark.parametrize(
+    "path",
+    (
+        ("corpus_record", "trace", "spans", "attributes", "tool.result"),
+        ("corpus_trace", "spans", "attributes", "tool.result"),
+    ),
+)
+def test_secret_classifier_allows_only_sanitized_refund_results_in_corpus_traces(
+    path: tuple[str, ...],
+) -> None:
+    value = (
+        "refund_id='4f4de871-76f9-5f8f-8bef-86a2eb35a500' "
+        "order_id='order-001' amount=Decimal('19.99') reason='damaged item' "
+        "idempotency_key='missing_precondition-01-refund' "
+        "approved_by='reviewer@example.test'"
+    )
+    artifacts_module.ArtifactSecretClassifier().require_safe(value, path=path)
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        "qwertyuiopasdfghjklzxcvbnmabcdef",
+        "sk-" + "0123456789abcdefghijklmnop",
+    ),
+)
+def test_secret_classifier_rejects_unstructured_corpus_tool_results(value: str) -> None:
+    with pytest.raises(ValueError, match="unsafe artifact content"):
+        artifacts_module.ArtifactSecretClassifier().require_safe(
+            value,
+            path=("corpus_trace", "spans", "attributes", "tool.result"),
+        )
+
+
 def test_bundle_writer_rejects_event_that_nests_a_metrics_shaped_bypass(
     tmp_path: Path, artifact_manifest: object
 ) -> None:

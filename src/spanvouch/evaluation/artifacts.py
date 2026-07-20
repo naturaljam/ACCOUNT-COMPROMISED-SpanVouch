@@ -79,6 +79,8 @@ _PEM_PRIVATE_KEY = re.compile(r"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----")
 _LEXICAL_ATOM = re.compile(r"[A-Za-z0-9_-]+")
 _GIT_COMMIT = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_OTEL_TRACE_ID = re.compile(r"^[0-9a-f]{32}$")
+_OTEL_SPAN_ID = re.compile(r"^[0-9a-f]{16}$")
 _CORPUS_PAYLOAD_PATH = re.compile(
     r"^(?:records|traces)/sha256/[0-9a-f]{64}\.json$"
 )
@@ -99,6 +101,35 @@ _CORPUS_HASH_FIELDS = frozenset(
         "terminalpredicatesha256",
         "tracesha256",
         "tracessha256",
+    }
+)
+_CORPUS_TRACE_ID_PATHS = frozenset(
+    {
+        ("corpus_record", "trace", "trace_id"),
+        ("corpus_record", "trace", "spans", "trace_id"),
+        ("corpus_trace", "trace_id"),
+        ("corpus_trace", "spans", "trace_id"),
+    }
+)
+_CORPUS_SPAN_ID_PATHS = frozenset(
+    {
+        ("corpus_record", "trace", "spans", "span_id"),
+        ("corpus_record", "trace", "spans", "parent_span_id"),
+        ("corpus_trace", "spans", "span_id"),
+        ("corpus_trace", "spans", "parent_span_id"),
+    }
+)
+_CORPUS_EXACT_SHA256_PATHS = frozenset(
+    {
+        ("corpus_parity_results", "mismatches", "reference_sha256"),
+        ("corpus_parity_results", "mismatches", "candidate_sha256"),
+        ("corpus_record", "failure", "error_sha256"),
+    }
+)
+_CORPUS_SANITIZED_REFUND_PATHS = frozenset(
+    {
+        ("corpus_record", "trace", "spans", "attributes", "tool.result"),
+        ("corpus_trace", "spans", "attributes", "tool.result"),
     }
 )
 _EVALUATION_IDENTIFIER = re.compile(r"^(?:verifier|finding|gap)-[0-9a-f]{64}$")
@@ -912,6 +943,10 @@ class ArtifactSecretClassifier:
             return True
         if self._is_cryptographic_bypass(value, path=path):
             return False
+        if path in _CORPUS_SANITIZED_REFUND_PATHS and _SANITIZED_REFUND_VALUE.fullmatch(
+            value
+        ):
+            return False
         if path == (
             "metrics",
             "samples",
@@ -949,6 +984,12 @@ class ArtifactSecretClassifier:
     def _is_cryptographic_bypass(value: str, *, path: tuple[str, ...]) -> bool:
         if not path:
             return False
+        if path in _CORPUS_TRACE_ID_PATHS and _OTEL_TRACE_ID.fullmatch(value):
+            return True
+        if path in _CORPUS_SPAN_ID_PATHS and _OTEL_SPAN_ID.fullmatch(value):
+            return True
+        if path in _CORPUS_EXACT_SHA256_PATHS and _SHA256.fullmatch(value):
+            return True
         field = path[-1]
         normalized = "".join(ArtifactSecretClassifier._key_tokens(field))
         if path in _HASH_PATHS and normalized in _HASH_FIELDS and _SHA256.fullmatch(value):

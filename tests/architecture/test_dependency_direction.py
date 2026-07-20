@@ -34,6 +34,15 @@ CONTRACT_FORBIDDEN_PREFIXES = (
     "spanvouch.verification",
     "sqlite3",
 )
+STAGE_A_FORBIDDEN_PREFIXES = (
+    "spanvouch.evaluation.corpus.gold_specs",
+    "spanvouch.evaluation.corpus.labels",
+    "spanvouch.evaluation.diagnosis_labels",
+    "spanvouch.evaluation.review_labels",
+    "spanvouch.evaluation.statistics",
+    "spanvouch.evaluation.provider_view",
+    "spanvouch.labs.supportlab.scenarios",
+)
 
 
 def _matches_prefix(module: str, prefixes: tuple[str, ...]) -> bool:
@@ -97,6 +106,24 @@ def test_outer_modules_have_only_the_new_locations() -> None:
 def test_production_core_never_imports_labs_or_evaluation() -> None:
     roots = tuple(SOURCE_ROOT / root for root in CORE_ROOTS)
     assert _forbidden_imports(roots, SOURCE_ROOT, CORE_FORBIDDEN_PREFIXES) == {}
+
+
+def test_phase5_stage_a_never_imports_labels_statistics_or_provider_views() -> None:
+    roots = (
+        SOURCE_ROOT / "evaluation" / "corpus" / "generate.py",
+        SOURCE_ROOT / "evaluation" / "run_phase5_corpus.py",
+    )
+    violations = {
+        path.name: tuple(
+            sorted(
+                module
+                for module in _imported_modules(path, SOURCE_ROOT)
+                if _matches_prefix(module, STAGE_A_FORBIDDEN_PREFIXES)
+            )
+        )
+        for path in roots
+    }
+    assert violations == {"generate.py": (), "run_phase5_corpus.py": ()}
 
 
 @pytest.mark.parametrize("module", PHASE5_EXPERIMENTAL_PREFIXES)

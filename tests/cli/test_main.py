@@ -22,6 +22,8 @@ from spanvouch.cli import main as cli_main
             ("--output", "x"),
         ),
         (("evaluate", "review", "--output", "x"), "evaluate_review", ("--output", "x")),
+        (("labs", "corpus", "--output-dir", "x"), "generate_corpus", ("--output-dir", "x")),
+        (("labs", "labels", "--output-dir", "x"), "generate_labels", ("--output-dir", "x")),
         (("review", "show", "--case-id", "c1"), "review", ("show", "--case-id", "c1")),
     ],
 )
@@ -45,7 +47,7 @@ def test_main_routes_to_one_public_command_tree(
     assert calls == [(handler_name, forwarded)]
 
 
-@pytest.mark.parametrize("argv", [("dataset",), ("evaluate",)])
+@pytest.mark.parametrize("argv", [("dataset",), ("evaluate",), ("labs",)])
 def test_main_rejects_a_missing_subcommand(argv: tuple[str, ...]) -> None:
     with pytest.raises(SystemExit, match="2"):
         cli_main.main(argv)
@@ -53,7 +55,7 @@ def test_main_rejects_a_missing_subcommand(argv: tuple[str, ...]) -> None:
 
 @pytest.mark.parametrize(
     "argv",
-    [("dataset", "unknown"), ("evaluate", "unknown")],
+    [("dataset", "unknown"), ("evaluate", "unknown"), ("labs", "unknown")],
 )
 def test_main_rejects_an_unknown_subcommand(argv: tuple[str, ...]) -> None:
     with pytest.raises(SystemExit, match="2"):

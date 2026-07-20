@@ -1,0 +1,278 @@
+from datetime import UTC, datetime, timedelta
+from hashlib import sha256
+from pathlib import Path
+
+import pytest
+
+from spanvouch.contracts.trace import SpanKind, SpanStatus, TraceIR, TraceSpan
+from spanvouch.evaluation.corpus import TraceReplayRepository
+from spanvouch.evaluation.corpus.generate import (
+    build_corpus_plan,
+    generate_phase5_corpus,
+)
+from spanvouch.evaluation.experiments import (
+    FormalFreezePolicy,
+    Phase5ExperimentConfig,
+    freeze_formal_config,
+    load_experiment_config,
+)
+from spanvouch.labs.runtime import (
+    ExecutionProvenance,
+    ExecutionRecord,
+    ExecutionStatus,
+    FrameworkId,
+    LabScenario,
+    RuntimeConfig,
+    RuntimeState,
+    logical_execution_payload,
+)
+
+SUPPORTLAB_SCENARIOS = 20
+OPSLAB_TEMPLATES = 16
+FRAMEWORKS = 2
+PILOT_REPETITIONS = 3
+EXPECTED_PILOT_CELLS = (
+    (SUPPORTLAB_SCENARIOS + OPSLAB_TEMPLATES) * FRAMEWORKS * PILOT_REPETITIONS
+)
+
+
+def _pilot_config() -> Phase5ExperimentConfig:
+    return load_experiment_config(Path("evals/configs/phase5-pilot.json"))
+
+
+def _provenance(*, dirty: bool = False) -> ExecutionProvenance:
+    return ExecutionProvenance(
+        git_commit="a" * 40,
+        package_version="0.2.0",
+        dependency_lock_sha256="b" * 64,
+        dataset_manifest_sha256="c" * 64,
+        environment_sha256="d" * 64,
+        tool_versions={"opslab": "1.0", "supportlab": "1.0"},
+        runtime_versions={"python": "3.12.10"},
+        dirty_worktree=dirty,
+    )
+
+
+class _RecordingAdapter:
+    framework_version = "test-1.0"
+
+    def __init__(self, framework_id: FrameworkId, *, final_message: str = "complete") -> None:
+        self.framework_id = framework_id
+        self.final_message = final_message
+        self.calls: list[tuple[str, int, int]] = []
+
+    async def execute(
+        self, scenario: LabScenario, run_config: RuntimeConfig
+    ) -> ExecutionRecord:
+        self.calls.append((scenario.scenario_id, run_config.repetition, run_config.seed))
+        started = datetime(2026, 7, 19, tzinfo=UTC) + timedelta(
+            seconds=run_config.repetition
+        )
+        identity = (
+            f"{scenario.scenario_id}:{self.framework_id.value}:"
+            f"{run_config.repetition}:{run_config.seed}"
+        )
+        trace_id = sha256(identity.encode()).hexdigest()[:32]
+        trace = TraceIR(
+            trace_id=trace_id,
+            run_id=scenario.scenario_id,
+            spans=[
+                TraceSpan(
+                    trace_id=trace_id,
+                    span_id=sha256(f"span:{identity}".encode()).hexdigest()[:16],
+                    name=f"{scenario.domain}.run",
+                    kind=SpanKind.AGENT,
+                    status=SpanStatus.OK,
+                    started_at=started,
+                    ended_at=started + timedelta(seconds=1),
+                    attributes={"run.outcome": "succeeded"},
+                )
+            ],
+        )
+        return ExecutionRecord.from_run(
+            scenario=scenario,
+            run_config=run_config,
+            framework_id=self.framework_id,
+            framework_version=self.framework_version,
+            trace=trace,
+            state=RuntimeState.initial().with_final(self.final_message),
+            status=ExecutionStatus.SUCCEEDED,
+            failure=None,
+            started_at=started,
+            completed_at=started + timedelta(seconds=1),
+            provenance=_provenance(),
+        )
+
+
+def test_pilot_corpus_plan_is_complete() -> None:
+    plan = build_corpus_plan(_pilot_config())
+
+    assert len(plan) == EXPECTED_PILOT_CELLS == 216
+    assert len({cell.identity for cell in plan}) == 216
+
+
+def test_pilot_corpus_plan_orders_each_seeded_framework_pair_together() -> None:
+    plan = build_corpus_plan(_pilot_config())
+
+    pairs = tuple(zip(plan[::2], plan[1::2], strict=True))
+    assert all(left.scenario == right.scenario for left, right in pairs)
+    assert all(left.repetition == right.repetition for left, right in pairs)
+    assert all(left.seed == right.seed for left, right in pairs)
+    assert all(
+        (left.framework_id, right.framework_id)
+        == (FrameworkId.LANGGRAPH, FrameworkId.AUTOGEN)
+        for left, right in pairs
+    )
+    assert all(
+        not ({"condition", "condition_id", "model", "model_id"} & set(cell.__dict__))
+        for cell in plan
+    )
+
+
+async def test_generation_executes_pairs_validates_parity_and_freezes_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    langgraph = _RecordingAdapter(FrameworkId.LANGGRAPH)
+    autogen = _RecordingAdapter(FrameworkId.AUTOGEN)
+    freeze_calls = 0
+    original_freeze = TraceReplayRepository.freeze.__func__
+
+    def counting_freeze(cls: type[TraceReplayRepository], **kwargs: object):
+        nonlocal freeze_calls
+        freeze_calls += 1
+        return original_freeze(cls, **kwargs)
+
+    monkeypatch.setattr(TraceReplayRepository, "freeze", classmethod(counting_freeze))
+    destination = tmp_path / "pilot-corpus"
+
+    result = await generate_phase5_corpus(
+        config=_pilot_config(),
+        destination=destination,
+        adapters={
+            FrameworkId.LANGGRAPH: langgraph,
+            FrameworkId.AUTOGEN: autogen,
+        },
+        provenance=_provenance(),
+        created_at_utc=datetime(2026, 7, 19, 12, tzinfo=UTC),
+    )
+
+    assert freeze_calls == 1
+    assert len(langgraph.calls) == len(autogen.calls) == 108
+    assert langgraph.calls == autogen.calls
+    assert len(result.parity_results) == 108
+    assert all(item.is_match for item in result.parity_results)
+    assert len(result.repository.verify().entries) == 216
+    assert result.has_unapproved_parity_mismatches is False
+    assert len(result.logical_payload_sha256) == 64
+
+
+async def test_generation_retains_parity_mismatches_for_nonzero_cli_status(
+    tmp_path: Path,
+) -> None:
+    result = await generate_phase5_corpus(
+        config=_pilot_config(),
+        destination=tmp_path / "pilot-corpus",
+        adapters={
+            FrameworkId.LANGGRAPH: _RecordingAdapter(FrameworkId.LANGGRAPH),
+            FrameworkId.AUTOGEN: _RecordingAdapter(
+                FrameworkId.AUTOGEN, final_message="different"
+            ),
+        },
+        provenance=_provenance(),
+        created_at_utc=datetime(2026, 7, 19, 12, tzinfo=UTC),
+    )
+
+    assert result.has_unapproved_parity_mismatches is True
+    assert all(item.status == "mismatched" for item in result.parity_results)
+
+
+async def test_formal_generation_refuses_a_dirty_worktree_before_execution(
+    tmp_path: Path,
+) -> None:
+    pilot = _pilot_config()
+    policy = FormalFreezePolicy.model_validate_json(
+        Path("evals/configs/phase5-formal-policy.json").read_text(encoding="utf-8")
+    )
+    formal = freeze_formal_config(
+        pilot,
+        policy,
+        repetitions=policy.minimum_repetitions,
+        coverage_loss_tolerance=0.05,
+        frozen_at_utc=datetime(2026, 7, 19, tzinfo=UTC),
+    )
+    langgraph = _RecordingAdapter(FrameworkId.LANGGRAPH)
+    autogen = _RecordingAdapter(FrameworkId.AUTOGEN)
+
+    with pytest.raises(ValueError, match="clean worktree"):
+        await generate_phase5_corpus(
+            config=formal,
+            destination=tmp_path / "formal-corpus",
+            adapters={
+                FrameworkId.LANGGRAPH: langgraph,
+                FrameworkId.AUTOGEN: autogen,
+            },
+            provenance=_provenance(dirty=True),
+        )
+
+    assert langgraph.calls == autogen.calls == []
+    assert not (tmp_path / "formal-corpus").exists()
+
+
+async def test_logical_projection_normalizes_only_task6_physical_fields() -> None:
+    cell = build_corpus_plan(_pilot_config())[0]
+    config = RuntimeConfig(
+        seed=cell.seed,
+        repetition=cell.repetition,
+        max_steps=8,
+        timeout_seconds=5.0,
+        max_retries=0,
+        max_tool_calls=8,
+    )
+    record = await _RecordingAdapter(FrameworkId.LANGGRAPH).execute(
+        cell.scenario, config
+    )
+    shifted = timedelta(days=1)
+    physical_trace = record.trace.model_copy(
+        update={
+            "trace_id": "f" * 32,
+            "spans": [
+                span.model_copy(
+                    update={
+                        "trace_id": "f" * 32,
+                        "span_id": "e" * 16,
+                        "started_at": span.started_at + shifted,
+                        "ended_at": span.ended_at + shifted,
+                    }
+                )
+                for span in record.trace.spans
+            ],
+        }
+    )
+    physical_only = record.model_copy(
+        update={
+            "trace": physical_trace,
+            "framework_version": "different-physical-version",
+            "started_at": record.started_at + shifted,
+            "completed_at": record.completed_at + shifted,
+            "latency_seconds": record.latency_seconds + 99,
+        }
+    )
+
+    assert logical_execution_payload(record) == logical_execution_payload(
+        physical_only
+    )
+
+    drifts = (
+        record.model_copy(update={"evidence_selector_sha256": "e" * 64}),
+        record.model_copy(update={"injection_trigger_sha256": "e" * 64}),
+        record.model_copy(update={"final_message": "different outcome"}),
+        record.model_copy(
+            update={
+                "runtime_config": config.model_copy(update={"max_steps": 9})
+            }
+        ),
+    )
+    assert all(
+        logical_execution_payload(record) != logical_execution_payload(drift)
+        for drift in drifts
+    )
