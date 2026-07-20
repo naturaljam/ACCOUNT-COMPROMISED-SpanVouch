@@ -143,6 +143,8 @@ class DeepSeekProvider:
             envelope = _Envelope.model_validate(response.json())
         except (ValueError, ValidationError) as exc:
             raise ProviderProtocolError("provider returned invalid success envelope") from exc
+        if envelope.model != generation.model:
+            raise ProviderProtocolError("provider returned unexpected model")
         choice = envelope.choices[0]
         elapsed_ms = (perf_counter() - started) * 1000
         return ProviderResponse(

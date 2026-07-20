@@ -14,7 +14,7 @@
   "frameworks": ["langgraph", "autogen"],
   "generator": {
     "provider": "deepseek",
-    "model": "deepseek-chat",
+    "model": "deepseek-v4-flash",
     "endpoint_class": "chat-completions",
     "prompt_version": "phase5-generator-v1",
     "max_tokens": 2048,
@@ -23,7 +23,7 @@
   },
   "shared_verifier": {
     "provider": "deepseek",
-    "model": "deepseek-chat",
+    "model": "deepseek-v4-flash",
     "endpoint_class": "chat-completions",
     "prompt_version": "phase5-shared-verifier-v1",
     "max_tokens": 2048,
@@ -32,7 +32,7 @@
   },
   "isolated_verifier": {
     "provider": "deepseek",
-    "model": "deepseek-chat",
+    "model": "deepseek-v4-flash",
     "endpoint_class": "chat-completions",
     "prompt_version": "phase5-isolated-verifier-v1",
     "max_tokens": 2048,

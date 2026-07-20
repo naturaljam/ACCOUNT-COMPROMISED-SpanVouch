@@ -47,7 +47,7 @@ def _environment(tmp_path: Path) -> dict[str, str]:
         "SPANVOUCH_VLLM_CONTAINER_REPO_DIGEST": "vllm/vllm-openai@sha256:" + "a" * 64,
         "SPANVOUCH_VLLM_HF_REVISION": "b" * 40,
         "SPANVOUCH_PHASE5_DEEPSEEK_PRICING_PATH": str(
-            _pricing(tmp_path / "deepseek-price.json", "deepseek", "deepseek-chat")
+            _pricing(tmp_path / "deepseek-price.json", "deepseek", "deepseek-v4-flash")
         ),
         "SPANVOUCH_PHASE5_QWEN_PRICING_PATH": str(
             _pricing(tmp_path / "qwen-price.json", "qwen", "Qwen/Qwen3-14B")
@@ -120,6 +120,19 @@ def test_pilot_live_cli_routes_deepseek_and_qwen_without_persisting_secrets(
         "_compose_live_providers",
         lambda config, **kwargs: providers,
     )
+    approved_manifest = "a" * 64
+
+    def approve_exact_manifest(
+        request: run_phase5_matrix.ProviderRunRequest,
+        *,
+        matrix_manifest_sha256: str,
+    ) -> str:
+        assert request.approved_manifest_sha256 == approved_manifest
+        return matrix_manifest_sha256
+
+    monkeypatch.setattr(
+        run_phase5_matrix, "_require_approved_manifest", approve_exact_manifest
+    )
     monkeypatch.chdir(tmp_path)
     output = tmp_path / "provider-results"
     assert run_phase5_matrix.main(
@@ -129,6 +142,7 @@ def test_pilot_live_cli_routes_deepseek_and_qwen_without_persisting_secrets(
             "--candidate-dir", str(tmp_path / "fixture/candidates"),
             "--output-dir", str(output),
             "--allow-live-provider",
+            "--approved-manifest-sha256", approved_manifest,
         ]
     ) == 0
 
@@ -206,6 +220,29 @@ def test_formal_live_cli_defers_to_paid_authorization_before_provider_env(
         run_phase5_matrix.main(
             [
                 "--config", str(config_path),
+                "--corpus-dir", str(tmp_path / "fixture/corpus"),
+                "--candidate-dir", str(tmp_path / "fixture/candidates"),
+                "--output-dir", str(tmp_path / "provider"),
+                "--allow-live-provider",
+                "--formal-run",
+            ]
+        )
+
+
+def test_pilot_live_cli_defers_to_manifest_approval_before_provider_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asyncio.run(_candidate_pair(tmp_path / "fixture"))
+    monkeypatch.setattr(
+        run_phase5_matrix,
+        "compose_live_executor",
+        lambda *args, **kwargs: pytest.fail("provider env read before authorization"),
+    )
+
+    with pytest.raises(ProviderConfigurationError, match="live run requires"):
+        run_phase5_matrix.main(
+            [
+                "--config", str(Path("evals/configs/phase5-pilot.json").resolve()),
                 "--corpus-dir", str(tmp_path / "fixture/corpus"),
                 "--candidate-dir", str(tmp_path / "fixture/candidates"),
                 "--output-dir", str(tmp_path / "provider"),

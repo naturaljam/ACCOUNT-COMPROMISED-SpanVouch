@@ -154,3 +154,26 @@ async def test_provider_rejects_malformed_success_envelope() -> None:
             await DeepSeekProvider(
                 DeepSeekConfig(api_key="secret"), client=client
             ).complete((ChatMessage(role="user", content="json"),), GenerationConfig())
+
+
+@pytest.mark.asyncio
+async def test_provider_rejects_response_model_mismatch_without_leaking_identity() -> None:
+    response = success_response()
+    payload = response.json()
+    payload["model"] = "unexpected-sensitive-model-identity"
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, request=request, json=payload)
+        )
+    ) as client:
+        with pytest.raises(ProviderProtocolError) as raised:
+            await DeepSeekProvider(
+                DeepSeekConfig(api_key="secret"), client=client
+            ).complete(
+                (ChatMessage(role="user", content="json"),),
+                GenerationConfig(model="deepseek-v4-flash"),
+            )
+
+    assert str(raised.value) == "provider returned unexpected model"
+    assert "unexpected-sensitive-model-identity" not in str(raised.value)

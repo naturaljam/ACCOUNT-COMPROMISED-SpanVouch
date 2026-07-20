@@ -68,7 +68,8 @@ Follow this sequence:
 
 1. Freeze the excluded pilot manifest and calculate maximum DeepSeek and GPU spend
 2. Obtain approval for that exact pilot identity and cap
-3. Run the smoke checks and pilot with `--allow-live-provider` and the experiment ID
+3. Run the smoke checks and pilot with `--allow-live-provider`, the experiment ID,
+   and `--approved-manifest-sha256 your_approved_manifest_sha256_here`
 4. Stop the GPU, revoke the key, close ingress, record actual cost, and confirm that the endpoint is unreachable
 5. Review completeness, failures, missingness, schema validity, latency, token use, and cost; exclude pilot rows from formal results
 6. Freeze the formal manifest and obtain separate formal-spend approval

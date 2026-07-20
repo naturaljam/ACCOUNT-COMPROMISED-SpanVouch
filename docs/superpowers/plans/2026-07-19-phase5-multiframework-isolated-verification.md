@@ -27,7 +27,9 @@
 - Use `Qwen/Qwen3-14B` in non-thinking mode for the pilot unless the pilot records a typed incompatibility; any replacement creates a new experiment identity and requires design-thread approval.
 - vLLM runs on a rented Linux GPU host and is not added to the local Windows project dependency set.
 - Default tests, CI, dataset generation, replay, and statistics make zero paid provider calls.
-- Every live call requires both `--allow-live-provider` and a non-empty experiment ID; formal calls additionally require `--formal-run` and a frozen manifest.
+- Every live call requires `--allow-live-provider`, a non-empty experiment ID, and
+  `--approved-manifest-sha256` bound to the exact matrix approved before execution;
+  formal calls additionally require `--formal-run`.
 - Monthly paid budget is CNY 500-1000; pilot paid usage is at most 10% of the approved cap; scheduling new paid work stops at 80% of the cap.
 - Cache identity binds trace, diagnosis, condition, prompt version, provider, model, and generation configuration. A cache hit preserves original usage/cost provenance.
 - Formal paired cells cannot be selectively dropped or regenerated after model results are observed.
@@ -1552,7 +1554,7 @@ The evaluator has no provider, model or live-call dependency and must work with 
 - [ ] **Step 5: Wire explicit CLI boundaries**
 
 ```text
-spanvouch experiments run --config $FROZEN_CONFIG --corpus-dir $CORPUS_DIR --candidate-dir $CANDIDATE_DIR --output-dir $EMPTY_PROVIDER_RESULT_DIR [--allow-live-provider] [--formal-run]
+spanvouch experiments run --config $FROZEN_CONFIG --corpus-dir $CORPUS_DIR --candidate-dir $CANDIDATE_DIR --output-dir $EMPTY_PROVIDER_RESULT_DIR [--allow-live-provider --approved-manifest-sha256 $APPROVED_MATRIX_SHA256] [--formal-run]
 spanvouch experiments evaluate --provider-results $PROVIDER_RESULT_DIR --sealed-labels $SEALED_LABEL_DIR --output-dir $EMPTY_EVALUATED_RESULT_DIR
 ```
 

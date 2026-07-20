@@ -155,7 +155,12 @@ def test_default_run_rejects_tampered_candidate_parent(tmp_path: Path) -> None:
         )
 
 
-def test_formal_run_requires_the_preapproved_exact_matrix_identity() -> None:
+def test_every_live_run_requires_the_preapproved_exact_matrix_identity() -> None:
+    with pytest.raises(ProviderConfigurationError, match="live run requires"):
+        run_phase5_matrix._require_approved_manifest(
+            _request(formal_run=False, approved_manifest_sha256=None),
+            matrix_manifest_sha256="a" * 64,
+        )
     with pytest.raises(ProviderConfigurationError, match="requires"):
         run_phase5_matrix._require_approved_manifest(
             _request(approved_manifest_sha256=None),

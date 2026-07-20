@@ -70,9 +70,10 @@ def _require_approved_manifest(
 ) -> str:
     """Bind paid execution to the exact matrix identity approved beforehand."""
     approved = request.approved_manifest_sha256
-    if request.formal_run and approved is None:
+    if approved is None:
+        run_kind = "formal live run" if request.formal_run else "live run"
         raise ProviderConfigurationError(
-            "formal live run requires --approved-manifest-sha256"
+            f"{run_kind} requires --approved-manifest-sha256"
         )
     if approved is not None and re.fullmatch(SHA256_PATTERN, approved) is None:
         raise ProviderConfigurationError("approved manifest hash must be SHA-256")
