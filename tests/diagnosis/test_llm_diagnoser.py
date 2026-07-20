@@ -2,8 +2,14 @@ import json
 
 import pytest
 
-from spanvouch.contracts.diagnosis import AbstainReason, DiagnosisStatus, ProviderUsage
+from spanvouch.contracts.diagnosis import (
+    AbstainReason,
+    DiagnosisReport,
+    DiagnosisStatus,
+    ProviderUsage,
+)
 from spanvouch.contracts.trace import DiagnosticContext
+from spanvouch.contracts.versioning import canonical_sha256
 from spanvouch.diagnosis.llm_diagnoser import LlmDiagnoser
 from spanvouch.diagnosis.protocols import (
     ChatMessage,
@@ -252,3 +258,78 @@ async def test_future_taxonomy_identifier_is_rejected_at_supportlab_boundary() -
         execution.decision.abstain_reason
         is AbstainReason.UNSUPPORTED_FAILURE_TYPE
     )
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_execution_sha256", "expected_report_sha256"),
+    [
+        (
+            {
+                "status": "no_failure",
+                "failure_type": "no_failure",
+                "critical_span_ids": [],
+                "causal_chain": [],
+                "confidence": 0.5,
+                "abstain_reason": None,
+            },
+            "b2de1023f22747c9553cbabf34003754463640950efa920401f762ec91212d51",
+            "01638e8eeda545f6500de3b860855d73a8c53a32f3dc7511ab2ac6e0301be846",
+        ),
+        (
+            {
+                "status": "diagnosed",
+                "failure_type": "invalid_argument",
+                "critical_span_ids": ["span-005"],
+                "causal_chain": [{
+                    "stage": "cause",
+                    "statement": "The submitted amount was rejected.",
+                    "evidence_selectors": [
+                        "span-005::attributes.tool.error.message"
+                    ],
+                }],
+                "confidence": 0.9,
+                "abstain_reason": None,
+            },
+            "a09819f1365bc9b472dea79ee559ff9a32744282477e6f55ecaea3906a6b69e4",
+            "455bc592e736f6dc40e23c510fc471cc3f511443ca01fba04d7134fbea4ce6a1",
+        ),
+        (
+            {
+                "status": "diagnosed",
+                "failure_type": "missing_precondition",
+                "critical_span_ids": ["span-005"],
+                "causal_chain": [{
+                    "stage": "cause",
+                    "statement": "A required lookup was skipped.",
+                    "evidence_selectors": ["span-005::name"],
+                }],
+                "confidence": 0.9,
+                "abstain_reason": None,
+            },
+            "247cb6875b442e45e7979437802b63ad792f37a0aa87edee5372ec3ba2c8f0ad",
+            "d0e02925213bfac9b8754c66a987bdf07b0c4e69371ed220d716a71d9282196c",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_diagnosis_v1_behavior_is_hash_stable(
+    payload: dict[str, object],
+    expected_execution_sha256: str,
+    expected_report_sha256: str,
+) -> None:
+    provider = RecordingProvider(json.dumps(payload))
+    context, evidence = inputs()
+
+    execution = await LlmDiagnoser(provider).diagnose(context, evidence)
+
+    assert canonical_sha256(list(provider.messages)) == (
+        "289a2b06d848a1f8776af0c0e10d591f756bed65eb0dc7f3fc771b19a39181a6"
+    )
+    assert canonical_sha256(execution) == expected_execution_sha256
+    report = DiagnosisReport.from_execution(
+        trace_id=context.trace_id,
+        run_id=context.run_id,
+        diagnoser="deepseek",
+        execution=execution,
+    )
+    assert canonical_sha256(report) == expected_report_sha256
