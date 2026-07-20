@@ -2,15 +2,23 @@ from __future__ import annotations
 
 import json
 import socket
+import subprocess
 from pathlib import Path
 
 import httpx
 import pytest
 
+from spanvouch.contracts.artifacts import CodeProvenance
+from spanvouch.evaluation import offline_acceptance
 from spanvouch.evaluation.artifacts import read_verified_directory_tree
 from spanvouch.evaluation.offline_acceptance import run_offline_acceptance
 
 REFERENCE = Path("evals/reports/reference/phase5-offline-smoke")
+FIXTURE_CODE = CodeProvenance(
+    git_commit="a" * 40,
+    repository_identity="fixture:phase5-offline-smoke",
+    dirty_worktree=False,
+)
 
 
 def _forbid_socket(*args: object, **kwargs: object) -> None:
@@ -31,8 +39,12 @@ async def test_zero_provider_pipeline_is_network_free_and_logically_deterministi
     monkeypatch.setattr(socket.socket, "connect", _forbid_socket)
     monkeypatch.setattr(httpx.AsyncClient, "send", _forbid_http)
 
-    first = await run_offline_acceptance(tmp_path / "first")
-    second = await run_offline_acceptance(tmp_path / "second")
+    first = await run_offline_acceptance(
+        tmp_path / "first", code_provenance=FIXTURE_CODE
+    )
+    second = await run_offline_acceptance(
+        tmp_path / "second", code_provenance=FIXTURE_CODE
+    )
 
     assert first == second
     assert first.adapter_execution_count == 4
@@ -69,8 +81,12 @@ async def test_committed_reference_bundle_reproduces_byte_for_byte(
     monkeypatch.setattr(socket.socket, "connect", _forbid_socket)
     monkeypatch.setattr(httpx.AsyncClient, "send", _forbid_http)
 
-    generated = await run_offline_acceptance(tmp_path / "generated")
     committed = read_verified_directory_tree(REFERENCE)
+    manifest = json.loads(committed.files["manifest.json"])
+    generated = await run_offline_acceptance(
+        tmp_path / "generated",
+        code_provenance=CodeProvenance.model_validate(manifest["code"]),
+    )
     reproduced = read_verified_directory_tree(tmp_path / "generated" / "bundle")
 
     assert reproduced.files == committed.files
@@ -79,3 +95,64 @@ async def test_committed_reference_bundle_reproduces_byte_for_byte(
     readme = committed.files["README.md"].decode("utf-8").casefold()
     assert "fake-provider" in readme
     assert "not paper evidence" in readme
+
+
+def test_git_provenance_discovery_uses_safe_commands_and_full_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(tuple(command))
+        assert kwargs["cwd"] == tmp_path
+        assert kwargs["check"] is True
+        assert kwargs["capture_output"] is True
+        assert kwargs["text"] is True
+        assert kwargs["timeout"] == 10
+        stdout = "b" * 40 + "\n" if command[1] == "rev-parse" else ""
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(offline_acceptance.subprocess, "run", run)
+    discovered = offline_acceptance._discover_code_provenance(tmp_path)
+
+    assert discovered.git_commit == "b" * 40
+    assert discovered.dirty_worktree is False
+    assert calls == [
+        ("git", "rev-parse", "--verify", "HEAD"),
+        ("git", "status", "--porcelain=v1", "--untracked-files=normal"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("revision", "status", "message"),
+    [
+        ("short", "", "full 40-hex"),
+        ("c" * 40, " M tracked.py\n", "clean Git worktree"),
+    ],
+)
+def test_accepted_reference_rejects_invalid_head_or_dirty_worktree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    revision: str,
+    status: str,
+    message: str,
+) -> None:
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        del kwargs
+        stdout = revision + "\n" if command[1] == "rev-parse" else status
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(offline_acceptance.subprocess, "run", run)
+    with pytest.raises(RuntimeError, match=message):
+        offline_acceptance._accepted_code_provenance(None)
+    assert not tmp_path.exists() or not any(tmp_path.iterdir())
+
+
+@pytest.mark.asyncio
+async def test_injected_dirty_provenance_is_rejected_before_output(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match="clean Git worktree"):
+        await run_offline_acceptance(
+            tmp_path / "rejected",
+            code_provenance=FIXTURE_CODE.model_copy(update={"dirty_worktree": True}),
+        )
+    assert not (tmp_path / "rejected").exists()

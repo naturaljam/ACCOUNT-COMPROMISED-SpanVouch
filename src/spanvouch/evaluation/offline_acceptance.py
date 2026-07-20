@@ -9,6 +9,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
+import subprocess
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -88,8 +90,8 @@ from spanvouch.labs.runtime import (
 
 _AT = datetime(2026, 7, 20, 0, 0, tzinfo=UTC)
 _SEED = 20260720
-_CODE_COMMIT = "e546530935fb3236ca5893c6bc621666441e61d5"
 _CONFIG = Path("evals/configs/phase5-pilot.json")
+_REPOSITORY_IDENTITY = "local:phase5-offline-smoke"
 
 
 class OfflineSmokeManifest(BaseModel):
@@ -225,15 +227,17 @@ async def run_offline_acceptance(
     output_dir: Path,
     *,
     asset_emitter: OfflineAssetEmitter | None = None,
+    code_provenance: CodeProvenance | None = None,
 ) -> OfflineSmokeManifest:
     """Run the complete small offline pipeline and publish one reference bundle."""
+    code = _accepted_code_provenance(code_provenance)
     root = output_dir.resolve(strict=False)
     if root.exists():
         raise FileExistsError("offline acceptance output must not already exist")
     root.mkdir(parents=True)
     config = load_experiment_config(_CONFIG)
     config_sha256 = canonical_sha256(cast(JsonValue, config.model_dump(mode="json")))
-    provenance = _provenance()
+    provenance = _provenance(code)
     scenarios = _smoke_scenarios()
     records, parity_match_count = await _execute_adapters(scenarios, provenance)
     corpus = _freeze_corpus(root, records, config_sha256)
@@ -304,6 +308,7 @@ async def run_offline_acceptance(
         bundle_config,
         metrics,
         dependency_lock_sha256=provenance.dependency_lock_sha256,
+        code_provenance=code,
     )
     bundle_sha256 = (asset_emitter or ArtifactBundleEmitter()).emit(request)
     domain_counts = Counter(record.domain for record in records)
@@ -332,9 +337,48 @@ async def run_offline_acceptance(
     )
 
 
-def _provenance() -> ExecutionProvenance:
+def _accepted_code_provenance(value: CodeProvenance | None) -> CodeProvenance:
+    provenance = _discover_code_provenance() if value is None else CodeProvenance.model_validate(
+        value.model_dump(mode="python")
+    )
+    if provenance.dirty_worktree:
+        raise RuntimeError("accepted offline reference requires a clean Git worktree")
+    return provenance
+
+
+def _discover_code_provenance(repository_root: Path | None = None) -> CodeProvenance:
+    root = repository_root or Path(__file__).resolve().parents[3]
+    try:
+        revision = subprocess.run(
+            ["git", "rev-parse", "--verify", "HEAD"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        ).stdout.strip()
+        status = subprocess.run(
+            ["git", "status", "--porcelain=v1", "--untracked-files=normal"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        ).stdout
+    except (OSError, subprocess.SubprocessError) as error:
+        raise RuntimeError("unable to discover Git code provenance") from error
+    if re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+        raise RuntimeError("Git HEAD is not a full 40-hex commit")
+    return CodeProvenance(
+        git_commit=revision,
+        repository_identity=_REPOSITORY_IDENTITY,
+        dirty_worktree=bool(status.strip()),
+    )
+
+
+def _provenance(code: CodeProvenance) -> ExecutionProvenance:
     return ExecutionProvenance(
-        git_commit=_CODE_COMMIT,
+        git_commit=code.git_commit,
         package_version="0.2.0",
         dependency_lock_sha256=sha256(Path("uv.lock").read_bytes()).hexdigest(),
         dataset_manifest_sha256=canonical_sha256(
@@ -349,7 +393,7 @@ def _provenance() -> ExecutionProvenance:
             "langgraph": "1.2.9",
             "python": "3.12",
         },
-        dirty_worktree=False,
+        dirty_worktree=code.dirty_worktree,
     )
 
 
@@ -445,7 +489,7 @@ def _freeze_corpus(
         git_commit=provenance.git_commit,
         dependency_lock_sha256=provenance.dependency_lock_sha256,
         dataset_manifest_sha256=provenance.dataset_manifest_sha256,
-        dirty_worktree=False,
+        dirty_worktree=provenance.dirty_worktree,
         expected_cell_count=len(records),
         expected_pair_count=0,
         created_at_utc=_AT,
@@ -682,6 +726,7 @@ def _asset_request(
     metrics: dict[str, JsonValue],
     *,
     dependency_lock_sha256: str,
+    code_provenance: CodeProvenance,
 ) -> OfflineAssetRequest:
     events: tuple[JsonValue, ...] = (
         {"event": "offline-smoke-complete", "fake_evidence": True, "provider_calls": 0},
@@ -690,13 +735,13 @@ def _asset_request(
         (
             "architecture=portable",
             f"dependency_lock_sha256={dependency_lock_sha256}",
-            f"git_commit={_CODE_COMMIT}",
+            f"git_commit={code_provenance.git_commit}",
             "implementation=offline-smoke",
             "os=portable",
             "package=spanvouch",
             "package_version=0.2.0",
             "python=3.12",
-            "repository_identity=local:phase5-offline-smoke",
+            f"repository_identity={code_provenance.repository_identity}",
         )
     )
     readme = (
@@ -752,11 +797,7 @@ Reproduce twice and compare the two `bundle` directories byte-for-byte:
         artifact_kind="evaluation_bundle",
         created_at_utc=_AT,
         command_name="spanvouch phase5 offline-smoke",
-        code=CodeProvenance(
-            git_commit=_CODE_COMMIT,
-            repository_identity="local:phase5-offline-smoke",
-            dirty_worktree=False,
-        ),
+        code=code_provenance,
         package=PackageProvenance(name="spanvouch", version="0.2.0"),
         contracts={"spanvouch.phase5-offline-smoke": "1.0"},
         configuration=configuration,
