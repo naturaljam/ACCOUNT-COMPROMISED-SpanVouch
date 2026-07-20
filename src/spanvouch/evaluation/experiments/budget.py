@@ -51,6 +51,10 @@ class BudgetBusyError(RuntimeError):
     """Raised when another process owns the SQLite budget write lock."""
 
 
+class ProviderRequestClaimError(RuntimeError):
+    """Raised when an identical paid request is active in the global ledger."""
+
+
 class UnknownPriceError(ValueError):
     """Raised rather than guessing a provider or model price."""
 
@@ -171,6 +175,15 @@ class BudgetLedger:
                 );
                 CREATE UNIQUE INDEX IF NOT EXISTS one_reservation_open
                     ON reservation_events(reservation_id, action);
+                CREATE TABLE IF NOT EXISTS provider_request_claims (
+                    request_sha256 TEXT PRIMARY KEY,
+                    reservation_id TEXT NOT NULL UNIQUE,
+                    experiment_id TEXT NOT NULL,
+                    month_key TEXT NOT NULL,
+                    state TEXT NOT NULL CHECK(state IN ('active','committed')),
+                    created_at_utc TEXT NOT NULL,
+                    updated_at_utc TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS charges (
                     charge_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     reservation_id TEXT,
@@ -329,22 +342,42 @@ class BudgetLedger:
             if projected > self._limit(mode):
                 connection.rollback()
                 raise BudgetExceededError("Phase 5 budget stop rule reached")
-            for item in reservations:
-                connection.execute(
-                    """INSERT INTO reservation_events
-                       (reservation_id, request_sha256, experiment_id, month_key,
-                        amount, mode, action, created_at_utc)
-                       VALUES (?, ?, ?, ?, ?, ?, 'reserved', ?)""",
-                    (
-                        item.reservation_id,
-                        item.request_sha256,
-                        item.experiment_id,
-                        item.month_key,
-                        str(item.amount),
-                        item.mode.value,
-                        at_utc.isoformat(),
-                    ),
-                )
+            try:
+                for item in reservations:
+                    connection.execute(
+                        """INSERT INTO provider_request_claims
+                           (request_sha256, reservation_id, experiment_id, month_key,
+                            state, created_at_utc, updated_at_utc)
+                           VALUES (?, ?, ?, ?, 'active', ?, ?)""",
+                        (
+                            item.request_sha256,
+                            item.reservation_id,
+                            item.experiment_id,
+                            item.month_key,
+                            at_utc.isoformat(),
+                            at_utc.isoformat(),
+                        ),
+                    )
+                    connection.execute(
+                        """INSERT INTO reservation_events
+                           (reservation_id, request_sha256, experiment_id, month_key,
+                            amount, mode, action, created_at_utc)
+                           VALUES (?, ?, ?, ?, ?, ?, 'reserved', ?)""",
+                        (
+                            item.reservation_id,
+                            item.request_sha256,
+                            item.experiment_id,
+                            item.month_key,
+                            str(item.amount),
+                            item.mode.value,
+                            at_utc.isoformat(),
+                        ),
+                    )
+            except sqlite3.IntegrityError:
+                connection.rollback()
+                raise ProviderRequestClaimError(
+                    "provider request is already active globally"
+                ) from None
             connection.commit()
         return reservations
 
@@ -392,6 +425,16 @@ class BudgetLedger:
                     at_utc.isoformat(),
                 ),
             )
+            if action == "released":
+                deleted = connection.execute(
+                    """DELETE FROM provider_request_claims
+                       WHERE request_sha256 = ? AND reservation_id = ?
+                         AND state = 'active'""",
+                    (validated.request_sha256, validated.reservation_id),
+                )
+                if deleted.rowcount != 1:
+                    connection.rollback()
+                    raise ValueError("global provider request claim is missing")
             connection.commit()
 
     def commit(
@@ -439,6 +482,20 @@ class BudgetLedger:
                     at_utc.isoformat(),
                 ),
             )
+            claimed = connection.execute(
+                """UPDATE provider_request_claims
+                   SET state = 'committed', updated_at_utc = ?
+                   WHERE request_sha256 = ? AND reservation_id = ?
+                     AND state = 'active'""",
+                (
+                    at_utc.isoformat(),
+                    validated.request_sha256,
+                    validated.reservation_id,
+                ),
+            )
+            if claimed.rowcount != 1:
+                connection.rollback()
+                raise ValueError("global provider request claim is missing")
             if overrun:
                 connection.execute(
                     """INSERT INTO budget_stop_events

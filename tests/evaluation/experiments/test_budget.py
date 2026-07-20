@@ -16,6 +16,7 @@ from spanvouch.evaluation.experiments.budget import (
     GpuLeaseConflictError,
     GpuLeaseRecord,
     Pricing,
+    ProviderRequestClaimError,
     UnknownPriceError,
 )
 from spanvouch.evaluation.experiments.config import (
@@ -258,6 +259,59 @@ def test_concurrent_reservation_cannot_overspend(tmp_path: Path) -> None:
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = tuple(pool.map(reserve, range(2)))
     assert sorted(results) == [False, True]
+
+
+def test_concurrent_identical_request_has_one_global_reservation(tmp_path: Path) -> None:
+    path = tmp_path / "phase5.sqlite3"
+    at = datetime(2026, 7, 20, tzinfo=UTC)
+
+    def reserve(_: int) -> object | None:
+        ledger = BudgetLedger(path, policy())
+        try:
+            return ledger.reserve(
+                request_sha256="a" * 64,
+                experiment_id="phase5-pilot",
+                amount=Decimal("1"),
+                mode=ExperimentMode.PILOT,
+                at_utc=at,
+            )
+        except ProviderRequestClaimError:
+            return None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        reservations = tuple(pool.map(reserve, range(2)))
+    assert sum(item is not None for item in reservations) == 1
+
+
+def test_batch_claim_conflict_rolls_back_every_new_request(tmp_path: Path) -> None:
+    ledger = BudgetLedger(tmp_path / "phase5.sqlite3", policy())
+    at = datetime(2026, 7, 20, tzinfo=UTC)
+    active = ledger.reserve(
+        request_sha256="a" * 64,
+        experiment_id="phase5-pilot",
+        amount=Decimal("1"),
+        mode=ExperimentMode.PILOT,
+        at_utc=at,
+    )
+    with pytest.raises(
+        ProviderRequestClaimError,
+        match="provider request is already active globally",
+    ):
+        ledger.reserve_many(
+            requests=(("a" * 64, Decimal("1")), ("b" * 64, Decimal("1"))),
+            experiment_id="phase5-pilot",
+            mode=ExperimentMode.PILOT,
+            at_utc=at,
+        )
+    ledger.release(active, at_utc=at)
+    retry = ledger.reserve(
+        request_sha256="b" * 64,
+        experiment_id="phase5-pilot",
+        amount=Decimal("1"),
+        mode=ExperimentMode.PILOT,
+        at_utc=at,
+    )
+    ledger.release(retry, at_utc=at)
 
 
 def test_busy_database_fails_typed_instead_of_bypassing_reservation(

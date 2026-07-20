@@ -18,6 +18,7 @@ from spanvouch.evaluation.experiments.budget import (
     BudgetLedger,
     BudgetOverrunError,
     Pricing,
+    ProviderRequestClaimError,
 )
 from spanvouch.evaluation.experiments.config import BudgetPolicy, ExperimentMode
 from spanvouch.evaluation.experiments.provider import (
@@ -64,6 +65,20 @@ class CountingProvider:
                 request_id="request-raw-id",
             ),
         )
+
+
+class BlockingProvider(CountingProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def complete(
+        self, messages: tuple[ChatMessage, ...], config: GenerationConfig
+    ) -> ProviderResponse:
+        self.started.set()
+        await self.release.wait()
+        return await super().complete(messages, config)
 
 
 def pricing() -> Pricing:
@@ -205,6 +220,86 @@ def test_guarded_provider_allows_matrix_cache_and_global_ledger_paths(
     )
 
     assert provider.cache.path != provider.ledger.path
+
+
+@pytest.mark.asyncio
+async def test_global_ledger_allows_only_one_call_across_manifest_caches(
+    tmp_path: Path,
+) -> None:
+    ledger = BudgetLedger(
+        tmp_path / "global.sqlite3",
+        BudgetPolicy(
+            monthly_cap_cny=Decimal("100"),
+            pilot_fraction=Decimal("0.10"),
+            stop_fraction=Decimal("0.80"),
+        ),
+    )
+
+    def provider(cache_name: str, delegate: CountingProvider) -> GuardedProvider:
+        return GuardedProvider(
+            delegate=delegate,
+            cache=ProviderResultCache(tmp_path / cache_name),
+            ledger=ledger,
+            pricing=pricing(),
+            authorization=PaidRunAuthorization(
+                experiment_id="phase5-pilot", allow_live_provider=True
+            ),
+            mode=ExperimentMode.PILOT,
+            identity=base_identity(),
+            at_utc=lambda: datetime(2026, 7, 20, tzinfo=UTC),
+        )
+
+    winner_delegate = BlockingProvider()
+    winner = asyncio.create_task(
+        provider("matrix-a.sqlite3", winner_delegate).complete(MESSAGES, GENERATION)
+    )
+    await winner_delegate.started.wait()
+    loser_delegate = CountingProvider()
+    with pytest.raises(
+        ProviderRequestClaimError,
+        match="provider request is already active globally",
+    ):
+        await provider("matrix-b.sqlite3", loser_delegate).complete(MESSAGES, GENERATION)
+    assert loser_delegate.calls == 0
+
+    winner_delegate.release.set()
+    await winner
+    assert winner_delegate.calls == 1
+    assert ledger.committed_total(datetime(2026, 7, 20, tzinfo=UTC)) == Decimal(
+        "0.000360"
+    )
+
+
+@pytest.mark.asyncio
+async def test_released_global_request_claim_can_retry_from_another_cache(
+    tmp_path: Path,
+) -> None:
+    ledger_path = tmp_path / "global.sqlite3"
+    policy = BudgetPolicy(
+        monthly_cap_cny=Decimal("100"),
+        pilot_fraction=Decimal("0.10"),
+        stop_fraction=Decimal("0.80"),
+    )
+
+    def provider(cache_name: str, delegate: CountingProvider) -> GuardedProvider:
+        return GuardedProvider(
+            delegate=delegate,
+            cache=ProviderResultCache(tmp_path / cache_name),
+            ledger=BudgetLedger(ledger_path, policy),
+            pricing=pricing(),
+            authorization=PaidRunAuthorization(
+                experiment_id="phase5-pilot", allow_live_provider=True
+            ),
+            mode=ExperimentMode.PILOT,
+            identity=base_identity(),
+            at_utc=lambda: datetime(2026, 7, 20, tzinfo=UTC),
+        )
+
+    with pytest.raises(RuntimeError, match="offline fake failure"):
+        await provider("failed.sqlite3", CountingProvider(fail=True)).complete(MESSAGES, GENERATION)
+    retry = CountingProvider()
+    await provider("retry.sqlite3", retry).complete(MESSAGES, GENERATION)
+    assert retry.calls == 1
 
 
 @pytest.mark.asyncio
