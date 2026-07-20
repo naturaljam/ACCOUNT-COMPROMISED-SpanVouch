@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import inspect
 import json
 import os
+import shutil
+import stat
 import subprocess
 from pathlib import Path
 
 import pytest
 
+import spanvouch.evaluation.artifacts as artifacts_module
+import spanvouch.evaluation.corpus.repository as repository_module
 from spanvouch.contracts.versioning import canonical_bytes, canonical_sha256
 from spanvouch.evaluation.corpus import (
     CorpusEntry,
@@ -47,6 +52,13 @@ def _create_directory_link(link: Path, target: Path) -> None:
     )
     if result.returncode != 0:
         pytest.skip("directory reparse points are unavailable")
+
+
+def _is_link_or_reparse(path: Path) -> bool:
+    metadata = path.stat(follow_symlinks=False)
+    attributes = getattr(metadata, "st_file_attributes", 0)
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return stat.S_ISLNK(metadata.st_mode) or bool(attributes & reparse_flag)
 
 
 def test_freeze_atomically_publishes_exact_content_addressed_layout(
@@ -288,6 +300,144 @@ def test_failed_publish_preserves_foreign_staging_replacement(
     with pytest.raises(OSError, match="publish failed"):
         _freeze(destination, record, parity_results, manifest_metadata)
     assert foreign is not None and foreign.read_bytes() == b"preserve"
+
+
+def test_failed_publish_child_substitution_never_deletes_foreign_tree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    record: ExecutionRecord,
+    parity_results: tuple[ParityResult, ...],
+    manifest_metadata: CorpusManifestMetadata,
+) -> None:
+    destination = tmp_path / "corpus"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    marker = outside / "foreign.txt"
+    marker.write_bytes(b"preserve")
+    substituted = False
+
+    def fail_publish(source: Path, _destination: Path) -> None:
+        nonlocal substituted
+        records = source / "records"
+        records.rename(source / "records-owned")
+        _create_directory_link(records, outside)
+        substituted = True
+        raise OSError("publish failed")
+
+    monkeypatch.setattr(repository_module, "publish_directory_no_replace", fail_publish)
+    with pytest.raises(OSError, match="publish failed"):
+        _freeze(destination, record, parity_results, manifest_metadata)
+    assert marker.read_bytes() == b"preserve"
+    assert substituted
+
+
+@pytest.mark.parametrize("replacement_kind", ("root", "intermediate", "payload"))
+def test_verify_pins_root_intermediate_and_payload_while_reading(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    record: ExecutionRecord,
+    parity_results: tuple[ParityResult, ...],
+    manifest_metadata: CorpusManifestMetadata,
+    replacement_kind: str,
+) -> None:
+    destination = tmp_path / "corpus"
+    repository = _freeze(destination, record, parity_results, manifest_metadata)
+    entry = CorpusEntry.from_record(record)
+    outside_records = tmp_path / "outside-records"
+    (outside_records / "sha256").mkdir(parents=True)
+    shutil.copyfile(
+        destination / entry.record_path,
+        outside_records / "sha256" / Path(entry.record_path).name,
+    )
+    real_read_node = artifacts_module._read_windows_node_bytes
+    attempted = False
+
+    def replace_intermediate_on_read(node: object, kernel32: object) -> bytes:
+        nonlocal attempted
+        path = node.path  # type: ignore[attr-defined]
+        if path == destination / entry.record_path and not attempted:
+            attempted = True
+            try:
+                if replacement_kind == "root":
+                    destination.rename(tmp_path / "corpus-owned")
+                elif replacement_kind == "intermediate":
+                    records = destination / "records"
+                    records.rename(destination / "records-owned")
+                    _create_directory_link(records, outside_records)
+                else:
+                    payload = destination / entry.record_path
+                    payload.rename(payload.with_suffix(".owned"))
+            except OSError:
+                # Pinned Windows handles must deny every replacement level.
+                pass
+        return real_read_node(node, kernel32)
+
+    monkeypatch.setattr(
+        artifacts_module, "_read_windows_node_bytes", replace_intermediate_on_read
+    )
+    assert repository.verify().entries == (entry,)
+    assert attempted
+    assert destination.is_dir()
+    assert not _is_link_or_reparse(destination / "records")
+    assert (destination / entry.record_path).is_file()
+
+
+def test_freeze_fsyncs_destination_parent_after_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    record: ExecutionRecord,
+    parity_results: tuple[ParityResult, ...],
+    manifest_metadata: CorpusManifestMetadata,
+) -> None:
+    destination = tmp_path / "corpus"
+    synced: list[Path] = []
+
+    def record_sync(path: Path) -> None:
+        synced.append(path)
+
+    monkeypatch.setattr(repository_module, "_fsync_directory", record_sync)
+    _freeze(destination, record, parity_results, manifest_metadata)
+    assert synced[-1] == destination.parent
+
+
+def test_directory_fsync_has_explicit_windows_unsupported_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def unsupported(_path: Path, _flags: int) -> int:
+        raise PermissionError("directory fsync unsupported")
+
+    monkeypatch.setattr(repository_module.os, "open", unsupported)
+    repository_module._fsync_directory(tmp_path)
+
+
+def test_windows_snapshot_route_never_enters_posix_reader(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "tree"
+    root.mkdir()
+    (root / "payload.json").write_bytes(b"{}")
+
+    def forbidden(_root: Path) -> object:
+        raise AssertionError("Windows must not enter POSIX dir_fd reader")
+
+    monkeypatch.setattr(artifacts_module, "_read_verified_posix_tree", forbidden)
+    assert artifacts_module.read_verified_directory_tree(root).files == {
+        "payload.json": b"{}"
+    }
+
+
+def test_posix_only_paths_retain_no_follow_dir_fd_and_identity_constraints() -> None:
+    read_source = inspect.getsource(artifacts_module._read_verified_posix_tree)
+    capture_source = inspect.getsource(artifacts_module._capture_posix_tree_entries)
+    delete_source = inspect.getsource(artifacts_module._delete_posix_owned_staging)
+    for source in (read_source, capture_source, delete_source):
+        assert "O_NOFOLLOW" in source
+        assert "dir_fd=" in source or "fstat(" in source
+    assert "follow_symlinks=False" in read_source
+    assert "_artifact_stat_signature" in read_source
+    assert "_artifact_stat_signature" in capture_source
+    assert "os.rename(" in delete_source
+    assert "actual != expected_entry" in delete_source
 
 
 def test_formal_repository_is_explicitly_read_only(

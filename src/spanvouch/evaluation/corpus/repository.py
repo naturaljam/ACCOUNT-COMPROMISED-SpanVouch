@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-import stat
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from hashlib import sha256
 from pathlib import Path
 from typing import Self, TypeVar, cast
@@ -13,9 +12,11 @@ from pydantic import BaseModel, JsonValue
 from spanvouch.contracts.trace import TraceIR
 from spanvouch.contracts.versioning import SHA256_PATTERN, canonical_bytes, canonical_sha256
 from spanvouch.evaluation.artifacts import (
+    capture_owned_directory_identity,
     create_owned_staging_directory,
     delete_owned_staging_directory,
     publish_directory_no_replace,
+    read_verified_directory_tree,
     require_safe_artifact_content,
 )
 from spanvouch.evaluation.corpus.models import (
@@ -54,7 +55,12 @@ class TraceReplayRepository:
 
     @property
     def manifest_sha256(self) -> str:
-        return sha256(self._read_regular_file(self._root / _MANIFEST)).hexdigest()
+        snapshot = read_verified_directory_tree(self._root)
+        try:
+            manifest = snapshot.files[_MANIFEST]
+        except KeyError as error:
+            raise ValueError("missing corpus manifest") from error
+        return sha256(manifest).hexdigest()
 
     @property
     def read_only(self) -> bool:
@@ -103,16 +109,20 @@ class TraceReplayRepository:
             cls._bind_payload(payloads, entry.record_path, canonical_bytes(record))
             cls._bind_payload(payloads, entry.trace_path, canonical_bytes(record.trace))
 
-        staging, identity = create_owned_staging_directory(destination)
+        staging = create_owned_staging_directory(destination)
+        identity = None
         try:
             for relative in sorted(_DIRECTORIES, key=lambda value: (value.count("/"), value)):
                 (staging / relative).mkdir()
             for relative, content in sorted(payloads.items()):
                 cls._write_synced(staging / relative, content)
             cls._sync_directories(staging)
+            identity = capture_owned_directory_identity(staging)
             publish_directory_no_replace(staging, destination)
+            _fsync_directory(destination.parent)
         except Exception:
-            delete_owned_staging_directory(staging, identity)
+            if os.path.lexists(staging) and identity is not None:
+                delete_owned_staging_directory(staging, identity)
             raise
         return cls(
             destination,
@@ -142,20 +152,14 @@ class TraceReplayRepository:
             reverse=True,
         )
         for directory in (*directories, root):
-            try:
-                descriptor = os.open(directory, os.O_RDONLY)
-            except OSError:
-                continue
-            try:
-                os.fsync(descriptor)
-            except OSError:
-                pass
-            finally:
-                os.close(descriptor)
+            _fsync_directory(directory)
 
     def verify(self) -> CorpusManifest:
-        self._require_real_directory(self._root)
-        manifest_bytes = self._read_regular_file(self._root / _MANIFEST)
+        snapshot = read_verified_directory_tree(self._root)
+        try:
+            manifest_bytes = snapshot.files[_MANIFEST]
+        except KeyError as error:
+            raise ValueError("missing corpus manifest") from error
         manifest_digest = sha256(manifest_bytes).hexdigest()
         if (
             self._expected_manifest_sha256 is not None
@@ -169,7 +173,8 @@ class TraceReplayRepository:
         expected = {
             entry.record_path: entry.record_sha256 for entry in manifest.entries
         } | {entry.trace_path: entry.trace_sha256 for entry in manifest.entries}
-        actual_files, actual_directories = self._inventory()
+        actual_files = set(snapshot.files)
+        actual_directories = snapshot.directories
         if actual_directories != _DIRECTORIES:
             raise ValueError("unknown corpus payload directory")
         missing = set(expected) - actual_files
@@ -178,15 +183,19 @@ class TraceReplayRepository:
         unknown = actual_files - set(expected) - {_MANIFEST}
         expected_digests = set(expected.values())
         for relative in sorted(unknown):
-            digest = sha256(self._read_regular_file(self._root / relative)).hexdigest()
+            digest = sha256(snapshot.files[relative]).hexdigest()
             if digest in expected_digests:
                 raise ValueError(f"duplicate corpus payload content: {relative}")
         if unknown:
             raise ValueError(f"unknown corpus payload: {min(unknown)}")
 
         for entry in manifest.entries:
-            record_bytes = self._read_hashed_payload(entry.record_path, entry.record_sha256)
-            trace_bytes = self._read_hashed_payload(entry.trace_path, entry.trace_sha256)
+            record_bytes = self._read_hashed_payload(
+                snapshot.files, entry.record_path, entry.record_sha256
+            )
+            trace_bytes = self._read_hashed_payload(
+                snapshot.files, entry.trace_path, entry.trace_sha256
+            )
             record = self._parse_model(record_bytes, ExecutionRecord)
             trace = self._parse_model(trace_bytes, TraceIR)
             if canonical_bytes(record) != record_bytes or canonical_bytes(trace) != trace_bytes:
@@ -204,67 +213,27 @@ class TraceReplayRepository:
             entry = next(entry for entry in manifest.entries if entry.cell == validated_cell)
         except StopIteration as error:
             raise KeyError(validated_cell) from error
-        record_bytes = self._read_hashed_payload(entry.record_path, entry.record_sha256)
-        trace_bytes = self._read_hashed_payload(entry.trace_path, entry.trace_sha256)
+        snapshot = read_verified_directory_tree(self._root)
+        record_bytes = self._read_hashed_payload(
+            snapshot.files, entry.record_path, entry.record_sha256
+        )
+        trace_bytes = self._read_hashed_payload(
+            snapshot.files, entry.trace_path, entry.trace_sha256
+        )
         record = self._parse_model(record_bytes, ExecutionRecord)
         trace = self._parse_model(trace_bytes, TraceIR)
         if record.trace != trace:
             raise ValueError("record trace does not equal trace payload")
         return record
 
-    def _inventory(self) -> tuple[set[str], frozenset[str]]:
-        files: set[str] = set()
-        directories: set[str] = set()
-        pending = [self._root]
-        while pending:
-            directory = pending.pop()
-            for child in os.scandir(directory):
-                path = Path(child.path)
-                metadata = child.stat(follow_symlinks=False)
-                if self._is_link_or_reparse(metadata):
-                    raise ValueError(f"corpus contains symlink or reparse point: {path.name}")
-                relative = path.relative_to(self._root).as_posix()
-                if stat.S_ISDIR(metadata.st_mode):
-                    directories.add(relative)
-                    pending.append(path)
-                elif stat.S_ISREG(metadata.st_mode):
-                    files.add(relative)
-                else:
-                    raise ValueError(f"corpus contains unsupported filesystem node: {relative}")
-        return files, frozenset(directories)
-
-    def _read_hashed_payload(self, relative: str, expected_sha256: str) -> bytes:
-        content = self._read_regular_file(self._root / relative)
+    @staticmethod
+    def _read_hashed_payload(
+        files: Mapping[str, bytes], relative: str, expected_sha256: str
+    ) -> bytes:
+        content = files[relative]
         if sha256(content).hexdigest() != expected_sha256:
             raise ValueError(f"payload SHA-256 mismatch: {relative}")
         return content
-
-    @classmethod
-    def _read_regular_file(cls, path: Path) -> bytes:
-        try:
-            metadata = path.stat(follow_symlinks=False)
-        except FileNotFoundError:
-            raise
-        if cls._is_link_or_reparse(metadata):
-            raise ValueError(f"corpus contains symlink or reparse point: {path.name}")
-        if not stat.S_ISREG(metadata.st_mode):
-            raise ValueError(f"corpus payload is not a regular file: {path.name}")
-        return path.read_bytes()
-
-    @classmethod
-    def _require_real_directory(cls, path: Path) -> None:
-        try:
-            metadata = path.stat(follow_symlinks=False)
-        except FileNotFoundError as error:
-            raise ValueError("corpus repository does not exist") from error
-        if cls._is_link_or_reparse(metadata) or not stat.S_ISDIR(metadata.st_mode):
-            raise ValueError("corpus repository must be a real directory")
-
-    @staticmethod
-    def _is_link_or_reparse(metadata: os.stat_result) -> bool:
-        attributes = getattr(metadata, "st_file_attributes", 0)
-        reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
-        return stat.S_ISLNK(metadata.st_mode) or bool(attributes & reparse_flag)
 
     @staticmethod
     def _parse_model(content: bytes, model: type[_ModelT]) -> _ModelT:
@@ -273,3 +242,20 @@ class TraceReplayRepository:
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise ValueError("corpus payload is not valid JSON") from error
         return model.model_validate(payload)
+
+
+def _fsync_directory(path: Path) -> None:
+    """Best-effort directory fsync; Windows safely degrades when unsupported."""
+    try:
+        descriptor = os.open(path, os.O_RDONLY)
+    except OSError:
+        if os.name == "nt":
+            return
+        raise
+    try:
+        os.fsync(descriptor)
+    except OSError:
+        if os.name != "nt":
+            raise
+    finally:
+        os.close(descriptor)

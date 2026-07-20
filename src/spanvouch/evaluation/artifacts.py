@@ -11,7 +11,9 @@ import stat
 import subprocess
 import sys
 import tempfile
+import uuid
 from collections.abc import Iterable, Mapping
+from ctypes import wintypes
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -347,10 +349,20 @@ class OwnedDirectoryIdentity:
 
     device: int
     inode: int
+    tree_fingerprint: str = ""
+    native_entries: Any = ()
 
 
-def create_owned_staging_directory(destination: Path) -> tuple[Path, OwnedDirectoryIdentity]:
-    """Create a sibling staging tree and capture the identity required for safe cleanup."""
+@dataclass(frozen=True)
+class VerifiedDirectorySnapshot:
+    """Byte-exact directory contents captured through pinned/no-follow handles."""
+
+    files: Mapping[str, bytes]
+    directories: frozenset[str]
+
+
+def create_owned_staging_directory(destination: Path) -> Path:
+    """Create a sibling staging tree for later identity-bound publication."""
     if os.path.lexists(destination):
         raise FileExistsError(f"artifact bundle destination already exists: {destination}")
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -361,39 +373,399 @@ def create_owned_staging_directory(destination: Path) -> tuple[Path, OwnedDirect
             prefix=f".{destination.name}.tmp-",
         )
     )
-    metadata = staging.stat(follow_symlinks=False)
-    return staging, OwnedDirectoryIdentity(metadata.st_dev, metadata.st_ino)
+    return staging
+
+
+def capture_owned_directory_identity(staging: Path) -> OwnedDirectoryIdentity:
+    """Capture root and complete-tree identity immediately before publication."""
+    from spanvouch.evaluation.provenance import (
+        _snapshot_portable_bundle_identity,
+        _snapshot_windows_bundle_identity,
+    )
+
+    captured = (
+        _snapshot_windows_bundle_identity(staging)
+        if sys.platform == "win32"
+        else _snapshot_portable_bundle_identity(staging)
+    )
+    return OwnedDirectoryIdentity(
+        device=captured.device,
+        inode=captured.inode,
+        tree_fingerprint=captured.tree_fingerprint,
+        native_entries=(
+            captured.native_entries
+            if sys.platform == "win32"
+            else _capture_posix_tree_entries(staging)
+        ),
+    )
 
 
 def delete_owned_staging_directory(
     staging: Path, identity: OwnedDirectoryIdentity
 ) -> bool:
-    """Delete *staging* only while it still has the captured no-follow identity."""
+    """Quarantine and delete only a complete tree matching the captured identity."""
+    if sys.platform != "win32":
+        return _delete_posix_owned_staging(staging, identity)
+    from spanvouch.evaluation.provenance import (
+        _delete_owned_quarantine,
+        _PublishedBundleIdentity,
+    )
+
+    owner = _PublishedBundleIdentity(
+        device=identity.device,
+        inode=identity.inode,
+        tree_fingerprint=identity.tree_fingerprint,
+        native_entries=identity.native_entries,
+    )
+    quarantine = staging.parent / f".{staging.name}.rollback-{uuid.uuid4().hex}"
     try:
-        metadata = staging.stat(follow_symlinks=False)
+        _publish_no_replace(staging, quarantine)
     except FileNotFoundError:
         return True
-    if (
-        not stat.S_ISDIR(metadata.st_mode)
-        or _is_reparse_point(metadata)
-        or (metadata.st_dev, metadata.st_ino) != (identity.device, identity.inode)
-    ):
+    try:
+        try:
+            owned = _delete_owned_quarantine(quarantine, owner)
+        except RuntimeError:
+            # Tree mismatch/reparse is detected before the handle-based delete begins.
+            owned = False
+        if owned:
+            return True
+        _publish_no_replace(quarantine, staging)
         return False
-    _remove_tree_no_follow(staging)
-    return True
+    except Exception:
+        raise RuntimeError("artifact staging cleanup conflict") from None
 
 
-def _remove_tree_no_follow(directory: Path) -> None:
-    for child in tuple(os.scandir(directory)):
-        child_path = Path(child.path)
-        metadata = child.stat(follow_symlinks=False)
-        if stat.S_ISDIR(metadata.st_mode) and not _is_reparse_point(metadata):
-            _remove_tree_no_follow(child_path)
-        elif stat.S_ISDIR(metadata.st_mode):
-            os.rmdir(child_path)
-        else:
-            os.unlink(child_path)
-    os.rmdir(directory)
+def read_verified_directory_tree(root: Path) -> VerifiedDirectorySnapshot:
+    """Read a tree without following replaceable path components or reparse points."""
+    if sys.platform == "win32":
+        return _read_verified_windows_tree(root)
+    return _read_verified_posix_tree(root)
+
+
+def _read_verified_windows_tree(root: Path) -> VerifiedDirectorySnapshot:
+    from spanvouch.evaluation.provenance import (
+        _close_windows_tree,
+        _pin_windows_tree,
+        _windows_kernel32,
+        _windows_tree_fingerprint,
+    )
+
+    kernel32 = _windows_kernel32()
+    pinned = _pin_windows_tree(root, kernel32)
+    try:
+        try:
+            _windows_tree_fingerprint(pinned)
+        except RuntimeError as error:
+            raise ValueError("artifact tree contains symlink or reparse point") from error
+        files: dict[str, bytes] = {}
+        directories: set[str] = set()
+
+        def collect(node: Any) -> None:
+            if node.relative_path not in {"", "."} and node.is_directory:
+                directories.add(node.relative_path)
+            if node.is_directory:
+                for child in node.children:
+                    collect(child)
+                return
+            content = _read_windows_node_bytes(node, kernel32)
+            if node.content_sha256 != sha256(content).hexdigest():
+                raise RuntimeError("artifact tree changed while reading")
+            files[node.relative_path] = content
+
+        collect(pinned)
+        return VerifiedDirectorySnapshot(files=files, directories=frozenset(directories))
+    finally:
+        _close_windows_tree(pinned, kernel32)
+
+
+def _read_windows_node_bytes(node: Any, kernel32: Any) -> bytes:
+    kernel32.SetFilePointerEx.argtypes = (
+        wintypes.HANDLE,
+        ctypes.c_longlong,
+        ctypes.POINTER(ctypes.c_longlong),
+        wintypes.DWORD,
+    )
+    kernel32.SetFilePointerEx.restype = wintypes.BOOL
+    if not kernel32.SetFilePointerEx(
+        wintypes.HANDLE(node.handle),
+        0,
+        None,
+        0,
+    ):
+        raise OSError(ctypes.get_last_error(), "unable to rewind artifact payload")
+    chunks: list[bytes] = []
+    buffer = ctypes.create_string_buffer(64 * 1024)
+    while True:
+        read = wintypes.DWORD()
+        if not kernel32.ReadFile(
+            wintypes.HANDLE(node.handle),
+            buffer,
+            len(buffer),
+            ctypes.byref(read),
+            None,
+        ):
+            raise OSError(ctypes.get_last_error(), "unable to read artifact payload")
+        if read.value == 0:
+            return b"".join(chunks)
+        chunks.append(buffer.raw[: read.value])
+
+
+def _read_verified_posix_tree(  # pragma: no cover - POSIX dir_fd API is absent on Windows
+    root: Path,
+) -> VerifiedDirectorySnapshot:
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    directory_flag = getattr(os, "O_DIRECTORY", 0)
+    root_fd = os.open(root, os.O_RDONLY | no_follow | directory_flag)
+    files: dict[str, bytes] = {}
+    directories: set[str] = set()
+
+    def same_identity(left: os.stat_result, right: os.stat_result) -> bool:
+        return (left.st_dev, left.st_ino, left.st_mode) == (
+            right.st_dev,
+            right.st_ino,
+            right.st_mode,
+        )
+
+    def read_file(directory_fd: int, name: str, expected: os.stat_result) -> bytes:
+        descriptor = os.open(name, os.O_RDONLY | no_follow, dir_fd=directory_fd)
+        try:
+            before = os.fstat(descriptor)
+            if not stat.S_ISREG(before.st_mode) or not same_identity(expected, before):
+                raise RuntimeError("artifact tree changed while reading")
+            chunks: list[bytes] = []
+            while chunk := os.read(descriptor, 64 * 1024):
+                chunks.append(chunk)
+            after = os.fstat(descriptor)
+            if _artifact_stat_signature(before) != _artifact_stat_signature(after):
+                raise RuntimeError("artifact tree changed while reading")
+            return b"".join(chunks)
+        finally:
+            os.close(descriptor)
+
+    def visit(directory_fd: int, relative: str) -> None:
+        before = os.fstat(directory_fd)
+        if not stat.S_ISDIR(before.st_mode):
+            raise ValueError("artifact tree root is not a directory")
+        for name in sorted(os.listdir(directory_fd)):
+            metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            child_relative = f"{relative}/{name}" if relative else name
+            if stat.S_ISLNK(metadata.st_mode) or _is_reparse_point(metadata):
+                raise ValueError("artifact tree contains symlink or reparse point")
+            if stat.S_ISDIR(metadata.st_mode):
+                child_fd = os.open(
+                    name,
+                    os.O_RDONLY | no_follow | directory_flag,
+                    dir_fd=directory_fd,
+                )
+                try:
+                    if not same_identity(metadata, os.fstat(child_fd)):
+                        raise RuntimeError("artifact tree changed while reading")
+                    directories.add(child_relative)
+                    visit(child_fd, child_relative)
+                finally:
+                    os.close(child_fd)
+                continue
+            if not stat.S_ISREG(metadata.st_mode):
+                raise ValueError("artifact tree contains unsupported filesystem node")
+            files[child_relative] = read_file(directory_fd, name, metadata)
+        if _artifact_stat_signature(before) != _artifact_stat_signature(
+            os.fstat(directory_fd)
+        ):
+            raise RuntimeError("artifact tree changed while reading")
+
+    try:
+        visit(root_fd, "")
+        return VerifiedDirectorySnapshot(files=files, directories=frozenset(directories))
+    finally:
+        os.close(root_fd)
+
+
+def _artifact_stat_signature(
+    metadata: os.stat_result,
+) -> tuple[int, int, int, int, int]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+    )
+
+
+def _capture_posix_tree_entries(  # pragma: no cover - POSIX dir_fd API is absent on Windows
+    root: Path,
+) -> tuple[tuple[str, int, int, int, int, int, str | None], ...]:
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    directory_flag = getattr(os, "O_DIRECTORY", 0)
+    root_fd = os.open(root, os.O_RDONLY | no_follow | directory_flag)
+    entries: list[tuple[str, int, int, int, int, int, str | None]] = []
+
+    def signature(
+        relative: str, metadata: os.stat_result, content_sha256: str | None
+    ) -> tuple[str, int, int, int, int, int, str | None]:
+        return (
+            relative,
+            metadata.st_dev,
+            metadata.st_ino,
+            metadata.st_mode,
+            metadata.st_size,
+            metadata.st_mtime_ns,
+            content_sha256,
+        )
+
+    def visit(directory_fd: int, relative: str) -> None:
+        entries.append(signature(relative, os.fstat(directory_fd), None))
+        for name in sorted(os.listdir(directory_fd)):
+            metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            child_relative = f"{relative}/{name}" if relative else name
+            if stat.S_ISLNK(metadata.st_mode) or _is_reparse_point(metadata):
+                raise RuntimeError("artifact tree contains a symlink or reparse point")
+            if stat.S_ISDIR(metadata.st_mode):
+                child_fd = os.open(
+                    name,
+                    os.O_RDONLY | no_follow | directory_flag,
+                    dir_fd=directory_fd,
+                )
+                try:
+                    if _artifact_stat_signature(metadata) != _artifact_stat_signature(
+                        os.fstat(child_fd)
+                    ):
+                        raise RuntimeError("artifact tree changed while capturing identity")
+                    visit(child_fd, child_relative)
+                finally:
+                    os.close(child_fd)
+                continue
+            if not stat.S_ISREG(metadata.st_mode):
+                raise RuntimeError("artifact tree contains an unsupported node")
+            file_fd = os.open(name, os.O_RDONLY | no_follow, dir_fd=directory_fd)
+            try:
+                before = os.fstat(file_fd)
+                if _artifact_stat_signature(metadata) != _artifact_stat_signature(before):
+                    raise RuntimeError("artifact tree changed while capturing identity")
+                digest = sha256()
+                while chunk := os.read(file_fd, 64 * 1024):
+                    digest.update(chunk)
+                after = os.fstat(file_fd)
+                if _artifact_stat_signature(before) != _artifact_stat_signature(after):
+                    raise RuntimeError("artifact tree changed while capturing identity")
+                entries.append(signature(child_relative, before, digest.hexdigest()))
+            finally:
+                os.close(file_fd)
+
+    try:
+        visit(root_fd, "")
+        return tuple(entries)
+    finally:
+        os.close(root_fd)
+
+
+def _delete_posix_owned_staging(  # pragma: no cover - POSIX dir_fd API is absent on Windows
+    staging: Path, identity: OwnedDirectoryIdentity
+) -> bool:
+    quarantine = staging.parent / f".{staging.name}.rollback-{uuid.uuid4().hex}"
+    try:
+        _publish_no_replace(staging, quarantine)
+    except FileNotFoundError:
+        return True
+    expected_entries: tuple[
+        tuple[str, int, int, int, int, int, str | None], ...
+    ] = identity.native_entries
+    expected = {entry[0]: entry for entry in expected_entries}
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    directory_flag = getattr(os, "O_DIRECTORY", 0)
+
+    def signature(
+        relative: str, metadata: os.stat_result, content_sha256: str | None = None
+    ) -> tuple[str, int, int, int, int, int, str | None]:
+        return (
+            relative,
+            metadata.st_dev,
+            metadata.st_ino,
+            metadata.st_mode,
+            metadata.st_size,
+            metadata.st_mtime_ns,
+            content_sha256,
+        )
+
+    def restore(directory_fd: int, temporary_name: str, name: str) -> None:
+        os.rename(
+            temporary_name,
+            name,
+            src_dir_fd=directory_fd,
+            dst_dir_fd=directory_fd,
+        )
+
+    def delete_children(directory_fd: int, relative: str) -> None:
+        names = sorted(os.listdir(directory_fd))
+        expected_children = {
+            path.rsplit("/", maxsplit=1)[-1]
+            for path in expected
+            if path and path.rpartition("/")[0] == relative
+        }
+        if set(names) != expected_children:
+            raise RuntimeError("artifact staging ownership changed")
+        for name in names:
+            child_relative = f"{relative}/{name}" if relative else name
+            temporary_name = f".cleanup-{uuid.uuid4().hex}"
+            os.rename(
+                name,
+                temporary_name,
+                src_dir_fd=directory_fd,
+                dst_dir_fd=directory_fd,
+            )
+            metadata = os.stat(
+                temporary_name, dir_fd=directory_fd, follow_symlinks=False
+            )
+            expected_entry = expected[child_relative]
+            if stat.S_ISDIR(metadata.st_mode):
+                if signature(child_relative, metadata) != expected_entry:
+                    restore(directory_fd, temporary_name, name)
+                    raise RuntimeError("artifact staging ownership changed")
+                child_fd = os.open(
+                    temporary_name,
+                    os.O_RDONLY | no_follow | directory_flag,
+                    dir_fd=directory_fd,
+                )
+                try:
+                    delete_children(child_fd, child_relative)
+                finally:
+                    os.close(child_fd)
+                os.rmdir(temporary_name, dir_fd=directory_fd)
+                continue
+            file_fd = os.open(
+                temporary_name, os.O_RDONLY | no_follow, dir_fd=directory_fd
+            )
+            try:
+                digest = sha256()
+                while chunk := os.read(file_fd, 64 * 1024):
+                    digest.update(chunk)
+                actual = signature(
+                    child_relative, os.fstat(file_fd), digest.hexdigest()
+                )
+            finally:
+                os.close(file_fd)
+            if actual != expected_entry:
+                restore(directory_fd, temporary_name, name)
+                raise RuntimeError("artifact staging ownership changed")
+            os.unlink(temporary_name, dir_fd=directory_fd)
+
+    try:
+        root_fd = os.open(quarantine, os.O_RDONLY | no_follow | directory_flag)
+        try:
+            if signature("", os.fstat(root_fd)) != expected.get(""):
+                raise RuntimeError("artifact staging ownership changed")
+            delete_children(root_fd, "")
+        finally:
+            os.close(root_fd)
+        os.rmdir(quarantine)
+        return True
+    except Exception:
+        try:
+            _publish_no_replace(quarantine, staging)
+        except Exception:
+            raise RuntimeError("artifact staging cleanup conflict") from None
+        return False
 
 
 def _require_real_directory(path: Path) -> None:

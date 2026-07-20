@@ -133,3 +133,20 @@ def test_manifest_direct_validation_rejects_unsorted_entries_and_derived_hash_mi
         CorpusManifest.model_validate({**valid.model_dump(), "entries": entries})
     with pytest.raises(ValidationError, match="records_sha256 does not match"):
         CorpusManifest.model_validate({**valid.model_dump(), "records_sha256": "a" * 64})
+
+
+def test_manifest_factory_revalidates_forged_model_copy_instances(
+    entry: CorpusEntry,
+    manifest_metadata: CorpusManifestMetadata,
+) -> None:
+    forged_entry = entry.model_copy(update={"record_path": "../foreign.json"})
+    with pytest.raises(ValidationError, match="record payload path"):
+        CorpusManifest.from_entries(
+            entries=(forged_entry,), metadata=manifest_metadata
+        )
+
+    forged_metadata = manifest_metadata.model_copy(
+        update={"created_at_utc": datetime(2026, 7, 19)}
+    )
+    with pytest.raises(ValidationError, match="created_at_utc must be UTC"):
+        CorpusManifest.from_entries(entries=(entry,), metadata=forged_metadata)

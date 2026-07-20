@@ -128,10 +128,19 @@ class CorpusManifest(BaseModel):
         entries: tuple[CorpusEntry, ...],
         metadata: CorpusManifestMetadata,
     ) -> Self:
-        sorted_entries = tuple(sorted(entries, key=lambda item: item.cell.sort_key()))
+        validated_metadata = CorpusManifestMetadata.model_validate(
+            metadata.model_dump(mode="python")
+        )
+        validated_entries = tuple(
+            CorpusEntry.model_validate(entry.model_dump(mode="python"))
+            for entry in entries
+        )
+        sorted_entries = tuple(
+            sorted(validated_entries, key=lambda item: item.cell.sort_key())
+        )
         records_sha256, traces_sha256, payloads_sha256 = cls._derived_hashes(sorted_entries)
         return cls(
-            metadata=metadata,
+            metadata=validated_metadata,
             entries=sorted_entries,
             records_sha256=records_sha256,
             traces_sha256=traces_sha256,
