@@ -353,6 +353,25 @@ class EvaluationRequest:
 EvaluationCommand = Callable[[EvaluationRequest], None]
 
 
+def _default_command(request: EvaluationRequest) -> None:
+    if not request.provider_results.is_dir():
+        raise ValueError("provider results must be an existing directory")
+    label_path = request.sealed_labels / "manifest.json"
+    content = label_path.read_bytes()
+    labels = GoldLabelManifest.model_validate_json(content)
+    if canonical_bytes(labels) != content:
+        raise ValueError("sealed label manifest is not canonical")
+    labels_sha256 = sha256(content).hexdigest()
+    provider_repository = ProviderPhaseRepository(request.provider_results)
+    PostCallEvaluator().join(
+        provider_repository=provider_repository,
+        expected_provider_manifest_sha256=provider_repository.manifest_sha256,
+        sealed_labels=labels,
+        sealed_labels_manifest_sha256=labels_sha256,
+        repository=EvaluationPhaseRepository(request.output_dir),
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="spanvouch experiments evaluate")
     parser.add_argument("--provider-results", required=True, type=Path)
@@ -372,9 +391,7 @@ def main(
         sealed_labels=arguments.sealed_labels,
         output_dir=arguments.output_dir,
     )
-    if command is None:
-        raise RuntimeError("post-call evaluator composition is not installed")
-    command(request)
+    (command or _default_command)(request)
     return 0
 
 
