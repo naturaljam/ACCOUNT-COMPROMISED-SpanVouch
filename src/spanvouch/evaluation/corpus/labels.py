@@ -100,7 +100,7 @@ def generate_phase5_labels(
         for entry in corpus_manifest.entries
     )
     manifest = GoldLabelManifest(
-        corpus_manifest_sha256=repository.manifest_sha256,
+        corpus_manifest_sha256=canonical_sha256(corpus_manifest),
         labels=labels,
         labels_sha256=canonical_sha256(
             cast(

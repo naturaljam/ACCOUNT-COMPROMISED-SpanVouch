@@ -11,6 +11,7 @@ import pytest
 from spanvouch.contracts.trace import SpanKind, SpanStatus, TraceIR, TraceSpan
 from spanvouch.contracts.versioning import canonical_bytes, canonical_sha256
 from spanvouch.evaluation.corpus import CorpusManifestMetadata, TraceReplayRepository
+from spanvouch.evaluation.corpus import repository as repository_module
 from spanvouch.evaluation.corpus.generate import generate_phase5_corpus
 from spanvouch.evaluation.corpus.gold_specs import GOLD_SPECS, GoldSpec
 from spanvouch.evaluation.corpus.labels import generate_phase5_labels
@@ -177,6 +178,36 @@ async def test_sealed_labels_bind_every_verified_corpus_cell_outside_corpus(
     assert {label.split for label in result.manifest.labels} == {"pilot"}
     assert (result.output_dir / "manifest.json").is_file()
     assert list(corpus.rglob("*labels*")) == []
+
+
+async def test_sealed_labels_bind_the_single_verified_manifest_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    corpus = tmp_path / "pilot-corpus"
+    await _write_test_corpus(corpus)
+    verified_manifest = TraceReplayRepository(corpus).verify()
+    expected_manifest_sha256 = canonical_sha256(verified_manifest)
+    original_read = repository_module.read_verified_directory_tree
+    reads = 0
+
+    def read_once(root: Path):
+        nonlocal reads
+        reads += 1
+        if reads > 1:
+            raise AssertionError("labels attempted a second corpus snapshot read")
+        return original_read(root)
+
+    monkeypatch.setattr(
+        repository_module,
+        "read_verified_directory_tree",
+        read_once,
+    )
+
+    result = generate_phase5_labels(corpus_dir=corpus)
+
+    assert reads == 1
+    assert result.manifest.corpus_manifest_sha256 == expected_manifest_sha256
 
 
 async def test_sealed_labels_refuse_overwrite_and_output_under_corpus(
