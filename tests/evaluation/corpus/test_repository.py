@@ -400,7 +400,11 @@ def test_pre_identity_cleanup_does_not_touch_replaced_root_or_mask_error(
     assert foreign_root is not None
     assert (foreign_root / "foreign.txt").read_bytes() == b"preserve"
     assert displaced_owned is not None and displaced_owned.is_dir()
-    assert not tuple(tmp_path.glob(".corpus.rollback-*"))
+    rollback_entries = tuple(tmp_path.glob(".corpus.rollback-*"))
+    if sys.platform == "win32":
+        assert not rollback_entries
+    else:
+        assert rollback_entries == (foreign_root,)
 
 
 def test_posix_former_validate_rename_seam_performs_no_rename(
