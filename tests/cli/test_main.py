@@ -30,6 +30,8 @@ ROOT = Path(__file__).resolve().parents[2]
         (("evaluate", "review", "--output", "x"), "evaluate_review", ("--output", "x")),
         (("labs", "corpus", "--output-dir", "x"), "generate_corpus", ("--output-dir", "x")),
         (("labs", "labels", "--output-dir", "x"), "generate_labels", ("--output-dir", "x")),
+        (("experiments", "run", "--help"), "experiments_run", ("--help",)),
+        (("experiments", "evaluate", "--help"), "experiments_evaluate", ("--help",)),
         (("review", "show", "--case-id", "c1"), "review", ("show", "--case-id", "c1")),
     ],
 )
@@ -149,7 +151,9 @@ def test_handler_import_failure_is_a_concise_nonzero_error(
     assert "GOLD_SENTINEL" not in captured.err
 
 
-@pytest.mark.parametrize("argv", [("dataset",), ("evaluate",), ("labs",)])
+@pytest.mark.parametrize(
+    "argv", [("dataset",), ("evaluate",), ("labs",), ("experiments",)]
+)
 def test_main_rejects_a_missing_subcommand(argv: tuple[str, ...]) -> None:
     with pytest.raises(SystemExit, match="2"):
         cli_main.main(argv)
@@ -157,7 +161,12 @@ def test_main_rejects_a_missing_subcommand(argv: tuple[str, ...]) -> None:
 
 @pytest.mark.parametrize(
     "argv",
-    [("dataset", "unknown"), ("evaluate", "unknown"), ("labs", "unknown")],
+    [
+        ("dataset", "unknown"),
+        ("evaluate", "unknown"),
+        ("labs", "unknown"),
+        ("experiments", "unknown"),
+    ],
 )
 def test_main_rejects_an_unknown_subcommand(argv: tuple[str, ...]) -> None:
     with pytest.raises(SystemExit, match="2"):

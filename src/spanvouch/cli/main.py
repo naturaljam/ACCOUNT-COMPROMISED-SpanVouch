@@ -19,13 +19,20 @@ _HANDLER_IMPORTS = {
     ("evaluate", "review"): ("spanvouch.evaluation.run_review_eval", "main"),
     ("labs", "corpus"): ("spanvouch.evaluation.run_phase5_corpus", "main"),
     ("labs", "labels"): ("spanvouch.evaluation.generate_phase5_labels", "main"),
+    ("experiments", "run"): ("spanvouch.evaluation.run_phase5_matrix", "main"),
+    ("experiments", "evaluate"): (
+        "spanvouch.evaluation.evaluate_phase5_matrix",
+        "main",
+    ),
     ("review", ""): ("spanvouch.cli.review", "main"),
 }
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="spanvouch")
-    parser.add_argument("command", choices=("dataset", "evaluate", "labs", "review"))
+    parser.add_argument(
+        "command", choices=("dataset", "evaluate", "experiments", "labs", "review")
+    )
     parser.add_argument("rest", nargs=argparse.REMAINDER)
     return parser
 
