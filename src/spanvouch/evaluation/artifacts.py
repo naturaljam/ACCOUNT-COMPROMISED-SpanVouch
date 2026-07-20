@@ -7,10 +7,12 @@ import math
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -75,6 +77,28 @@ _PEM_PRIVATE_KEY = re.compile(r"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----")
 _LEXICAL_ATOM = re.compile(r"[A-Za-z0-9_-]+")
 _GIT_COMMIT = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_CORPUS_PAYLOAD_PATH = re.compile(
+    r"^(?:records|traces)/sha256/[0-9a-f]{64}\.json$"
+)
+_CORPUS_HASH_FIELDS = frozenset(
+    {
+        "datasetmanifestsha256",
+        "dependencylocksha256",
+        "environmentsha256",
+        "evidenceselectorsha256",
+        "experimentconfigsha256",
+        "injectiontriggersha256",
+        "parityresultssha256",
+        "payloadssha256",
+        "recordsha256",
+        "recordssha256",
+        "runtimeconfigsha256",
+        "scenarioinputsha256",
+        "terminalpredicatesha256",
+        "tracesha256",
+        "tracessha256",
+    }
+)
 _EVALUATION_IDENTIFIER = re.compile(r"^(?:verifier|finding|gap)-[0-9a-f]{64}$")
 _EVALUATION_CANDIDATE = re.compile(r"^[a-z0-9_-]+(?:--[a-z0-9_-]+)?$")
 _SANITIZED_REFUND_VALUE = re.compile(
@@ -312,6 +336,78 @@ def _publish_no_replace(source: Path, destination: Path, *, platform: str | None
     raise RuntimeError("atomic no-replace publication is unsupported on this platform")
 
 
+def publish_directory_no_replace(source: Path, destination: Path) -> None:
+    """Publish an already-built directory atomically without replacing a destination."""
+    _publish_no_replace(source, destination)
+
+
+@dataclass(frozen=True)
+class OwnedDirectoryIdentity:
+    """No-follow native identity captured for a process-owned staging directory."""
+
+    device: int
+    inode: int
+
+
+def create_owned_staging_directory(destination: Path) -> tuple[Path, OwnedDirectoryIdentity]:
+    """Create a sibling staging tree and capture the identity required for safe cleanup."""
+    if os.path.lexists(destination):
+        raise FileExistsError(f"artifact bundle destination already exists: {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    _require_real_directory(destination.parent)
+    staging = Path(
+        tempfile.mkdtemp(
+            dir=destination.parent,
+            prefix=f".{destination.name}.tmp-",
+        )
+    )
+    metadata = staging.stat(follow_symlinks=False)
+    return staging, OwnedDirectoryIdentity(metadata.st_dev, metadata.st_ino)
+
+
+def delete_owned_staging_directory(
+    staging: Path, identity: OwnedDirectoryIdentity
+) -> bool:
+    """Delete *staging* only while it still has the captured no-follow identity."""
+    try:
+        metadata = staging.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        return True
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or _is_reparse_point(metadata)
+        or (metadata.st_dev, metadata.st_ino) != (identity.device, identity.inode)
+    ):
+        return False
+    _remove_tree_no_follow(staging)
+    return True
+
+
+def _remove_tree_no_follow(directory: Path) -> None:
+    for child in tuple(os.scandir(directory)):
+        child_path = Path(child.path)
+        metadata = child.stat(follow_symlinks=False)
+        if stat.S_ISDIR(metadata.st_mode) and not _is_reparse_point(metadata):
+            _remove_tree_no_follow(child_path)
+        elif stat.S_ISDIR(metadata.st_mode):
+            os.rmdir(child_path)
+        else:
+            os.unlink(child_path)
+    os.rmdir(directory)
+
+
+def _require_real_directory(path: Path) -> None:
+    metadata = path.stat(follow_symlinks=False)
+    if not stat.S_ISDIR(metadata.st_mode) or _is_reparse_point(metadata):
+        raise ValueError("artifact path must be a real directory")
+
+
+def _is_reparse_point(metadata: os.stat_result) -> bool:
+    attributes = getattr(metadata, "st_file_attributes", 0)
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return stat.S_ISLNK(metadata.st_mode) or bool(attributes & reparse_flag)
+
+
 def _linux_rename_no_replace(source: Path, destination: Path) -> None:
     libc = ctypes.CDLL(None, use_errno=True)
     try:
@@ -507,11 +603,35 @@ class ArtifactSecretClassifier:
         if path in _HASH_PATHS and normalized in _HASH_FIELDS and _SHA256.fullmatch(value):
             return True
         if (
+            path[0]
+            in {
+                "corpus_manifest",
+                "corpus_parity_results",
+                "corpus_record",
+                "corpus_trace",
+            }
+            and normalized in _CORPUS_HASH_FIELDS
+            and _SHA256.fullmatch(value)
+        ):
+            return True
+        if (
+            path[0] == "corpus_manifest"
+            and path[-1] in {"record_path", "trace_path"}
+            and _CORPUS_PAYLOAD_PATH.fullmatch(value)
+        ):
+            return True
+        if (
             path in {
                 ("manifest", "code", "git_commit"),
                 ("environment", "git_commit"),
                 ("metrics", "git_commit"),
             }
+            and _GIT_COMMIT.fullmatch(value) is not None
+        ):
+            return True
+        if (
+            path[0] in {"corpus_manifest", "corpus_record"}
+            and normalized == "gitcommit"
             and _GIT_COMMIT.fullmatch(value) is not None
         ):
             return True
@@ -549,3 +669,8 @@ _ARTIFACT_SECRET_CLASSIFIER = ArtifactSecretClassifier()
 
 def _require_safe(location: str, value: Any) -> None:
     _ARTIFACT_SECRET_CLASSIFIER.require_safe(value, path=(location,))
+
+
+def require_safe_artifact_content(location: str, value: Any) -> None:
+    """Apply the fail-closed artifact classifier at a named persistence boundary."""
+    _require_safe(location, value)
