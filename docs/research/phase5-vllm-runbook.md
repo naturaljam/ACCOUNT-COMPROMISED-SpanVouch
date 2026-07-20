@@ -16,15 +16,18 @@ docker image inspect vllm/vllm-openai:<PINNED_TAG> \
   --format '{{index .RepoDigests 0}}'
 ```
 
-Copy the complete `name@sha256:...` RepoDigest into the experiment record. A tag,
-short digest, or locally calculated image ID is not acceptable. Resolve and record
+Copy the complete `vllm/vllm-openai@sha256:<64-lowercase-hex>` RepoDigest into the
+experiment record. A bare `sha256:...`, tag, other repository name, short digest,
+or locally calculated image ID is not acceptable. Resolve and record
 the exact 40-character Hugging Face commit revision for `Qwen/Qwen3-14B`; do not use
 `main` or another moving reference. Pilot and formal validation reject `smoke_only`
 and reject missing container or checkpoint pins.
 
 ## 2. Restrict and start the endpoint
 
-Bind the service to localhost or a private interface. Apply an inbound firewall
+Bind the service to localhost or a private interface. The configured API root must
+not contain URL username/password userinfo; credentials belong only in the
+authorization header. Apply an inbound firewall
 allowlist, TLS at the private ingress when traffic leaves the host, and a dedicated
 short-lived API key. Never commit the key, command history containing it, raw
 headers, or provider bodies. Export it through the runtime secret store as

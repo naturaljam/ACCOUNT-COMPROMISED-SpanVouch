@@ -20,7 +20,7 @@ from spanvouch.diagnosis.errors import (
 )
 from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig, ProviderResponse
 
-_DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
+_DIGEST_PATTERN = re.compile(r"^vllm/vllm-openai@sha256:[0-9a-f]{64}$")
 _REVISION_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 _VERSION_PATTERN = re.compile(r"^[A-Za-z0-9._+-]{1,64}$")
 
@@ -28,7 +28,7 @@ _VERSION_PATTERN = re.compile(r"^[A-Za-z0-9._+-]{1,64}$")
 class OpenAICompatibleConfig(BaseModel):
     """Connection and immutable deployment identity for one OpenAI API root."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", hide_input_in_errors=True)
 
     api_key: SecretStr
     base_url: str
@@ -49,6 +49,8 @@ class OpenAICompatibleConfig(BaseModel):
         parsed = urlsplit(normalized)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("base_url must be an HTTP(S) URL")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("base_url must not contain userinfo")
         if parsed.query or parsed.fragment or parsed.path != "/v1":
             raise ValueError("base_url must be the API root ending in exactly /v1")
         return normalized
@@ -57,7 +59,10 @@ class OpenAICompatibleConfig(BaseModel):
     @classmethod
     def validate_repo_digest(cls, value: str | None) -> str | None:
         if value is not None and _DIGEST_PATTERN.fullmatch(value) is None:
-            raise ValueError("container_repo_digest must be an immutable sha256 RepoDigest")
+            raise ValueError(
+                "container_repo_digest must be a full immutable "
+                "vllm/vllm-openai@sha256 RepoDigest"
+            )
         return value
 
     @field_validator("hf_revision")

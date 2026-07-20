@@ -36,7 +36,7 @@ def _config(**updates: object) -> OpenAICompatibleConfig:
         "base_url": "http://127.0.0.1:8000/v1/",
         "expected_model": "Qwen/Qwen3-14B",
         "endpoint_class": "self-hosted-vllm",
-        "container_repo_digest": f"sha256:{'a' * 64}",
+        "container_repo_digest": f"vllm/vllm-openai@sha256:{'a' * 64}",
         "hf_revision": "b" * 40,
     }
     values.update(updates)
@@ -97,6 +97,31 @@ async def test_provider_sends_exact_openai_request_and_parses_usage() -> None:
 def test_config_requires_single_v1_api_root(base_url: str) -> None:
     with pytest.raises(ValidationError):
         _config(base_url=base_url)
+
+
+def test_config_rejects_url_userinfo_without_leaking_password() -> None:
+    with pytest.raises(ValidationError) as raised:
+        _config(
+            base_url="https://operator:do-not-leak@example.test/v1",
+            container_repo_digest=None,
+        )
+
+    assert "do-not-leak" not in str(raised.value)
+    assert "do-not-leak" not in repr(raised.value)
+
+
+@pytest.mark.parametrize(
+    "digest",
+    [
+        f"sha256:{'a' * 64}",
+        "vllm/vllm-openai:latest",
+        f"other/image@sha256:{'a' * 64}",
+        f"vllm/vllm-openai@sha256:{'A' * 64}",
+    ],
+)
+def test_config_rejects_noncanonical_vllm_repo_digest(digest: str) -> None:
+    with pytest.raises(ValidationError, match="RepoDigest"):
+        _config(container_repo_digest=digest)
 
 
 @pytest.mark.parametrize(
@@ -280,7 +305,7 @@ async def test_validate_served_model_returns_only_allowlisted_provenance() -> No
         "endpoint_class": "self-hosted-vllm",
         "model": "Qwen/Qwen3-14B",
         "server_version": "0.9.2",
-        "container_repo_digest": f"sha256:{'a' * 64}",
+        "container_repo_digest": f"vllm/vllm-openai@sha256:{'a' * 64}",
         "hf_revision": "b" * 40,
     }
     assert "must-not-persist" not in repr(provenance)
