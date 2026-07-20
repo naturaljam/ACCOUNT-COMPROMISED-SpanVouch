@@ -17,7 +17,7 @@ Formal DeepSeek/Qwen evidence: not collected. Cloud GPU: unapproved.
 | Offline-only Phase 5 CI command | complete | `.github/workflows/ci.yml` |
 | SupportLab/OpsLab through LangGraph and AutoGen | complete | deterministic zero-provider E2E covers both labs and both adapters |
 | Deterministic B0-B5 offline reference bundle | complete | byte-reproduced fake-provider bundle generated from clean commit `368a745ba10b04f46e8bdf67788eba2395a5b0d5`; manifest file SHA-256 `7bfd56f2b190233d58db4e6f7651005e81e2c9fd7427d108d411cc48012811ae` |
-| Offline full suite and coverage | complete | 1,610 passed, 1 skipped; 93.58% coverage on the final integrated branch |
+| Offline full suite and coverage | complete | 1,640 passed, 1 skipped; 93.42% coverage on the final integrated branch |
 | Reproducible wheel and Docker acceptance | complete | repeated wheel hash; non-root, health, writable persistence, restart, teardown, and no-residue checks passed |
 | Offline CI gates | complete | architecture, security, coverage, wheel, and Docker gates are configured without provider credentials |
 | Global paid-run budget and GPU lease guard | complete offline | absolute shared ledger, manifest-scoped caches, canonical approval-bound GPU provenance, atomic idempotent charging, and pre-provider fail-closed tests |
@@ -53,8 +53,8 @@ The committed reference bundle is deterministic fake-provider evidence. Its
 The generator discovered clean code-under-test commit
 `368a745ba10b04f46e8bdf67788eba2395a5b0d5` from Git; the manifest and
 `environment.txt` record that same identity with `dirty_worktree=false`.
-The final integrated full suite reported 1,610 passing tests, 1 skipped test, and
-93.58% coverage.
+The final integrated full suite reported 1,640 passing tests, 1 skipped test, and
+93.42% coverage.
 
 The wheel and Docker checks passed. The container ran as UID/GID `10001:10001`,
 preserved writable `/data` state across restart, returned healthy, and left no

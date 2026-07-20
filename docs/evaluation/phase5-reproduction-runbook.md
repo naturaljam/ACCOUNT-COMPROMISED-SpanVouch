@@ -112,8 +112,8 @@ docker compose restart api
 docker compose down --volumes --remove-orphans
 ```
 
-The final integrated baseline reported 1,610 passing tests, 1 skipped test, and
-93.58% coverage. The repeated wheel, non-root container, health, writable
+The final integrated baseline reported 1,640 passing tests, 1 skipped test, and
+93.42% coverage. The repeated wheel, non-root container, health, writable
 persistence, restart, teardown, and no-residue checks passed.
 
 ## 6. Interpret the result

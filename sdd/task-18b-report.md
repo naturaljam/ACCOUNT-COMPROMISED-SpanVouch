@@ -27,8 +27,8 @@
 
 - Task 17B paper asset generation is integrated. The offline E2E uses the approved
   asset-emitter boundary and the committed bundle reproduces byte-for-byte.
-- The final integrated full suite reported 1,610 passing tests, 1 skipped test,
-  and 93.58% coverage. This closes the earlier 92% historical gap.
+- The final integrated full suite reported 1,640 passing tests, 1 skipped test,
+  and 93.42% coverage. This closes the earlier 92% historical gap.
 - The reference `manifest.json` file now has SHA-256
   `7bfd56f2b190233d58db4e6f7651005e81e2c9fd7427d108d411cc48012811ae`,
   generated from clean code-under-test commit
