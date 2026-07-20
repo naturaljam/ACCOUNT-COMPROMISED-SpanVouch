@@ -1,0 +1,43 @@
+Task 18B verification - 2026-07-20 Asia/Shanghai
+
+PASS setup/baseline
+  uv sync --all-groups --python 3.12.7
+  focused Phase5/labs baseline: 329 passed
+
+PASS offline E2E and reference reproduction
+  uv run --python 3.12.7 python -m pytest --import-mode=importlib tests/evaluation/test_phase5_offline_e2e.py -q
+  2 passed
+  bundle manifest sha256=607517b359a241a05ef0c5f32df457f10886ffd754d63fa31d5c266037836d5a
+
+PASS static gates
+  uv run --python 3.12.7 ruff check src tests
+  uv run --python 3.12.7 mypy
+  Ruff clean; mypy clean across 126 source files
+
+PASS contracts/architecture/delivery
+  uv run --python 3.12.7 python -m pytest --import-mode=importlib tests/contracts tests/architecture tests/test_delivery_config.py -q
+  132 passed
+
+PASS full tests but COVERAGE TARGET NOT MET
+  uv run --python 3.12.7 python -m pytest --import-mode=importlib --cov=spanvouch --cov-report=term -q -k "not test_collect_git_provenance_records_non_secret_local_identity"
+  tests passed; 10822/11722 statements; 92%; target is >=93%
+  first term-missing attempt was tool-timeout at 183 seconds, not a test failure
+
+PASS reproducible wheel
+  UV_PYTHON=3.12.7 uv build --wheel --build-constraints build-constraints.txt --require-hashes --no-cache
+  repeated sha256=8c08dc35560691166e179ba562898a457da9069d1457c713781c12942888987d
+
+PASS Docker
+  docker compose config --quiet
+  docker compose build api
+  docker compose up --detach --wait --wait-timeout 90 api
+  id -u=10001; id -g=10001; /data exists and is writable
+  restart preserved /data/.phase5-restart-proof and returned healthy
+  docker compose down --volumes --remove-orphans
+  post-down container, volume and network queries empty
+
+PENDING EXTERNAL
+  DeepSeek paid checkpoint: not run
+  Qwen/vLLM GPU checkpoint: not run
+  formal paid matrix: not run
+  Task17B real paper asset emitter integration rerun: pending root integration

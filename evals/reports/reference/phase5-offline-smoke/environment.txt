@@ -1,0 +1,9 @@
+architecture=portable
+dependency_lock_sha256=3e4fe9ed9a59e2448a95992366a5d427c563e94fdc8c315d967eab097b19d7fb
+git_commit=e546530935fb3236ca5893c6bc621666441e61d5
+implementation=offline-smoke
+os=portable
+package=spanvouch
+package_version=0.2.0
+python=3.12
+repository_identity=local:phase5-offline-smoke
