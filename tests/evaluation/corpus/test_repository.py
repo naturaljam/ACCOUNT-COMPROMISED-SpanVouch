@@ -711,3 +711,28 @@ def test_formal_repository_is_explicitly_read_only(
     before = repository.manifest_sha256
     assert repository.load(CorpusEntry.from_record(record).cell) == record
     assert repository.manifest_sha256 == before
+
+
+def test_repository_rejects_invalid_trust_and_empty_corpus_boundaries(
+    tmp_path: Path,
+    manifest_metadata: CorpusManifestMetadata,
+) -> None:
+    with pytest.raises(ValueError, match="must be a SHA-256 digest"):
+        TraceReplayRepository(tmp_path / "invalid", expected_manifest_sha256="invalid")
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    repository = TraceReplayRepository(empty)
+    assert repository.root == empty
+    with pytest.raises(ValueError, match="missing corpus manifest"):
+        _ = repository.manifest_sha256
+    with pytest.raises(ValueError, match="missing corpus manifest"):
+        repository.verify()
+
+    with pytest.raises(ValueError, match="requires at least one record"):
+        TraceReplayRepository.freeze(
+            records=(),
+            parity_results=(),
+            destination=tmp_path / "unused",
+            manifest_metadata=manifest_metadata,
+        )

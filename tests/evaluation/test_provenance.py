@@ -1,11 +1,13 @@
 import os
 import shutil
+import stat
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
+import spanvouch.evaluation.provenance as provenance_module
 from spanvouch.contracts.artifacts import (
     ArtifactManifest,
     CodeProvenance,
@@ -759,3 +761,69 @@ def test_dataset_pair_rolls_back_bundle_when_output_already_exists(tmp_path: Pat
     assert (output / "keep.txt").read_text() == "old\n"
     assert not manifest_path_for(output).parent.exists()
     assert not tuple(tmp_path.glob(".*.tmp-*"))
+
+
+def test_portable_bundle_identity_covers_nested_content_and_detects_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle = tmp_path / "bundle"
+    nested = bundle / "nested"
+    nested.mkdir(parents=True)
+    (nested / "payload.json").write_text("{}\n", encoding="utf-8")
+
+    identity = provenance_module._snapshot_portable_bundle_identity(bundle)
+    assert identity.tree_fingerprint == provenance_module._tree_fingerprint(bundle)
+    monkeypatch.setattr(
+        provenance_module, "_snapshot_windows_bundle_identity", lambda _path: identity
+    )
+    assert provenance_module._capture_published_bundle_identity(bundle, identity) == identity
+
+    (nested / "payload.json").write_text('{"changed":true}\n', encoding="utf-8")
+    changed = provenance_module._snapshot_portable_bundle_identity(bundle)
+    monkeypatch.setattr(
+        provenance_module, "_snapshot_windows_bundle_identity", lambda _path: changed
+    )
+    with pytest.raises(RuntimeError, match="ownership verification"):
+        provenance_module._capture_published_bundle_identity(bundle, identity)
+
+
+def test_portable_identity_and_fingerprint_reject_unsupported_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    regular_file = tmp_path / "file"
+    regular_file.write_text("payload", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="not an owned directory"):
+        provenance_module._directory_identity(regular_file)
+
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    child = bundle / "payload"
+    child.write_text("payload", encoding="utf-8")
+    monkeypatch.setattr(
+        provenance_module,
+        "_is_reparse_point",
+        lambda metadata: stat.S_ISREG(metadata.st_mode),
+    )
+    with pytest.raises(RuntimeError, match="unsupported filesystem entry"):
+        provenance_module._tree_fingerprint(bundle)
+
+
+@pytest.mark.parametrize(
+    "signatures",
+    (
+        ((1,), (2,)),
+        ((1,), (1,), (2,), (3,)),
+    ),
+)
+def test_portable_fingerprint_detects_file_and_directory_races(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    signatures: tuple[tuple[int, ...], ...],
+) -> None:
+    bundle = tmp_path / f"bundle-{len(signatures)}"
+    bundle.mkdir()
+    (bundle / "payload").write_text("payload", encoding="utf-8")
+    values = iter(signatures)
+    monkeypatch.setattr(provenance_module, "_stat_signature", lambda _metadata: next(values))
+    with pytest.raises(RuntimeError, match="changed while fingerprinting"):
+        provenance_module._tree_fingerprint(bundle)
