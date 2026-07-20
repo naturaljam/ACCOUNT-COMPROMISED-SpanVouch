@@ -8,8 +8,12 @@ import pytest
 
 import spanvouch.evaluation.artifacts as artifacts_module
 from spanvouch.contracts.artifacts import ArtifactRef, ModelProvenance, UsageProvenance
-from spanvouch.contracts.versioning import canonical_sha256
-from spanvouch.evaluation.artifacts import ArtifactBundleWriter, collect_git_provenance
+from spanvouch.contracts.versioning import canonical_bytes, canonical_sha256
+from spanvouch.evaluation.artifacts import (
+    ArtifactBundleWriter,
+    Phase5BundleConfig,
+    collect_git_provenance,
+)
 
 
 def test_bundle_writer_hashes_every_required_file(
@@ -35,6 +39,62 @@ def test_bundle_writer_hashes_every_required_file(
     }
     assert canonical_sha256({"mode": "deterministic"}) == next(
         ref.sha256 for ref in artifact_manifest.inputs if ref.path == "config.json"
+    )
+
+
+def test_phase5_bundle_config_is_typed_extra_forbid_and_canonical(
+    tmp_path: Path, artifact_manifest: object
+) -> None:
+    config = Phase5BundleConfig(
+        experiment_id="phase5-fixture",
+        mode="formal",
+        config_sha256="1" * 64,
+        corpus_manifest_sha256="2" * 64,
+        candidate_manifest_sha256="3" * 64,
+        matrix_manifest_sha256="4" * 64,
+        provider_manifest_sha256="5" * 64,
+        evaluated_results_manifest_sha256="6" * 64,
+        analysis_seed=20260720,
+        bootstrap_draws=10000,
+        policy_versions=("claim-gates-v1", "paired-bootstrap-v1"),
+    )
+    payload = config.model_dump(mode="json")
+    reference = artifact_manifest.configuration.model_copy(
+        update={"sha256": canonical_sha256(payload)}
+    )
+    manifest = artifact_manifest.model_copy(
+        update={"configuration": reference, "inputs": (reference,)}
+    )
+
+    ArtifactBundleWriter(tmp_path / "bundle").write(
+        manifest=manifest,
+        config=config,
+        metrics={"status": "complete"},
+        structured_events=(),
+        environment="python=3.12",
+        readme="# Reproduce\n",
+    )
+    assert (tmp_path / "bundle" / "config.json").read_bytes() == (
+        canonical_bytes(payload) + b"\n"
+    )
+
+    with pytest.raises(ValueError):
+        Phase5BundleConfig.model_validate({**payload, "api_key": {"value": "secret"}})
+
+
+def test_phase4_legacy_config_bytes_remain_unchanged(
+    tmp_path: Path, artifact_manifest: object
+) -> None:
+    ArtifactBundleWriter(tmp_path / "bundle").write(
+        manifest=artifact_manifest,
+        config={"mode": "deterministic"},
+        metrics={"status": "complete"},
+        structured_events=(),
+        environment="python=3.12",
+        readme="# Reproduce\n",
+    )
+    assert (tmp_path / "bundle" / "config.json").read_bytes() == (
+        b'{"mode":"deterministic"}\n'
     )
 
 

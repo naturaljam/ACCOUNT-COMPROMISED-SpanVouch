@@ -17,13 +17,40 @@ from ctypes import wintypes
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
-from pydantic import JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 from spanvouch.contracts.artifacts import ArtifactManifest, CodeProvenance
-from spanvouch.contracts.versioning import canonical_bytes, canonical_sha256
+from spanvouch.contracts.versioning import SHA256_PATTERN, canonical_bytes, canonical_sha256
+
+
+class Phase5BundleConfig(BaseModel):
+    """Exact, secret-free identity for a reproducible Phase 5 analysis bundle."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", hide_input_in_errors=True)
+
+    experiment_id: str = Field(pattern=r"^phase5-[a-z0-9]+(?:-[a-z0-9]+)*$")
+    mode: Literal["pilot", "formal"]
+    config_sha256: str = Field(pattern=SHA256_PATTERN)
+    corpus_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
+    candidate_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
+    matrix_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
+    provider_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
+    evaluated_results_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
+    analysis_seed: int = Field(ge=0)
+    bootstrap_draws: int = Field(ge=1)
+    policy_versions: tuple[str, ...] = Field(min_length=1)
+
+    @field_validator("policy_versions")
+    @classmethod
+    def validate_policy_versions(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value))):
+            raise ValueError("policy versions must be unique and sorted")
+        if any(re.fullmatch(r"[a-z][a-z0-9-]*-v[1-9][0-9]*", item) is None for item in value):
+            raise ValueError("policy versions must be explicit version labels")
+        return value
 
 _REQUIRED_FILENAMES = frozenset(
     {
@@ -373,7 +400,7 @@ class ArtifactBundleWriter:
         self,
         *,
         manifest: ArtifactManifest,
-        config: JsonValue,
+        config: JsonValue | Phase5BundleConfig,
         metrics: JsonValue,
         structured_events: Iterable[JsonValue],
         environment: str,
@@ -418,7 +445,7 @@ class ArtifactBundleWriter:
         self,
         *,
         manifest: ArtifactManifest,
-        config: JsonValue,
+        config: JsonValue | Phase5BundleConfig,
         metrics: JsonValue,
         structured_events: Iterable[JsonValue],
         environment: str,
@@ -427,13 +454,18 @@ class ArtifactBundleWriter:
         events = tuple(structured_events)
         _require_safe("manifest", manifest.model_dump(mode="python"))
         _validate_config(config)
+        serialized_config: JsonValue = (
+            config.model_dump(mode="json")
+            if isinstance(config, Phase5BundleConfig)
+            else config
+        )
         _require_safe("metrics", metrics)
         _require_safe("structured_events", events)
         _validate_environment(environment)
         _require_safe("readme", readme)
         return {
             "manifest.json": canonical_bytes(manifest) + b"\n",
-            "config.json": canonical_bytes(config) + b"\n",
+            "config.json": canonical_bytes(serialized_config) + b"\n",
             "metrics.json": canonical_bytes(metrics) + b"\n",
             "structured-events.jsonl": b"".join(canonical_bytes(event) + b"\n" for event in events),
             "environment.txt": _normalized_text(environment),
@@ -943,6 +975,9 @@ def _unsafe_artifact_content() -> None:
 
 
 def _validate_config(value: Any) -> None:
+    if isinstance(value, Phase5BundleConfig):
+        Phase5BundleConfig.model_validate(value.model_dump(mode="python"))
+        return
     _require_safe("config", value)
     if not isinstance(value, Mapping):
         _unsafe_artifact_content()
