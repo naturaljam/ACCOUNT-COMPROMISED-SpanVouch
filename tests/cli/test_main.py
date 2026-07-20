@@ -176,3 +176,10 @@ def test_main_rejects_a_missing_subcommand(argv: tuple[str, ...]) -> None:
 def test_main_rejects_an_unknown_subcommand(argv: tuple[str, ...]) -> None:
     with pytest.raises(SystemExit, match="2"):
         cli_main.main(argv)
+
+
+def test_candidate_generation_cli_is_routed_lazily() -> None:
+    assert cli_main._HANDLER_IMPORTS[("experiments", "candidates")] == (
+        "spanvouch.evaluation.run_phase5_candidates",
+        "main",
+    )

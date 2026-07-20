@@ -76,16 +76,39 @@ Complete these checks before pilot authorization:
 
 Follow this sequence:
 
-1. Freeze the excluded pilot manifest and calculate maximum DeepSeek and GPU spend
-2. Obtain approval for that exact pilot identity and cap
-3. Run the smoke checks and pilot with `--allow-live-provider`, the experiment ID,
-   and `--approved-manifest-sha256 your_approved_manifest_sha256_here`
-4. Stop the GPU, revoke the key, close ingress, record actual cost, and confirm that the endpoint is unreachable
-5. Review completeness, failures, missingness, schema validity, latency, token use, and cost; exclude pilot rows from formal results
-6. Freeze the formal manifest and obtain separate formal-spend approval
-7. Run formal calls with `--allow-live-provider`, `--formal-run`, and `--approved-manifest-sha256 your_approved_manifest_sha256_here`
-8. Complete the paired matrix without selectively deleting or regenerating cells
-9. Join sealed labels after provider completion, generate the analysis manifest and H1-H5 gates, then rerun the engineering gates
+1. Freeze the excluded pilot corpus and calculate maximum DeepSeek and GPU spend.
+2. Print the credential-free diagnosis-generation identity without opening provider
+   state or making a call:
+
+   ```powershell
+   spanvouch experiments candidates --config $FROZEN_CONFIG `
+     --corpus-dir $CORPUS_DIR --output-dir $CANDIDATE_DIR --manifest-only
+   ```
+
+3. Obtain approval for that exact candidate-generation manifest and cap, then run
+   the guarded DeepSeek generation path:
+
+   ```powershell
+   spanvouch experiments candidates --config $FROZEN_CONFIG `
+     --corpus-dir $CORPUS_DIR --output-dir $CANDIDATE_DIR `
+     --allow-live-provider `
+     --approved-manifest-sha256 $APPROVED_CANDIDATE_MANIFEST_SHA256
+   ```
+
+   This command validates config, corpus, experiment mode, manifest, model, and
+   deployment bindings before reading credentials or opening the shared provider
+   cache and budget ledger. The resulting repository is the `--candidate-dir`
+   input to the B0-B5 matrix command.
+4. Freeze and approve the resulting matrix identity separately, then run the smoke
+   checks and pilot matrix with `--allow-live-provider` and its exact
+   `--approved-manifest-sha256`.
+5. Stop the GPU, revoke the key, close ingress, record actual cost, and confirm that the endpoint is unreachable.
+6. Review completeness, failures, missingness, schema validity, latency, token use, and cost; exclude pilot rows from formal results.
+7. Freeze the formal manifests and obtain separate formal-spend approval.
+8. Run formal candidate and matrix calls with `--allow-live-provider`,
+   `--formal-run`, and each exact approved manifest SHA-256.
+9. Complete the paired matrix without selectively deleting or regenerating cells.
+10. Join sealed labels after provider completion, generate the analysis manifest and H1-H5 gates, then rerun the engineering gates.
 
 Research acceptance requires a hash-linked chain from configuration through corpus, diagnoses, B0-B5 results, post-call label join, and analysis. Report complete cell counts, missingness, paired risk and coverage intervals, provider and GPU provenance, actual cost, and every null or negative result. The engineering pipeline can be delivered without this matrix, but it cannot support a DeepSeek/Qwen effectiveness claim.
 

@@ -19,7 +19,7 @@
     "prompt_version": "phase5-generator-v1",
     "max_tokens": 2048,
     "temperature": 0.0,
-    "extra_body": {}
+    "extra_body": {"thinking": {"type": "disabled"}}
   },
   "shared_verifier": {
     "provider": "deepseek",
@@ -28,7 +28,7 @@
     "prompt_version": "phase5-shared-verifier-v1",
     "max_tokens": 2048,
     "temperature": 0.0,
-    "extra_body": {}
+    "extra_body": {"thinking": {"type": "disabled"}}
   },
   "isolated_verifier": {
     "provider": "deepseek",
@@ -37,7 +37,7 @@
     "prompt_version": "phase5-isolated-verifier-v1",
     "max_tokens": 2048,
     "temperature": 0.0,
-    "extra_body": {}
+    "extra_body": {"thinking": {"type": "disabled"}}
   },
   "cross_model_verifier": {
     "provider": "qwen",

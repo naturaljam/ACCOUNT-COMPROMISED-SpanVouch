@@ -153,6 +153,74 @@ class _LiveProviderComposition:
     pricing: Mapping[str, Pricing]
 
 
+@dataclass(frozen=True)
+class LiveDiagnosisDependencies:
+    """Approved DeepSeek generation dependencies sharing the live guard stack."""
+
+    provider: ModelProvider
+    pricing: Pricing
+    cache: ProviderResultCache
+    ledger: BudgetLedger
+    authorization: PaidRunAuthorization
+
+
+def _compose_deepseek_endpoint(
+    config: Phase5ExperimentConfig,
+    *,
+    environ: Mapping[str, str],
+    client: httpx.AsyncClient | None = None,
+) -> tuple[ModelProvider, Pricing]:
+    provenance = config.live_provenance.deepseek
+    base_url, base_url_sha256 = _normalized_base_url(
+        _required_environment(environ, "SPANVOUCH_DEEPSEEK_BASE_URL")
+    )
+    if base_url_sha256 != provenance.base_url_sha256:
+        raise ProviderConfigurationError("provider provenance mismatch")
+    pricing = _load_pricing(
+        _required_environment(environ, "SPANVOUCH_PHASE5_DEEPSEEK_PRICING_PATH"),
+        provenance,
+    )
+    key = _required_environment(environ, "DEEPSEEK_API_KEY")
+    return (
+        DeepSeekProvider(
+            DeepSeekConfig(api_key=SecretStr(key), base_url=base_url),
+            client=client,
+        ),
+        pricing,
+    )
+
+
+def compose_live_diagnosis_dependencies(
+    config: Phase5ExperimentConfig,
+    *,
+    authorization: PaidRunAuthorization,
+    generation_manifest_sha256: str,
+    state_path: Path,
+    environ: Mapping[str, str] | None = None,
+    deepseek_client: httpx.AsyncClient | None = None,
+) -> LiveDiagnosisDependencies:
+    """Authorize exact generation identity before credentials or persistent state."""
+    config, authorization = _require_live_composition_authorization(
+        config, authorization, generation_manifest_sha256
+    )
+    if config.generator.provider != "deepseek" or (
+        config.generator.model != config.live_provenance.deepseek.model
+    ):
+        raise ProviderConfigurationError("diagnosis generator provenance mismatch")
+    provider, pricing = _compose_deepseek_endpoint(
+        config,
+        environ=os.environ if environ is None else environ,
+        client=deepseek_client,
+    )
+    return LiveDiagnosisDependencies(
+        provider=provider,
+        pricing=pricing,
+        cache=ProviderResultCache(state_path),
+        ledger=BudgetLedger(state_path, config.budget),
+        authorization=authorization,
+    )
+
+
 def _compose_live_providers(
     config: Phase5ExperimentConfig,
     *,
@@ -168,11 +236,7 @@ def _compose_live_providers(
         or qwen_endpoint.provider != "qwen"
     ):
         raise ProviderConfigurationError("experiment provider endpoints are unsupported")
-    deepseek_provenance = config.live_provenance.deepseek
     qwen_provenance = config.live_provenance.qwen
-    deepseek_base_url, deepseek_base_url_sha256 = _normalized_base_url(
-        _required_environment(environ, "SPANVOUCH_DEEPSEEK_BASE_URL")
-    )
     qwen_base_url, qwen_base_url_sha256 = _normalized_base_url(
         _required_environment(environ, "SPANVOUCH_VLLM_BASE_URL")
     )
@@ -187,8 +251,7 @@ def _compose_live_providers(
     except ValueError as error:
         raise ProviderConfigurationError("provider provenance mismatch") from error
     if (
-        deepseek_base_url_sha256 != deepseek_provenance.base_url_sha256
-        or qwen_base_url_sha256 != qwen_provenance.base_url_sha256
+        qwen_base_url_sha256 != qwen_provenance.base_url_sha256
         or qwen_repo_digest != qwen_provenance.container_repo_digest
         or qwen_hf_revision != qwen_provenance.hf_revision
         or _required_environment(environ, "SPANVOUCH_VLLM_CHAT_TEMPLATE_SHA256")
@@ -198,15 +261,13 @@ def _compose_live_providers(
         or qwen_max_model_len != qwen_provenance.max_model_len
     ):
         raise ProviderConfigurationError("provider provenance mismatch")
-    deepseek_pricing = _load_pricing(
-        _required_environment(environ, "SPANVOUCH_PHASE5_DEEPSEEK_PRICING_PATH"),
-        deepseek_provenance,
+    deepseek_provider, deepseek_pricing = _compose_deepseek_endpoint(
+        config, environ=environ, client=deepseek_client
     )
     qwen_pricing = _load_pricing(
         _required_environment(environ, "SPANVOUCH_PHASE5_QWEN_PRICING_PATH"),
         qwen_provenance,
     )
-    deepseek_key = _required_environment(environ, "DEEPSEEK_API_KEY")
     qwen_key = _required_environment(environ, "SPANVOUCH_VLLM_API_KEY")
     qwen_config = OpenAICompatibleConfig(
         api_key=SecretStr(qwen_key),
@@ -218,10 +279,7 @@ def _compose_live_providers(
         hf_revision=qwen_hf_revision,
     ).validate_for_experiment(config.mode.value)
     return _LiveProviderComposition(
-        deepseek=DeepSeekProvider(
-            DeepSeekConfig(api_key=SecretStr(deepseek_key), base_url=deepseek_base_url),
-            client=deepseek_client,
-        ),
+        deepseek=deepseek_provider,
         qwen=OpenAICompatibleProvider(qwen_config, client=qwen_client),
         pricing={"deepseek": deepseek_pricing, "qwen": qwen_pricing},
     )

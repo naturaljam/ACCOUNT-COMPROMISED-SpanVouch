@@ -12,6 +12,13 @@ Formal DeepSeek/Qwen evidence: not collected. Cloud GPU: unapproved. Do not set 
 provider key, start vLLM, rent hardware, or invoke a live-provider command while
 following this runbook.
 
+The separately approved paid workflow starts with `spanvouch experiments
+candidates --manifest-only`, obtains approval for that exact credential-free
+identity, and only then repeats the command with `--allow-live-provider` and
+`--approved-manifest-sha256`. The generated repository is consumed unchanged by
+`spanvouch experiments run`. Those commands are documented here as the handoff
+boundary only; do not execute them during offline acceptance.
+
 ## Preconditions
 
 - Use Python 3.12 and the committed `uv.lock`.

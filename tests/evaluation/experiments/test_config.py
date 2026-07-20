@@ -159,6 +159,20 @@ def test_frozen_formal_endpoint_options_cannot_be_mutated() -> None:
         thinking_options["enable_thinking"] = True
 
 
+def test_deepseek_endpoints_require_frozen_non_thinking_mode() -> None:
+    pilot = load_experiment_config(Path("evals/configs/phase5-pilot.json"))
+    disabled = {"thinking": {"type": "disabled"}}
+    assert pilot.generator.extra_body == disabled
+    assert pilot.shared_verifier.extra_body == disabled
+    assert pilot.isolated_verifier.extra_body == disabled
+
+    payload = pilot.model_dump(mode="json")
+    for endpoint_name in ("generator", "shared_verifier", "isolated_verifier"):
+        changed = {**payload, endpoint_name: {**payload[endpoint_name], "extra_body": {}}}
+        with pytest.raises(ValueError, match="DeepSeek thinking"):
+            Phase5ExperimentConfig.model_validate(changed)
+
+
 def test_config_and_freeze_policy_reject_every_preregistered_drift() -> None:
     pilot = load_experiment_config(Path("evals/configs/phase5-pilot.json"))
     payload = pilot.model_dump(mode="json")

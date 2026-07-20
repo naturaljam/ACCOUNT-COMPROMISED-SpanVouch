@@ -20,6 +20,10 @@ _HANDLER_IMPORTS = {
     ("labs", "corpus"): ("spanvouch.evaluation.run_phase5_corpus", "main"),
     ("labs", "labels"): ("spanvouch.evaluation.generate_phase5_labels", "main"),
     ("experiments", "run"): ("spanvouch.evaluation.run_phase5_matrix", "main"),
+    ("experiments", "candidates"): (
+        "spanvouch.evaluation.run_phase5_candidates",
+        "main",
+    ),
     ("experiments", "evaluate"): (
         "spanvouch.evaluation.evaluate_phase5_matrix",
         "main",

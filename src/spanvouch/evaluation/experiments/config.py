@@ -275,6 +275,15 @@ class Phase5ExperimentConfig(BaseModel):
             ):
                 raise ValueError("live provenance does not match configured endpoint")
 
+        non_thinking = {"thinking": {"type": "disabled"}}
+        for endpoint in (
+            self.generator,
+            self.shared_verifier,
+            self.isolated_verifier,
+        ):
+            if endpoint.extra_body != non_thinking:
+                raise ValueError("DeepSeek thinking must be explicitly disabled")
+
         if self.mode is ExperimentMode.PILOT:
             if self.repetitions != 3:
                 raise ValueError("pilot configuration must use exactly three repetitions")
