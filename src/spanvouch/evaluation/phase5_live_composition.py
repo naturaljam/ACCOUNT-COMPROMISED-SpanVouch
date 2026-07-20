@@ -233,7 +233,7 @@ def compose_live_diagnosis_dependencies(
     *,
     authorization: PaidRunAuthorization,
     generation_manifest_sha256: str,
-    state_path: Path,
+    cache_path: Path,
     environ: Mapping[str, str] | None = None,
     deepseek_client: httpx.AsyncClient | None = None,
 ) -> LiveDiagnosisDependencies:
@@ -245,16 +245,20 @@ def compose_live_diagnosis_dependencies(
         config.generator.model != config.live_provenance.deepseek.model
     ):
         raise ProviderConfigurationError("diagnosis generator provenance mismatch")
+    runtime_environ = os.environ if environ is None else environ
+    ledger_path = _required_absolute_path(
+        runtime_environ, "SPANVOUCH_PHASE5_BUDGET_LEDGER_PATH"
+    )
     provider, pricing = _compose_deepseek_endpoint(
         config,
-        environ=os.environ if environ is None else environ,
+        environ=runtime_environ,
         client=deepseek_client,
     )
     return LiveDiagnosisDependencies(
         provider=provider,
         pricing=pricing,
-        cache=ProviderResultCache(state_path),
-        ledger=BudgetLedger(state_path, config.budget),
+        cache=ProviderResultCache(cache_path),
+        ledger=BudgetLedger(ledger_path, config.budget),
         authorization=authorization,
     )
 

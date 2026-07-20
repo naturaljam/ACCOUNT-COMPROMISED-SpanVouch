@@ -66,6 +66,9 @@ def _pricing(path: Path) -> Path:
 def _environment(tmp_path: Path) -> dict[str, str]:
     return {
         "DEEPSEEK_API_KEY": "deepseek-candidate-test-sentinel",
+        "SPANVOUCH_PHASE5_BUDGET_LEDGER_PATH": str(
+            (tmp_path / "global-budget.sqlite3").resolve()
+        ),
         "SPANVOUCH_DEEPSEEK_BASE_URL": "https://api.deepseek.com/",
         "SPANVOUCH_PHASE5_DEEPSEEK_PRICING_PATH": str(_pricing(tmp_path / "deepseek-price.json")),
     }
@@ -136,10 +139,32 @@ def test_candidate_cli_generates_guarded_repository_consumable_by_matrix(
     candidates = _load_candidates(output, corpus.verify().entries, corpus.manifest_sha256)
     assert len(candidates) == calls == 1
     assert candidates[0].generation.extra_body == {"thinking": {"type": "disabled"}}
+    assert (tmp_path / "global-budget.sqlite3").is_file()
     all_bytes = b"".join(path.read_bytes() for path in tmp_path.rglob("*") if path.is_file())
     assert b"deepseek-candidate-test-sentinel" not in all_bytes
     assert b"raw-candidate-response-id" not in all_bytes
     asyncio.run(client.aclose())
+
+
+def test_candidate_generation_rejects_relative_global_ledger_before_provider(
+    tmp_path: Path,
+) -> None:
+    config = load_experiment_config(CONFIG)
+    corpus = _corpus(
+        tmp_path,
+        config_sha256=canonical_sha256(config.model_dump(mode="json")),
+    )
+    approved = candidate_generation_manifest_sha256(CONFIG, corpus.root)
+    request = CandidateGenerationRequest(
+        CONFIG, corpus.root, tmp_path / "candidates", True, False, approved
+    )
+    environ = _environment(tmp_path)
+    environ["SPANVOUCH_PHASE5_BUDGET_LEDGER_PATH"] = "relative.sqlite3"
+
+    with pytest.raises(ProviderConfigurationError, match="budget ledger"):
+        asyncio.run(run_candidate_generation(request, environ=environ))
+
+    assert not request.output_dir.exists()
 
 
 @pytest.mark.parametrize("approved", [None, "f" * 64])

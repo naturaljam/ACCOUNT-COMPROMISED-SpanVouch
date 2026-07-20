@@ -197,7 +197,7 @@ async def run_candidate_generation(
         prepared.config,
         authorization=authorization,
         generation_manifest_sha256=prepared.manifest_sha256,
-        state_path=state_path,
+        cache_path=state_path,
         environ=os.environ if environ is None else environ,
         deepseek_client=deepseek_client,
     )
