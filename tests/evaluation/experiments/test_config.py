@@ -80,6 +80,7 @@ def test_checked_in_pilot_configuration_is_complete() -> None:
     assert config.live_provenance.qwen.container_repo_digest.startswith(
         "vllm/vllm-openai@sha256:"
     )
+    assert config.live_provenance.qwen.gpu_lease_approval.maximum_hours == Decimal("2")
 
 
 def test_pilot_and_formal_configs_reject_missing_live_provenance() -> None:
@@ -102,6 +103,7 @@ def test_qwen_live_provenance_rejects_any_missing_immutable_pin() -> None:
         "chat_template_sha256",
         "dtype",
         "max_model_len",
+        "gpu_lease_approval",
     ):
         changed = {**payload, "live_provenance": {**payload["live_provenance"]}}
         changed["live_provenance"]["qwen"] = {**qwen, field: None}

@@ -76,7 +76,7 @@
       "endpoint_class": "chat-completions",
       "base_url_sha256": "2131c8ae0a1637006924ec5766c3487ee9cf0b0485d0eb5e6246eac3a348b84d",
       "pricing": {
-        "canonical_sha256": "c7467fe613957326feb1df240831a4e7abec8066ea468e2d8ef6b579937a31ee",
+        "canonical_sha256": "a214f6d8b68dc52735f9acb08050c5aa311e53a919e99df67894a87f592c658d",
         "source_url": "https://pricing.example.invalid/source",
         "effective_date": "2026-07-20",
         "currency": "CNY"
@@ -85,7 +85,14 @@
       "hf_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "chat_template_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "dtype": "bfloat16",
-      "max_model_len": 32768
+      "max_model_len": 32768,
+      "gpu_lease_approval": {
+        "cloud_provider": "example-cloud",
+        "region": "test-region-1",
+        "instance_type": "gpu-48gb",
+        "maximum_hours": "2",
+        "maximum_cost_cny": "10"
+      }
     }
   }
 }

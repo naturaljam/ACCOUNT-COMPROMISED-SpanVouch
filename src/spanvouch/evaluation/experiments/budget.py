@@ -6,13 +6,22 @@ import sqlite3
 import uuid
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from hashlib import sha256
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Self, cast
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
-from spanvouch.contracts.versioning import SHA256_PATTERN
-from spanvouch.evaluation.experiments.config import BudgetPolicy, ExperimentMode
+from spanvouch.contracts.versioning import (
+    SHA256_PATTERN,
+    canonical_bytes,
+    canonical_sha256,
+)
+from spanvouch.evaluation.experiments.config import (
+    BudgetPolicy,
+    ExperimentMode,
+    GpuLeaseApproval,
+)
 
 _ZERO = Decimal("0")
 _MILLION = Decimal("1000000")
@@ -44,6 +53,10 @@ class BudgetBusyError(RuntimeError):
 
 class UnknownPriceError(ValueError):
     """Raised rather than guessing a provider or model price."""
+
+
+class GpuLeaseConflictError(ValueError):
+    """Raised when a lease ID is reused with different immutable provenance."""
 
 
 class Pricing(BaseModel):
@@ -89,6 +102,37 @@ class BudgetReservation(BaseModel):
     month_key: str = Field(pattern=r"^[0-9]{4}-[0-9]{2}$")
     amount: Decimal = Field(gt=0)
     mode: ExperimentMode
+
+
+class GpuLeaseRecord(BaseModel):
+    """Canonical runtime facts for an already-created GPU lease."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    lease_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+    cloud_provider: str = Field(min_length=1)
+    region: str = Field(min_length=1)
+    instance_type: str = Field(min_length=1)
+    started_at_utc: datetime
+    ended_at_utc: datetime
+    duration_hours: Decimal = Field(gt=0)
+
+    @model_validator(mode="after")
+    def validate_timing(self) -> Self:
+        for value in (self.started_at_utc, self.ended_at_utc):
+            if value.utcoffset() != UTC.utcoffset(value):
+                raise ValueError("GPU lease timestamps must be UTC")
+        if self.ended_at_utc <= self.started_at_utc:
+            raise ValueError("GPU lease end must follow start")
+        actual = Decimal(str((self.ended_at_utc - self.started_at_utc).total_seconds()))
+        actual /= Decimal("3600")
+        if actual != self.duration_hours:
+            raise ValueError("GPU lease duration does not match timestamps")
+        return self
+
+    @property
+    def sha256(self) -> str:
+        return canonical_sha256(cast(JsonValue, self.model_dump(mode="json")))
 
 
 def _persistent_path(path: Path) -> Path:
@@ -141,6 +185,22 @@ class BudgetLedger:
                     ON charges(reservation_id) WHERE reservation_id IS NOT NULL;
                 CREATE UNIQUE INDEX IF NOT EXISTS one_gpu_lease
                     ON charges(request_sha256) WHERE category = 'gpu';
+                CREATE TABLE IF NOT EXISTS gpu_leases (
+                    lease_id TEXT PRIMARY KEY,
+                    provenance_json BLOB NOT NULL,
+                    provenance_sha256 TEXT NOT NULL,
+                    experiment_id TEXT NOT NULL,
+                    matrix_manifest_sha256 TEXT NOT NULL,
+                    cost_cny TEXT NOT NULL,
+                    created_at_utc TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS gpu_lease_bindings (
+                    lease_id TEXT NOT NULL,
+                    matrix_manifest_sha256 TEXT NOT NULL,
+                    experiment_id TEXT NOT NULL,
+                    approval_sha256 TEXT NOT NULL,
+                    PRIMARY KEY (lease_id, matrix_manifest_sha256)
+                );
                 CREATE TABLE IF NOT EXISTS budget_stop_events (
                     event_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     request_sha256 TEXT NOT NULL,
@@ -437,6 +497,105 @@ class BudgetLedger:
                 (lease_id, experiment_id, month, str(cost), at_utc.isoformat()),
             )
             connection.commit()
+        return cost
+
+    def record_gpu_lease_record(
+        self,
+        *,
+        record: GpuLeaseRecord,
+        approval: GpuLeaseApproval,
+        experiment_id: str,
+        matrix_manifest_sha256: str,
+        mode: ExperimentMode,
+        pricing: Pricing,
+    ) -> Decimal:
+        """Atomically persist canonical lease facts and their global budget charge."""
+        validated = GpuLeaseRecord.model_validate(record.model_dump(mode="python"))
+        approved = GpuLeaseApproval.model_validate(approval.model_dump(mode="python"))
+        cost = pricing.gpu_cost(validated.duration_hours)
+        payload = canonical_bytes(cast(JsonValue, validated.model_dump(mode="json")))
+        payload_sha256 = sha256(payload).hexdigest()
+        approval_sha256 = canonical_sha256(cast(JsonValue, {
+            "approval": approved.model_dump(mode="json"),
+            "mode": mode.value,
+            "pricing_sha256": canonical_sha256(
+                cast(JsonValue, pricing.model_dump(mode="json"))
+            ),
+        }))
+        exceeds_approval = (
+            (validated.cloud_provider, validated.region, validated.instance_type)
+            != (approved.cloud_provider, approved.region, approved.instance_type)
+            or validated.duration_hours > approved.maximum_hours
+            or cost > approved.maximum_cost_cny
+        )
+        month = _month_key(validated.ended_at_utc)
+        with self._connect() as connection:
+            self._begin(connection)
+            existing = connection.execute(
+                """SELECT provenance_json, provenance_sha256, cost_cny
+                   FROM gpu_leases WHERE lease_id = ?""",
+                (validated.lease_id,),
+            ).fetchone()
+            if existing is not None:
+                if (
+                    existing[0] != payload
+                    or existing[1] != payload_sha256
+                    or Decimal(existing[2]) != cost
+                ):
+                    connection.rollback()
+                    raise GpuLeaseConflictError("GPU lease ID provenance conflict")
+                if exceeds_approval:
+                    connection.rollback()
+                    raise ValueError("GPU lease exceeds frozen approval")
+                binding = connection.execute(
+                    """SELECT experiment_id, approval_sha256
+                       FROM gpu_lease_bindings
+                       WHERE lease_id = ? AND matrix_manifest_sha256 = ?""",
+                    (validated.lease_id, matrix_manifest_sha256),
+                ).fetchone()
+                if binding is not None and binding != (experiment_id, approval_sha256):
+                    connection.rollback()
+                    raise GpuLeaseConflictError("GPU lease approval binding conflict")
+                connection.execute(
+                    "INSERT OR IGNORE INTO gpu_lease_bindings VALUES (?, ?, ?, ?)",
+                    (validated.lease_id, matrix_manifest_sha256,
+                     experiment_id, approval_sha256),
+                )
+                connection.commit()
+                return Decimal(existing[2])
+            try:
+                if exceeds_approval:
+                    raise ValueError("GPU lease exceeds frozen approval")
+                self._require_not_stopped(connection, month)
+                projected = (
+                    self._committed(connection, month)
+                    + self._active(connection, month)
+                    + cost
+                )
+                if projected > self._limit(mode):
+                    raise BudgetExceededError("Phase 5 budget stop rule reached")
+                connection.execute(
+                    "INSERT INTO gpu_leases VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (validated.lease_id, payload, payload_sha256, experiment_id,
+                     matrix_manifest_sha256, str(cost), validated.ended_at_utc.isoformat()),
+                )
+                connection.execute(
+                    "INSERT INTO gpu_lease_bindings VALUES (?, ?, ?, ?)",
+                    (validated.lease_id, matrix_manifest_sha256,
+                     experiment_id, approval_sha256),
+                )
+                connection.execute(
+                    """INSERT INTO charges
+                       (reservation_id, request_sha256, experiment_id, month_key,
+                        amount, category, created_at_utc)
+                       VALUES (NULL, ?, ?, ?, ?, 'gpu', ?)""",
+                    (validated.lease_id, experiment_id, month, str(cost),
+                     validated.ended_at_utc.isoformat()),
+                )
+                connection.commit()
+            except BaseException:
+                connection.rollback()
+                raise
         return cost
 
     def committed_total(self, at_utc: datetime) -> Decimal:

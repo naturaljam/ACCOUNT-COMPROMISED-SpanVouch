@@ -26,7 +26,11 @@ from spanvouch.contracts.versioning import (
     canonical_sha256,
 )
 from spanvouch.diagnosis.protocols import ChatMessage, ModelProvider
-from spanvouch.evaluation.experiments.budget import BudgetLedger, Pricing
+from spanvouch.evaluation.experiments.budget import (
+    BudgetLedger,
+    GpuLeaseRecord,
+    Pricing,
+)
 from spanvouch.evaluation.experiments.conditions import (
     ConditionExecutionContext,
     ConditionExecutor,
@@ -98,8 +102,34 @@ def _required_absolute_path(environ: Mapping[str, str], name: str) -> Path:
     value = _required_environment(environ, name)
     path = Path(value)
     if value.startswith("file:") or value == ":memory:" or not path.is_absolute():
-        raise ProviderConfigurationError("Phase 5 budget ledger path must be absolute")
+        label = "budget ledger" if "BUDGET_LEDGER" in name else "GPU lease"
+        raise ProviderConfigurationError(f"Phase 5 {label} path must be absolute")
     return path.resolve()
+
+
+def _load_gpu_lease(path: Path, config: Phase5ExperimentConfig) -> GpuLeaseRecord:
+    approval = config.live_provenance.qwen.gpu_lease_approval
+    if approval is None:
+        raise ProviderConfigurationError("Phase 5 GPU lease approval is missing")
+    try:
+        content = path.read_bytes()
+        payload = json.loads(content)
+        if canonical_bytes(payload) != content:
+            raise ValueError
+        record = GpuLeaseRecord.model_validate(payload)
+        if (
+            record.cloud_provider,
+            record.region,
+            record.instance_type,
+        ) != (approval.cloud_provider, approval.region, approval.instance_type) or (
+            record.duration_hours > approval.maximum_hours
+        ):
+            raise ValueError
+    except (OSError, ValueError):
+        raise ProviderConfigurationError(
+            "Phase 5 GPU lease record is invalid"
+        ) from None
+    return record
 
 
 def _normalized_base_url(value: str) -> tuple[str, str]:
@@ -438,6 +468,26 @@ def compose_live_executor(
     runtime_environ = os.environ if environ is None else environ
     ledger_path = _required_absolute_path(
         runtime_environ, "SPANVOUCH_PHASE5_BUDGET_LEDGER_PATH"
+    )
+    gpu_lease_path = _required_absolute_path(
+        runtime_environ, "SPANVOUCH_PHASE5_GPU_LEASE_PATH"
+    )
+    gpu_lease = _load_gpu_lease(gpu_lease_path, config)
+    qwen_pricing = _load_pricing(
+        _required_environment(runtime_environ, "SPANVOUCH_PHASE5_QWEN_PRICING_PATH"),
+        config.live_provenance.qwen,
+    )
+    ledger = BudgetLedger(ledger_path, config.budget)
+    approval = config.live_provenance.qwen.gpu_lease_approval
+    if approval is None:
+        raise ProviderConfigurationError("Phase 5 GPU lease approval is missing")
+    ledger.record_gpu_lease_record(
+        record=gpu_lease,
+        approval=approval,
+        experiment_id=config.experiment_id,
+        matrix_manifest_sha256=matrix_manifest_sha256,
+        mode=config.mode,
+        pricing=qwen_pricing,
     )
     providers = _compose_live_providers(
         config,

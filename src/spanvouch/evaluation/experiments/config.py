@@ -172,6 +172,18 @@ class PricingFileProvenance(BaseModel):
     currency: Literal["CNY"]
 
 
+class GpuLeaseApproval(BaseModel):
+    """Frozen maximum and static identity for one approved Qwen GPU lease."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    cloud_provider: str = Field(min_length=1)
+    region: str = Field(min_length=1)
+    instance_type: str = Field(min_length=1)
+    maximum_hours: Decimal = Field(gt=0)
+    maximum_cost_cny: Decimal = Field(gt=0)
+
+
 class EndpointDeploymentProvenance(BaseModel):
     """Sanitized endpoint, deployment and pricing identity frozen before a run."""
 
@@ -187,6 +199,7 @@ class EndpointDeploymentProvenance(BaseModel):
     chat_template_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
     dtype: str | None = Field(default=None, min_length=1)
     max_model_len: int | None = Field(default=None, ge=1)
+    gpu_lease_approval: GpuLeaseApproval | None = None
 
     @model_validator(mode="after")
     def require_provider_specific_pins(self) -> Self:
@@ -198,6 +211,7 @@ class EndpointDeploymentProvenance(BaseModel):
                 "chat_template_sha256": self.chat_template_sha256,
                 "dtype": self.dtype,
                 "max_model_len": self.max_model_len,
+                "gpu_lease_approval": self.gpu_lease_approval,
             }
             missing = next((name for name, value in required.items() if value is None), None)
             if missing is not None:

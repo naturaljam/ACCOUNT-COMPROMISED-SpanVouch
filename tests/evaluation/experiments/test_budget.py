@@ -13,10 +13,16 @@ from spanvouch.evaluation.experiments.budget import (
     BudgetExceededError,
     BudgetLedger,
     BudgetOverrunError,
+    GpuLeaseConflictError,
+    GpuLeaseRecord,
     Pricing,
     UnknownPriceError,
 )
-from spanvouch.evaluation.experiments.config import BudgetPolicy, ExperimentMode
+from spanvouch.evaluation.experiments.config import (
+    BudgetPolicy,
+    ExperimentMode,
+    GpuLeaseApproval,
+)
 
 
 def pricing() -> Pricing:
@@ -170,6 +176,65 @@ def test_pilot_gpu_lease_uses_pilot_cap(tmp_path: Path) -> None:
         )
 
     assert ledger.committed_total(at) == Decimal("0")
+
+
+def _gpu_approval() -> GpuLeaseApproval:
+    return GpuLeaseApproval(
+        cloud_provider="example-cloud",
+        region="test-region-1",
+        instance_type="gpu-48gb",
+        maximum_hours=Decimal("2"),
+        maximum_cost_cny=Decimal("10"),
+    )
+
+
+def _gpu_record() -> GpuLeaseRecord:
+    return GpuLeaseRecord(
+        lease_id="lease-test-001",
+        cloud_provider="example-cloud",
+        region="test-region-1",
+        instance_type="gpu-48gb",
+        started_at_utc=datetime(2026, 7, 20, tzinfo=UTC),
+        ended_at_utc=datetime(2026, 7, 20, 1, tzinfo=UTC),
+        duration_hours=Decimal("1"),
+    )
+
+
+def test_gpu_lease_record_is_atomic_idempotent_and_conflict_safe(tmp_path: Path) -> None:
+    ledger = BudgetLedger(tmp_path / "global.sqlite3", policy())
+    record = _gpu_record()
+    kwargs = {
+        "record": record,
+        "approval": _gpu_approval(),
+        "experiment_id": "phase5-pilot",
+        "matrix_manifest_sha256": "a" * 64,
+        "mode": ExperimentMode.PILOT,
+        "pricing": pricing(),
+    }
+
+    assert ledger.record_gpu_lease_record(**kwargs) == Decimal("5.000000")
+    assert ledger.record_gpu_lease_record(**kwargs) == Decimal("5.000000")
+    assert ledger.committed_total(record.ended_at_utc) == Decimal("5.000000")
+
+    with pytest.raises(GpuLeaseConflictError, match="conflict"):
+        ledger.record_gpu_lease_record(
+            **{**kwargs, "record": record.model_copy(update={"region": "other"})}
+        )
+
+
+def test_gpu_lease_record_rejects_approval_and_monthly_limit_drift(tmp_path: Path) -> None:
+    ledger = BudgetLedger(tmp_path / "global.sqlite3", policy())
+    record = _gpu_record()
+    with pytest.raises(ValueError, match="approval"):
+        ledger.record_gpu_lease_record(
+            record=record,
+            approval=_gpu_approval().model_copy(update={"maximum_hours": Decimal("0.5")}),
+            experiment_id="phase5-pilot",
+            matrix_manifest_sha256="a" * 64,
+            mode=ExperimentMode.PILOT,
+            pricing=pricing(),
+        )
+    assert ledger.committed_total(record.ended_at_utc) == 0
 
 
 def test_concurrent_reservation_cannot_overspend(tmp_path: Path) -> None:
