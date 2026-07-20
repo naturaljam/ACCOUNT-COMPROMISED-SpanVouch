@@ -28,7 +28,11 @@ from spanvouch.evaluation.corpus.models import (
     CorpusParityEntry,
     CorpusParityPayload,
 )
-from spanvouch.labs.runtime import ExecutionRecord, ParityResult
+from spanvouch.labs.runtime import (
+    ExecutionRecord,
+    ParityResult,
+    ScenarioParityValidator,
+)
 
 _MANIFEST = "manifest.json"
 _DIRECTORIES = frozenset(
@@ -117,28 +121,27 @@ class TraceReplayRepository:
         if phase5_corpus and len(validated_records) != len(validated_parity) * 2:
             raise ValueError("parity results must cover every corpus record pair")
 
+        entries = tuple(CorpusEntry.from_record(record) for record in validated_records)
         parity_payloads = tuple(
             CorpusParityPayload(
-                pair_identity=reference_cell.pair_identity,
-                reference_cell=reference_cell,
-                candidate_cell=candidate_cell,
+                pair_identity=reference_entry.cell.pair_identity,
+                reference_cell=reference_entry.cell,
+                candidate_cell=candidate_entry.cell,
+                reference_record_sha256=reference_entry.record_sha256,
+                candidate_record_sha256=candidate_entry.record_sha256,
                 result=result,
             )
-            for reference, candidate, result in zip(
-                validated_records[::2],
-                validated_records[1::2],
+            for reference_entry, candidate_entry, result in zip(
+                entries[::2],
+                entries[1::2],
                 validated_parity,
                 strict=True,
-            )
-            for reference_cell, candidate_cell in (
-                (CorpusEntry.from_record(reference).cell, CorpusEntry.from_record(candidate).cell),
             )
         ) if phase5_corpus else ()
         parity_entries = tuple(
             CorpusParityEntry.from_payload(payload) for payload in parity_payloads
         )
 
-        entries = tuple(CorpusEntry.from_record(record) for record in validated_records)
         manifest = CorpusManifest.from_entries(
             entries=entries,
             parity_entries=parity_entries,
@@ -252,6 +255,7 @@ class TraceReplayRepository:
         if unknown:
             raise ValueError(f"unknown corpus payload: {min(unknown)}")
 
+        records_by_sha256: dict[str, ExecutionRecord] = {}
         for entry in manifest.entries:
             record_bytes = self._read_hashed_payload(
                 snapshot.files, entry.record_path, entry.record_sha256
@@ -268,6 +272,7 @@ class TraceReplayRepository:
             if CorpusEntry.from_record(record) != entry:
                 raise ValueError("corpus entry does not match execution record")
             self._require_record_matches_manifest(record, manifest.metadata)
+            records_by_sha256[entry.record_sha256] = record
         parity_results: list[ParityResult] = []
         for parity_entry in manifest.parity_entries:
             payload_bytes = self._read_hashed_payload(
@@ -281,6 +286,19 @@ class TraceReplayRepository:
                 raise ValueError("corpus parity payload is not canonical JSON")
             if CorpusParityEntry.from_payload(payload) != parity_entry:
                 raise ValueError("corpus parity entry does not match parity payload")
+            try:
+                reference = records_by_sha256[payload.reference_record_sha256]
+                candidate = records_by_sha256[payload.candidate_record_sha256]
+            except KeyError as error:
+                raise ValueError("parity payload references an unknown execution record") from error
+            if (
+                CorpusEntry.from_record(reference).cell != payload.reference_cell
+                or CorpusEntry.from_record(candidate).cell != payload.candidate_cell
+            ):
+                raise ValueError("parity payload record hashes do not match its cells")
+            recomputed = ScenarioParityValidator().validate(reference, candidate)
+            if recomputed != payload.result:
+                raise ValueError("parity payload result does not match recomputed parity")
             parity_results.append(payload.result)
         parity_payload_values = [result.model_dump(mode="json") for result in parity_results]
         if manifest.parity_entries and canonical_sha256(
@@ -370,6 +388,11 @@ class TraceReplayRepository:
             metadata.dirty_worktree,
         ):
             raise ValueError("execution record provenance does not match corpus manifest")
+        framework_provenance = metadata.framework_provenance
+        if framework_provenance is not None and (
+            framework_provenance.get(record.framework_id) != provenance
+        ):
+            raise ValueError("execution record full provenance does not match its framework")
 
 
 def _fsync_directory(path: Path) -> None:

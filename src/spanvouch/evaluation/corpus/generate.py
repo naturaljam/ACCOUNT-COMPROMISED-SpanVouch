@@ -11,6 +11,7 @@ from typing import cast
 from pydantic import JsonValue
 
 from spanvouch.contracts.versioning import canonical_sha256
+from spanvouch.evaluation.corpus.inventory import build_phase5_execution_inventory
 from spanvouch.evaluation.corpus.models import (
     CorpusCell,
     CorpusManifest,
@@ -19,7 +20,6 @@ from spanvouch.evaluation.corpus.models import (
 )
 from spanvouch.evaluation.corpus.repository import TraceReplayRepository
 from spanvouch.evaluation.experiments import Phase5ExperimentConfig
-from spanvouch.labs.opslab.templates import build_opslab_templates
 from spanvouch.labs.runtime import (
     AgentRuntimeAdapter,
     ExecutionProvenance,
@@ -31,7 +31,6 @@ from spanvouch.labs.runtime import (
     ScenarioParityValidator,
     logical_execution_payload,
 )
-from spanvouch.labs.supportlab.runtime import build_support_lab_scenarios
 
 _FRAMEWORK_ORDER = (FrameworkId.LANGGRAPH, FrameworkId.AUTOGEN)
 
@@ -76,10 +75,7 @@ class CorpusGenerationResult:
 def build_corpus_plan(config: Phase5ExperimentConfig) -> tuple[CorpusPlanCell, ...]:
     """Build all scenario/repetition pairs without condition or model metadata."""
     config = Phase5ExperimentConfig.model_validate(config.model_dump(mode="json"))
-    scenarios = (
-        *build_support_lab_scenarios(config.seed),
-        *(template.to_lab_scenario() for template in build_opslab_templates()),
-    )
+    scenarios = build_phase5_execution_inventory(config.seed)
     cells: list[CorpusPlanCell] = []
     for scenario_index, scenario in enumerate(scenarios):
         for repetition in range(1, config.repetitions + 1):
@@ -118,6 +114,7 @@ async def generate_phase5_corpus(
 
     records: list[ExecutionRecord] = []
     parity_results: list[ParityResult] = []
+    framework_provenance: dict[FrameworkId, ExecutionProvenance] = {}
     plan = build_corpus_plan(config)
     validator = ScenarioParityValidator()
     for left, right in zip(plan[::2], plan[1::2], strict=True):
@@ -134,6 +131,12 @@ async def generate_phase5_corpus(
             record = await adapters[cell.framework_id].execute(cell.scenario, run_config)
             _require_record_matches_cell(record, cell)
             _require_record_provenance(record, provenance)
+            existing_provenance = framework_provenance.setdefault(
+                cell.framework_id,
+                record.provenance,
+            )
+            if existing_provenance != record.provenance:
+                raise ValueError("same-framework execution provenance must be identical")
             pair.append(record)
             records.append(record)
         parity_results.append(validator.validate(pair[0], pair[1]))
@@ -154,6 +157,7 @@ async def generate_phase5_corpus(
     phase5_plan = Phase5CorpusPlan.from_cells(
         mode=config.mode.value,
         repetitions=config.repetitions,
+        seed=config.seed,
         experiment_config_sha256=experiment_config_sha256,
         ordered_cells=ordered_cells,
     )
@@ -168,6 +172,7 @@ async def generate_phase5_corpus(
         expected_cell_count=len(plan),
         expected_pair_count=len(plan) // 2,
         phase5_plan=phase5_plan,
+        framework_provenance=framework_provenance,
         created_at_utc=created_at_utc or datetime.now(UTC),
         parity_results_sha256=canonical_sha256(
             cast(
@@ -184,26 +189,29 @@ async def generate_phase5_corpus(
     )
     manifest = repository.verify()
     logical_payload_sha256 = canonical_sha256(
-        {
-            "metadata": metadata.model_dump(
-                mode="json",
-                exclude={"created_at_utc", "git_commit"},
-            ),
-            "entries": [
-                {
-                    "cell": CorpusCell(
-                        domain=record.domain,
-                        template_id=record.template_id,
-                        scenario_id=record.scenario_id,
-                        framework_id=record.framework_id,
-                        repetition=record.repetition,
-                        seed=record.seed,
-                    ).model_dump(mode="json"),
-                    "execution": logical_execution_payload(record),
-                }
-                for record in records
-            ],
-        }
+        cast(
+            JsonValue,
+            {
+                "metadata": _logical_corpus_metadata_payload(metadata),
+                "entries": [
+                    {
+                        "cell": CorpusCell(
+                            domain=record.domain,
+                            template_id=record.template_id,
+                            scenario_id=record.scenario_id,
+                            framework_id=record.framework_id,
+                            repetition=record.repetition,
+                            seed=record.seed,
+                        ).model_dump(mode="json"),
+                        "execution": logical_corpus_record_payload(record),
+                    }
+                    for record in records
+                ],
+                "parity_results": [
+                    result.model_dump(mode="json") for result in frozen_parity
+                ],
+            },
+        )
     )
     return CorpusGenerationResult(
         repository=repository,
@@ -213,6 +221,51 @@ async def generate_phase5_corpus(
     )
 
 
+def logical_corpus_record_payload(record: ExecutionRecord) -> dict[str, JsonValue]:
+    """Project one record while excluding only approved physical corpus fields."""
+    return {
+        "execution": cast(JsonValue, logical_execution_payload(record)),
+        "framework_version": record.framework_version,
+        "steps": record.steps,
+        "tool_calls": record.tool_calls,
+        "provenance": cast(
+            JsonValue,
+            record.provenance.model_dump(mode="json", exclude={"git_commit"}),
+        ),
+    }
+
+
+def _logical_corpus_metadata_payload(
+    metadata: CorpusManifestMetadata,
+) -> dict[str, JsonValue]:
+    framework_provenance = metadata.framework_provenance or {}
+    return {
+        "corpus_id": metadata.corpus_id,
+        "mode": metadata.mode,
+        "experiment_config_sha256": metadata.experiment_config_sha256,
+        "dependency_lock_sha256": metadata.dependency_lock_sha256,
+        "dataset_manifest_sha256": metadata.dataset_manifest_sha256,
+        "dirty_worktree": metadata.dirty_worktree,
+        "expected_cell_count": metadata.expected_cell_count,
+        "expected_pair_count": metadata.expected_pair_count,
+        "phase5_plan": cast(
+            JsonValue,
+            metadata.phase5_plan.model_dump(mode="json")
+            if metadata.phase5_plan is not None
+            else None,
+        ),
+        "framework_provenance": cast(
+            JsonValue,
+            {
+                framework_id.value: value.model_dump(
+                    mode="json",
+                    exclude={"git_commit"},
+                )
+                for framework_id, value in framework_provenance.items()
+            },
+        ),
+        "parity_results_sha256": metadata.parity_results_sha256,
+    }
 def _require_record_matches_cell(
     record: ExecutionRecord, cell: CorpusPlanCell
 ) -> None:

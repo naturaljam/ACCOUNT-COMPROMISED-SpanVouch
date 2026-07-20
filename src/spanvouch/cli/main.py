@@ -48,8 +48,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         subcommand, forwarded = rest[0], rest[1:]
     if (arguments.command, subcommand) not in _HANDLER_IMPORTS:
         _parser().error(f"unknown {arguments.command} subcommand: {subcommand}")
-    handler = _load_handler(arguments.command, subcommand)
     try:
+        handler = _load_handler(arguments.command, subcommand)
         return handler(forwarded)
     except Exception:
         label = arguments.command

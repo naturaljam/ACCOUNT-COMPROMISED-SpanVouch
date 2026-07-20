@@ -26,6 +26,7 @@ from spanvouch.labs.supportlab.runtime import build_support_lab_scenarios
 
 ROOT = Path(__file__).resolve().parents[3]
 STAGE_A_PATHS = (
+    ROOT / "src/spanvouch/evaluation/corpus/inventory.py",
     ROOT / "src/spanvouch/evaluation/corpus/generate.py",
     ROOT / "src/spanvouch/evaluation/run_phase5_corpus.py",
 )
@@ -69,6 +70,12 @@ def test_stage_a_source_is_ast_isolated_from_labels_and_providers(path: Path) ->
         for part in FORBIDDEN_NAME_PARTS
     )
     assert all(name != "build_scenarios" for _, name in imports)
+
+
+def test_execution_inventory_does_not_import_framework_adapters() -> None:
+    inventory = ROOT / "src/spanvouch/evaluation/corpus/inventory.py"
+
+    assert all(".labs.frameworks" not in module for module, _ in _imports(inventory))
 
 
 def test_gold_specs_cover_only_the_execution_inventory() -> None:

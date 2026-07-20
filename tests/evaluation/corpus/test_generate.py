@@ -14,6 +14,8 @@ from spanvouch.evaluation.corpus import (
     Phase5CorpusPlan,
     TraceReplayRepository,
 )
+from spanvouch.evaluation.corpus import generate as corpus_generate
+from spanvouch.evaluation.corpus import repository as repository_module
 from spanvouch.evaluation.corpus.generate import (
     build_corpus_plan,
     generate_phase5_corpus,
@@ -32,6 +34,9 @@ from spanvouch.labs.runtime import (
     ExecutionStatus,
     FrameworkId,
     LabScenario,
+    ParityDimension,
+    ParityMismatch,
+    ParityResult,
     RuntimeConfig,
     RuntimeState,
     logical_execution_payload,
@@ -177,6 +182,22 @@ class _FailIfExecutedAdapter:
         raise AssertionError("invalid configuration reached adapter execution")
 
 
+class _MixedProvenanceAdapter(_RecordingAdapter):
+    async def execute(
+        self, scenario: LabScenario, run_config: RuntimeConfig
+    ) -> ExecutionRecord:
+        if self.calls:
+            self.provenance = self.provenance.model_copy(
+                update={
+                    "package_version": "0.2.1-mixed",
+                    "environment_sha256": "e" * 64,
+                    "tool_versions": {"opslab": "2.0", "supportlab": "1.0"},
+                    "runtime_versions": {"python": "3.12.11"},
+                }
+            )
+        return await super().execute(scenario, run_config)
+
+
 def test_pilot_corpus_plan_is_complete() -> None:
     plan = build_corpus_plan(_pilot_config())
 
@@ -267,6 +288,7 @@ def test_formal_plan_binding_uses_validated_frozen_repetitions() -> None:
     binding = Phase5CorpusPlan.from_cells(
         mode="formal",
         repetitions=formal.repetitions,
+        seed=formal.seed,
         experiment_config_sha256=config_sha256,
         ordered_cells=tuple(
             CorpusCell(
@@ -286,6 +308,78 @@ def test_formal_plan_binding_uses_validated_frozen_repetitions() -> None:
     copied = binding.model_copy(update={"repetitions": 6})
     with pytest.raises(ValueError, match="plan_identity_sha256"):
         Phase5CorpusPlan.model_validate(copied.model_dump(mode="python"))
+
+
+def test_phase5_plan_rejects_fully_rehashed_invented_inventory_cells() -> None:
+    config = _pilot_config()
+    plan = build_corpus_plan(config)
+    binding = Phase5CorpusPlan.from_cells(
+        mode="pilot",
+        repetitions=config.repetitions,
+        seed=config.seed,
+        experiment_config_sha256=canonical_sha256(config.model_dump(mode="json")),
+        ordered_cells=tuple(
+            CorpusCell(
+                domain=cell.scenario.domain,
+                template_id=cell.scenario.template_id,
+                scenario_id=cell.scenario.scenario_id,
+                framework_id=cell.framework_id,
+                repetition=cell.repetition,
+                seed=cell.seed,
+            )
+            for cell in plan
+        ),
+    )
+    payload = binding.model_dump(mode="json")
+    payload["ordered_cells"][0]["template_id"] = "invented-template"
+    payload["ordered_cells"][0]["scenario_id"] = "invented-scenario"
+    payload["ordered_cells"][1]["template_id"] = "invented-template"
+    payload["ordered_cells"][1]["scenario_id"] = "invented-scenario"
+    payload["ordered_cells_sha256"] = canonical_sha256(payload["ordered_cells"])
+    payload["plan_identity_sha256"] = canonical_sha256(
+        {
+            "experiment_config_sha256": payload["experiment_config_sha256"],
+            "mode": payload["mode"],
+            "ordered_cells_sha256": payload["ordered_cells_sha256"],
+            "repetitions": payload["repetitions"],
+            "schema_name": payload["schema_name"],
+            "schema_version": payload["schema_version"],
+            "seed": payload["seed"],
+        }
+    )
+
+    with pytest.raises(ValueError, match="authoritative Phase 5 inventory"):
+        Phase5CorpusPlan.model_validate(payload)
+
+
+def test_phase5_plan_from_cells_round_trip_revalidates_nested_cells() -> None:
+    config = _pilot_config()
+    plan = build_corpus_plan(config)
+    cells = tuple(
+        CorpusCell(
+            domain=cell.scenario.domain,
+            template_id=cell.scenario.template_id,
+            scenario_id=cell.scenario.scenario_id,
+            framework_id=cell.framework_id,
+            repetition=cell.repetition,
+            seed=cell.seed,
+        )
+        for cell in plan
+    )
+    invalid = (
+        cells[0].model_copy(update={"scenario_id": ""}),
+        cells[1].model_copy(update={"scenario_id": ""}),
+        *cells[2:],
+    )
+
+    with pytest.raises(ValueError, match="at least 1 character"):
+        Phase5CorpusPlan.from_cells(
+            mode="pilot",
+            repetitions=config.repetitions,
+            seed=config.seed,
+            experiment_config_sha256=canonical_sha256(config.model_dump(mode="json")),
+            ordered_cells=invalid,
+        )
     assert all(
         not ({"condition", "condition_id", "model", "model_id"} & set(cell.__dict__))
         for cell in plan
@@ -328,6 +422,9 @@ async def test_generation_executes_pairs_validates_parity_and_freezes_once(
     manifest = result.repository.verify()
     assert manifest.metadata.expected_cell_count == 216
     assert manifest.metadata.expected_pair_count == 108
+    framework_provenance = manifest.metadata.framework_provenance
+    assert framework_provenance is not None
+    assert set(framework_provenance) == {FrameworkId.LANGGRAPH, FrameworkId.AUTOGEN}
     phase5_plan = manifest.metadata.phase5_plan
     assert phase5_plan is not None
     assert phase5_plan.mode == "pilot"
@@ -358,6 +455,23 @@ async def test_generation_executes_pairs_validates_parity_and_freezes_once(
         result.repository.load_parity(entry.pair_identity).result.is_match
         for entry in manifest.parity_entries
     )
+    with monkeypatch.context() as parity_patch:
+        parity_patch.setattr(
+            repository_module.ScenarioParityValidator,
+            "validate",
+            lambda _self, _reference, _candidate: ParityResult(
+                status="mismatched",
+                mismatches=(
+                    ParityMismatch(
+                        dimension=ParityDimension.OUTCOME,
+                        reference_sha256="1" * 64,
+                        candidate_sha256="2" * 64,
+                    ),
+                ),
+            ),
+        )
+        with pytest.raises(ValueError, match="recomputed parity"):
+            result.repository.verify()
     manifest_payload = manifest.model_dump(mode="json")
     incomplete = {
         **manifest_payload,
@@ -456,6 +570,25 @@ async def test_generation_rejects_stale_dirty_or_mixed_record_provenance(
     assert not destination.exists()
 
 
+async def test_generation_rejects_mixed_full_provenance_within_one_framework(
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "pilot-corpus"
+
+    with pytest.raises(ValueError, match="same-framework execution provenance"):
+        await generate_phase5_corpus(
+            config=_pilot_config(),
+            destination=destination,
+            adapters={
+                FrameworkId.LANGGRAPH: _MixedProvenanceAdapter(FrameworkId.LANGGRAPH),
+                FrameworkId.AUTOGEN: _RecordingAdapter(FrameworkId.AUTOGEN),
+            },
+            provenance=_provenance(),
+        )
+
+    assert not destination.exists()
+
+
 async def test_formal_generation_refuses_a_dirty_worktree_before_execution(
     tmp_path: Path,
 ) -> None:
@@ -546,3 +679,62 @@ async def test_logical_projection_normalizes_only_task6_physical_fields() -> Non
         logical_execution_payload(record) != logical_execution_payload(drift)
         for drift in drifts
     )
+
+
+async def test_logical_corpus_payload_retains_counts_and_non_git_provenance() -> None:
+    cell = build_corpus_plan(_pilot_config())[0]
+    config = RuntimeConfig(
+        seed=cell.seed,
+        repetition=cell.repetition,
+        max_steps=8,
+        timeout_seconds=5.0,
+        max_retries=0,
+        max_tool_calls=8,
+    )
+    record = await _RecordingAdapter(FrameworkId.LANGGRAPH).execute(
+        cell.scenario,
+        config,
+    )
+    project = corpus_generate.logical_corpus_record_payload
+    baseline = project(record)
+
+    semantic_drifts = (
+        record.model_copy(update={"steps": record.steps + 1}),
+        record.model_copy(update={"tool_calls": record.tool_calls + 1}),
+        record.model_copy(update={"framework_version": "changed"}),
+        record.model_copy(
+            update={
+                "provenance": record.provenance.model_copy(
+                    update={"package_version": "0.2.1"}
+                )
+            }
+        ),
+        record.model_copy(
+            update={
+                "provenance": record.provenance.model_copy(
+                    update={"environment_sha256": "e" * 64}
+                )
+            }
+        ),
+        record.model_copy(
+            update={
+                "provenance": record.provenance.model_copy(
+                    update={"tool_versions": {"supportlab": "2.0"}}
+                )
+            }
+        ),
+        record.model_copy(
+            update={
+                "provenance": record.provenance.model_copy(
+                    update={"runtime_versions": {"python": "3.12.11"}}
+                )
+            }
+        ),
+    )
+    assert all(project(drift) != baseline for drift in semantic_drifts)
+    git_only = record.model_copy(
+        update={
+            "provenance": record.provenance.model_copy(update={"git_commit": "f" * 40})
+        }
+    )
+    assert project(git_only) == baseline

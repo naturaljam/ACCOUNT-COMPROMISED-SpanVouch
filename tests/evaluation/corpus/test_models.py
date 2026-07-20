@@ -11,8 +11,9 @@ from spanvouch.evaluation.corpus import (
     CorpusEntry,
     CorpusManifest,
     CorpusManifestMetadata,
+    CorpusParityPayload,
 )
-from spanvouch.labs.runtime import ExecutionRecord
+from spanvouch.labs.runtime import ExecutionRecord, FrameworkId, ParityResult
 
 
 def test_corpus_entry_binds_record_and_trace_hashes(record: ExecutionRecord) -> None:
@@ -122,6 +123,31 @@ def test_manifest_rejects_duplicate_cells(
     metadata = manifest_metadata.model_copy(update={"expected_cell_count": 2})
     with pytest.raises(ValueError, match="corpus cells must be unique"):
         CorpusManifest.from_entries(entries=(entry, entry), metadata=metadata)
+
+
+def test_parity_payload_binds_both_execution_record_hashes(
+    record: ExecutionRecord,
+) -> None:
+    candidate = ExecutionRecord.model_validate(
+        {
+            **record.model_dump(mode="python"),
+            "framework_id": FrameworkId.AUTOGEN,
+        }
+    )
+    reference_entry = CorpusEntry.from_record(record)
+    candidate_entry = CorpusEntry.from_record(candidate)
+
+    payload = CorpusParityPayload(
+        pair_identity=reference_entry.cell.pair_identity,
+        reference_cell=reference_entry.cell,
+        candidate_cell=candidate_entry.cell,
+        reference_record_sha256=reference_entry.record_sha256,
+        candidate_record_sha256=candidate_entry.record_sha256,
+        result=ParityResult(status="matched"),
+    )
+
+    assert payload.reference_record_sha256 == reference_entry.record_sha256
+    assert payload.candidate_record_sha256 == candidate_entry.record_sha256
 
 
 def test_manifest_direct_validation_rejects_unsorted_entries_and_derived_hash_mismatch(

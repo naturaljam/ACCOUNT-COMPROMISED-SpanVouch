@@ -132,6 +132,23 @@ def test_expected_command_failures_are_concise_and_do_not_leak_exception_details
     assert "GOLD_SENTINEL" not in captured.err
 
 
+def test_handler_import_failure_is_a_concise_nonzero_error(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fail_import(command: str, subcommand: str) -> object:
+        raise ImportError("GOLD_SENTINEL branch dependency unavailable")
+
+    monkeypatch.setattr(cli_main, "_load_handler", fail_import)
+
+    assert cli_main.main(("labs", "corpus")) != 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "spanvouch: labs corpus failed\n"
+    assert "Traceback" not in captured.err
+    assert "GOLD_SENTINEL" not in captured.err
+
+
 @pytest.mark.parametrize("argv", [("dataset",), ("evaluate",), ("labs",)])
 def test_main_rejects_a_missing_subcommand(argv: tuple[str, ...]) -> None:
     with pytest.raises(SystemExit, match="2"):

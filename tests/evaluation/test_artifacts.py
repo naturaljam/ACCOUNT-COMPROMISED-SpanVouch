@@ -541,19 +541,19 @@ def test_secret_classifier_requires_exact_metrics_field_paths(
     ("path", "value"),
     (
         (("corpus_record", "trace", "trace_id"), "0123456789abcdef" * 2),
-        (("corpus_record", "trace", "spans", "trace_id"), "0123456789abcdef" * 2),
-        (("corpus_record", "trace", "spans", "span_id"), "0123456789abcdef"),
-        (("corpus_record", "trace", "spans", "parent_span_id"), "0123456789abcdef"),
+        (("corpus_record", "trace", "spans", "0", "trace_id"), "0123456789abcdef" * 2),
+        (("corpus_record", "trace", "spans", "0", "span_id"), "0123456789abcdef"),
+        (("corpus_record", "trace", "spans", "0", "parent_span_id"), "0123456789abcdef"),
         (("corpus_trace", "trace_id"), "0123456789abcdef" * 2),
-        (("corpus_trace", "spans", "trace_id"), "0123456789abcdef" * 2),
-        (("corpus_trace", "spans", "span_id"), "0123456789abcdef"),
-        (("corpus_trace", "spans", "parent_span_id"), "0123456789abcdef"),
+        (("corpus_trace", "spans", "0", "trace_id"), "0123456789abcdef" * 2),
+        (("corpus_trace", "spans", "0", "span_id"), "0123456789abcdef"),
+        (("corpus_trace", "spans", "0", "parent_span_id"), "0123456789abcdef"),
         (
-            ("corpus_parity_results", "mismatches", "reference_sha256"),
+            ("corpus_parity_results", "0", "result", "mismatches", "0", "reference_sha256"),
             "0123456789abcdef" * 4,
         ),
         (
-            ("corpus_parity_results", "mismatches", "candidate_sha256"),
+            ("corpus_parity_results", "0", "result", "mismatches", "0", "candidate_sha256"),
             "0123456789abcdef" * 4,
         ),
         (("corpus_record", "failure", "error_sha256"), "0123456789abcdef" * 4),
@@ -597,19 +597,19 @@ def test_secret_classifier_keeps_corpus_identifier_exemptions_narrow(
     ("path", "value"),
     (
         (
-            ("corpus_manifest", "parity_entries", "pair_identity"),
+            ("corpus_manifest", "parity_entries", "0", "pair_identity"),
             "supportlab:missing_precondition-01:missing_precondition-01:1:20260719",
         ),
         (
-            ("corpus_parity_results", "pair_identity"),
+            ("corpus_parity_results", "0", "pair_identity"),
             "opslab:timeout-no-retry:timeout-no-retry:3:20260781",
         ),
         (
-            ("corpus_manifest", "parity_entries", "result_path"),
+            ("corpus_manifest", "parity_entries", "0", "result_path"),
             f"parity/sha256/{'a' * 64}.json",
         ),
         (
-            ("corpus_manifest", "parity_entries", "result_sha256"),
+            ("corpus_manifest", "parity_entries", "0", "result_sha256"),
             "a" * 64,
         ),
         (
@@ -666,15 +666,45 @@ def test_secret_classifier_rejects_parity_hash_names_at_arbitrary_trace_depth(
     with pytest.raises(ValueError, match="unsafe artifact content"):
         artifacts_module.ArtifactSecretClassifier().require_safe(
             value,
-            path=("corpus_trace", "spans", "attributes", field),
+            path=("corpus_trace", "spans", "0", "attributes", field),
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("record_sha256", "0123456789abcdef" * 4),
+        ("trace_sha256", "fedcba9876543210" * 4),
+        ("result_sha256", "123456789abcdef0" * 4),
+        ("parity_payloads_sha256", "abcdef0123456789" * 4),
+        (
+            "pair_identity",
+            "supportlab:missing_precondition-01:missing_precondition-01:1:20260719",
+        ),
+        ("record_path", f"records/sha256/{'0123456789abcdef' * 4}.json"),
+        ("trace_path", f"traces/sha256/{'fedcba9876543210' * 4}.json"),
+        ("result_path", f"parity/sha256/{'123456789abcdef0' * 4}.json"),
+        ("git_commit", "0123456789abcdef0123456789abcdef01234567"),
+        ("trace_id", "0123456789abcdef" * 2),
+        ("span_id", "0123456789abcdef"),
+    ),
+)
+def test_secret_classifier_rejects_valid_corpus_identifiers_at_wrong_depth(
+    field: str,
+    value: str,
+) -> None:
+    with pytest.raises(ValueError, match="unsafe artifact content"):
+        artifacts_module.ArtifactSecretClassifier().require_safe(
+            value,
+            path=("corpus_record", "trace", "spans", "0", "attributes", field),
         )
 
 
 @pytest.mark.parametrize(
     "path",
     (
-        ("corpus_record", "trace", "spans", "attributes", "tool.result"),
-        ("corpus_trace", "spans", "attributes", "tool.result"),
+        ("corpus_record", "trace", "spans", "0", "attributes", "tool.result"),
+        ("corpus_trace", "spans", "0", "attributes", "tool.result"),
     ),
 )
 def test_secret_classifier_allows_only_sanitized_refund_results_in_corpus_traces(

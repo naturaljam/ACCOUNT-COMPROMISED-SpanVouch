@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, m
 
 from spanvouch.contracts.versioning import SHA256_PATTERN, canonical_sha256
 from spanvouch.labs.runtime import (
+    ExecutionProvenance,
     ExecutionRecord,
     ExecutionStatus,
     FrameworkId,
@@ -96,6 +97,8 @@ class CorpusParityPayload(BaseModel):
     pair_identity: str = Field(min_length=1)
     reference_cell: CorpusCell
     candidate_cell: CorpusCell
+    reference_record_sha256: str = Field(pattern=SHA256_PATTERN)
+    candidate_record_sha256: str = Field(pattern=SHA256_PATTERN)
     result: ParityResult
 
     @model_validator(mode="after")
@@ -158,6 +161,7 @@ class Phase5CorpusPlan(BaseModel):
     schema_version: Literal["1.0"] = "1.0"
     mode: Literal["pilot", "formal"]
     repetitions: int = Field(ge=3, le=20)
+    seed: int
     experiment_config_sha256: str = Field(pattern=SHA256_PATTERN)
     ordered_cells: tuple[CorpusCell, ...] = Field(min_length=1)
     ordered_cells_sha256: str = Field(pattern=SHA256_PATTERN)
@@ -178,6 +182,7 @@ class Phase5CorpusPlan(BaseModel):
             "mode": self.mode,
             "ordered_cells_sha256": self.ordered_cells_sha256,
             "repetitions": self.repetitions,
+            "seed": self.seed,
             "schema_name": self.schema_name,
             "schema_version": self.schema_version,
         }
@@ -192,23 +197,27 @@ class Phase5CorpusPlan(BaseModel):
         if len(self.ordered_cells) != expected_cells:
             raise ValueError("Phase 5 plan cell count does not match validated repetitions")
 
-        pairs = tuple(zip(self.ordered_cells[::2], self.ordered_cells[1::2], strict=True))
-        if any(
-            reference.framework_id is not FrameworkId.LANGGRAPH
-            or candidate.framework_id is not FrameworkId.AUTOGEN
-            or reference.pair_identity != candidate.pair_identity
-            for reference, candidate in pairs
-        ):
-            raise ValueError("Phase 5 ordered plan must contain adjacent framework pairs")
-        scenarios: dict[tuple[str, str, str], set[int]] = {}
-        for reference, _candidate in pairs:
-            key = (reference.domain, reference.template_id, reference.scenario_id)
-            scenarios.setdefault(key, set()).add(reference.repetition)
-        if len(scenarios) != 36 or any(
-            repetitions != set(range(1, self.repetitions + 1))
-            for repetitions in scenarios.values()
-        ):
-            raise ValueError("Phase 5 plan repetition matrix is incomplete")
+        from spanvouch.evaluation.corpus.inventory import (
+            build_phase5_execution_inventory,
+        )
+
+        expected_ordered_cells = tuple(
+            CorpusCell(
+                domain=scenario.domain,
+                template_id=scenario.template_id,
+                scenario_id=scenario.scenario_id,
+                framework_id=framework_id,
+                repetition=repetition,
+                seed=self.seed + scenario_index * self.repetitions + repetition - 1,
+            )
+            for scenario_index, scenario in enumerate(
+                build_phase5_execution_inventory(self.seed)
+            )
+            for repetition in range(1, self.repetitions + 1)
+            for framework_id in (FrameworkId.LANGGRAPH, FrameworkId.AUTOGEN)
+        )
+        if self.ordered_cells != expected_ordered_cells:
+            raise ValueError("Phase 5 plan does not match authoritative Phase 5 inventory")
         return self
 
     @classmethod
@@ -217,25 +226,32 @@ class Phase5CorpusPlan(BaseModel):
         *,
         mode: Literal["pilot", "formal"],
         repetitions: int,
+        seed: int,
         experiment_config_sha256: str,
         ordered_cells: tuple[CorpusCell, ...],
     ) -> Self:
+        validated_cells = tuple(
+            CorpusCell.model_validate(cell.model_dump(mode="python"))
+            for cell in ordered_cells
+        )
         cells_sha256 = canonical_sha256(
-            cast(JsonValue, [cell.model_dump(mode="json") for cell in ordered_cells])
+            cast(JsonValue, [cell.model_dump(mode="json") for cell in validated_cells])
         )
         identity_payload = {
             "experiment_config_sha256": experiment_config_sha256,
             "mode": mode,
             "ordered_cells_sha256": cells_sha256,
             "repetitions": repetitions,
+            "seed": seed,
             "schema_name": "spanvouch.phase5-corpus-plan",
             "schema_version": "1.0",
         }
         return cls(
             mode=mode,
             repetitions=repetitions,
+            seed=seed,
             experiment_config_sha256=experiment_config_sha256,
-            ordered_cells=ordered_cells,
+            ordered_cells=validated_cells,
             ordered_cells_sha256=cells_sha256,
             plan_identity_sha256=canonical_sha256(cast(JsonValue, identity_payload)),
         )
@@ -254,6 +270,7 @@ class CorpusManifestMetadata(BaseModel):
     expected_cell_count: int = Field(ge=1)
     expected_pair_count: int = Field(ge=0)
     phase5_plan: Phase5CorpusPlan | None = None
+    framework_provenance: dict[FrameworkId, ExecutionProvenance] | None = None
     created_at_utc: datetime
     parity_results_sha256: str = Field(pattern=SHA256_PATTERN)
 
@@ -271,6 +288,16 @@ class CorpusManifestMetadata(BaseModel):
             raise ValueError("Phase 5 corpus metadata requires a canonical plan")
         if not is_phase5 and self.phase5_plan is not None:
             raise ValueError("generic corpus metadata forbids a Phase 5 plan")
+        if is_phase5 and (
+            self.framework_provenance is None
+            or set(self.framework_provenance) != {
+                FrameworkId.LANGGRAPH,
+                FrameworkId.AUTOGEN,
+            }
+        ):
+            raise ValueError("Phase 5 corpus requires full provenance per framework")
+        if not is_phase5 and self.framework_provenance is not None:
+            raise ValueError("generic corpus metadata forbids framework provenance")
         if self.phase5_plan is None:
             return self
         plan = self.phase5_plan

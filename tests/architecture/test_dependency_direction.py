@@ -110,6 +110,7 @@ def test_production_core_never_imports_labs_or_evaluation() -> None:
 
 def test_phase5_stage_a_never_imports_labels_statistics_or_provider_views() -> None:
     roots = (
+        SOURCE_ROOT / "evaluation" / "corpus" / "inventory.py",
         SOURCE_ROOT / "evaluation" / "corpus" / "generate.py",
         SOURCE_ROOT / "evaluation" / "run_phase5_corpus.py",
     )
@@ -123,7 +124,11 @@ def test_phase5_stage_a_never_imports_labels_statistics_or_provider_views() -> N
         )
         for path in roots
     }
-    assert violations == {"generate.py": (), "run_phase5_corpus.py": ()}
+    assert violations == {
+        "inventory.py": (),
+        "generate.py": (),
+        "run_phase5_corpus.py": (),
+    }
 
 
 @pytest.mark.parametrize("module", PHASE5_EXPERIMENTAL_PREFIXES)

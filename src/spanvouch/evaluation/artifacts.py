@@ -87,66 +87,168 @@ _CORPUS_PAYLOAD_PATH = re.compile(
 _CORPUS_PAIR_IDENTITY = re.compile(
     r"^(?:supportlab|opslab):[a-z0-9_-]+:[a-z0-9_-]+:[1-9][0-9]*:-?[0-9]+$"
 )
-_CORPUS_HASH_FIELDS = frozenset(
-    {
-        "datasetmanifestsha256",
-        "dependencylocksha256",
-        "environmentsha256",
-        "evidenceselectorsha256",
-        "experimentconfigsha256",
-        "injectiontriggersha256",
-        "parityresultssha256",
-        "payloadssha256",
-        "recordsha256",
-        "recordssha256",
-        "runtimeconfigsha256",
-        "scenarioinputsha256",
-        "terminalpredicatesha256",
-        "tracesha256",
-        "tracessha256",
-    }
-)
 _CORPUS_TRACE_ID_PATHS = frozenset(
     {
         ("corpus_record", "trace", "trace_id"),
-        ("corpus_record", "trace", "spans", "trace_id"),
+        ("corpus_record", "trace", "spans", "*", "trace_id"),
         ("corpus_trace", "trace_id"),
-        ("corpus_trace", "spans", "trace_id"),
+        ("corpus_trace", "spans", "*", "trace_id"),
     }
 )
 _CORPUS_SPAN_ID_PATHS = frozenset(
     {
-        ("corpus_record", "trace", "spans", "span_id"),
-        ("corpus_record", "trace", "spans", "parent_span_id"),
-        ("corpus_trace", "spans", "span_id"),
-        ("corpus_trace", "spans", "parent_span_id"),
+        ("corpus_record", "trace", "spans", "*", "span_id"),
+        ("corpus_record", "trace", "spans", "*", "parent_span_id"),
+        ("corpus_trace", "spans", "*", "span_id"),
+        ("corpus_trace", "spans", "*", "parent_span_id"),
     }
 )
 _CORPUS_EXACT_SHA256_PATHS = frozenset(
     {
+        ("corpus_manifest", "metadata", "experiment_config_sha256"),
+        ("corpus_manifest", "metadata", "dependency_lock_sha256"),
+        ("corpus_manifest", "metadata", "dataset_manifest_sha256"),
+        ("corpus_manifest", "metadata", "parity_results_sha256"),
         ("corpus_manifest", "metadata", "phase5_plan", "ordered_cells_sha256"),
         ("corpus_manifest", "metadata", "phase5_plan", "plan_identity_sha256"),
-        ("corpus_manifest", "parity_entries", "result_sha256"),
+        (
+            "corpus_manifest",
+            "metadata",
+            "phase5_plan",
+            "experiment_config_sha256",
+        ),
+        (
+            "corpus_manifest",
+            "metadata",
+            "framework_provenance",
+            "<framework>",
+            "dependency_lock_sha256",
+        ),
+        (
+            "corpus_manifest",
+            "metadata",
+            "framework_provenance",
+            "<framework>",
+            "dataset_manifest_sha256",
+        ),
+        (
+            "corpus_manifest",
+            "metadata",
+            "framework_provenance",
+            "<framework>",
+            "environment_sha256",
+        ),
+        ("corpus_manifest", "entries", "*", "record_sha256"),
+        ("corpus_manifest", "entries", "*", "trace_sha256"),
+        ("corpus_manifest", "parity_entries", "*", "result_sha256"),
         ("corpus_manifest", "parity_payloads_sha256"),
-        ("corpus_parity_results", "mismatches", "reference_sha256"),
-        ("corpus_parity_results", "mismatches", "candidate_sha256"),
-        ("corpus_parity_results", "result", "mismatches", "reference_sha256"),
-        ("corpus_parity_results", "result", "mismatches", "candidate_sha256"),
+        ("corpus_manifest", "records_sha256"),
+        ("corpus_manifest", "traces_sha256"),
+        ("corpus_manifest", "payloads_sha256"),
+        ("corpus_parity_results", "*", "reference_record_sha256"),
+        ("corpus_parity_results", "*", "candidate_record_sha256"),
         (
             "corpus_parity_results",
+            "*",
+            "result",
+            "mismatches",
+            "*",
+            "reference_sha256",
+        ),
+        (
+            "corpus_parity_results",
+            "*",
+            "result",
+            "mismatches",
+            "*",
+            "candidate_sha256",
+        ),
+        (
+            "corpus_parity_results",
+            "*",
             "result",
             "framework_incompatibility",
             "error_sha256",
         ),
+        ("corpus_record", "trace_sha256"),
+        ("corpus_record", "scenario_input_sha256"),
+        ("corpus_record", "injection_trigger_sha256"),
+        ("corpus_record", "terminal_predicate_sha256"),
+        ("corpus_record", "evidence_selector_sha256"),
+        ("corpus_record", "runtime_config_sha256"),
         ("corpus_record", "failure", "error_sha256"),
+        ("corpus_record", "provenance", "dependency_lock_sha256"),
+        ("corpus_record", "provenance", "dataset_manifest_sha256"),
+        ("corpus_record", "provenance", "environment_sha256"),
+        (
+            "corpus_record",
+            "trace",
+            "spans",
+            "*",
+            "attributes",
+            "injection.trigger.sha256",
+        ),
+        (
+            "corpus_trace",
+            "spans",
+            "*",
+            "attributes",
+            "injection.trigger.sha256",
+        ),
+    }
+)
+_CORPUS_PAIR_IDENTITY_PATHS = frozenset(
+    {
+        ("corpus_manifest", "parity_entries", "*", "pair_identity"),
+        ("corpus_parity_results", "*", "pair_identity"),
+    }
+)
+_CORPUS_PAYLOAD_PATH_PATHS = frozenset(
+    {
+        ("corpus_manifest", "entries", "*", "record_path"),
+        ("corpus_manifest", "entries", "*", "trace_path"),
+        ("corpus_manifest", "parity_entries", "*", "result_path"),
+    }
+)
+_CORPUS_GIT_COMMIT_PATHS = frozenset(
+    {
+        ("corpus_manifest", "metadata", "git_commit"),
+        (
+            "corpus_manifest",
+            "metadata",
+            "framework_provenance",
+            "<framework>",
+            "git_commit",
+        ),
+        ("corpus_record", "provenance", "git_commit"),
     }
 )
 _CORPUS_SANITIZED_REFUND_PATHS = frozenset(
     {
-        ("corpus_record", "trace", "spans", "attributes", "tool.result"),
-        ("corpus_trace", "spans", "attributes", "tool.result"),
+        ("corpus_record", "trace", "spans", "*", "attributes", "tool.result"),
+        ("corpus_trace", "spans", "*", "attributes", "tool.result"),
     }
 )
+
+
+def _corpus_path_matches_any(
+    path: tuple[str, ...], patterns: frozenset[tuple[str, ...]]
+) -> bool:
+    """Match corpus paths with numeric-only list indices and typed map keys."""
+    for pattern in patterns:
+        if len(path) != len(pattern):
+            continue
+        if all(
+            expected == actual
+            or (expected == "*" and actual.isdigit())
+            or (
+                expected == "<framework>"
+                and actual in {"langgraph", "autogen"}
+            )
+            for actual, expected in zip(path, pattern, strict=True)
+        ):
+            return True
+    return False
 _EVALUATION_IDENTIFIER = re.compile(r"^(?:verifier|finding|gap)-[0-9a-f]{64}$")
 _EVALUATION_CANDIDATE = re.compile(r"^[a-z0-9_-]+(?:--[a-z0-9_-]+)?$")
 _SANITIZED_REFUND_VALUE = re.compile(
@@ -887,8 +989,15 @@ class ArtifactSecretClassifier:
                 self.require_safe(item, path=(*path, child_key))
             return
         if isinstance(value, (tuple, list)):
-            for item in value:
-                self.require_safe(item, path=path)
+            indexed = bool(path) and path[0] in {
+                "corpus_manifest",
+                "corpus_parity_results",
+                "corpus_record",
+                "corpus_trace",
+            }
+            for index, item in enumerate(value):
+                child_path = (*path, str(index)) if indexed else path
+                self.require_safe(item, path=child_path)
             return
         if isinstance(value, str) and self._is_sensitive_string(value, path=path):
             _unsafe_artifact_content()
@@ -958,9 +1067,23 @@ class ArtifactSecretClassifier:
             return True
         if self._is_cryptographic_bypass(value, path=path):
             return False
-        if path in _CORPUS_SANITIZED_REFUND_PATHS and _SANITIZED_REFUND_VALUE.fullmatch(
-            value
+        if path and path[0] in {
+            "corpus_manifest",
+            "corpus_parity_results",
+            "corpus_record",
+            "corpus_trace",
+        } and (
+            _SHA256.fullmatch(value)
+            or _OTEL_TRACE_ID.fullmatch(value)
+            or _OTEL_SPAN_ID.fullmatch(value)
+            or _CORPUS_PAIR_IDENTITY.fullmatch(value)
+            or _CORPUS_PAYLOAD_PATH.fullmatch(value)
+            or _GIT_COMMIT.fullmatch(value)
         ):
+            return True
+        if _corpus_path_matches_any(
+            path, _CORPUS_SANITIZED_REFUND_PATHS
+        ) and _SANITIZED_REFUND_VALUE.fullmatch(value):
             return False
         if path == (
             "metrics",
@@ -999,39 +1122,27 @@ class ArtifactSecretClassifier:
     def _is_cryptographic_bypass(value: str, *, path: tuple[str, ...]) -> bool:
         if not path:
             return False
-        if path in _CORPUS_TRACE_ID_PATHS and _OTEL_TRACE_ID.fullmatch(value):
+        if _corpus_path_matches_any(
+            path, _CORPUS_TRACE_ID_PATHS
+        ) and _OTEL_TRACE_ID.fullmatch(value):
             return True
-        if path in _CORPUS_SPAN_ID_PATHS and _OTEL_SPAN_ID.fullmatch(value):
+        if _corpus_path_matches_any(
+            path, _CORPUS_SPAN_ID_PATHS
+        ) and _OTEL_SPAN_ID.fullmatch(value):
             return True
-        if path in _CORPUS_EXACT_SHA256_PATHS and _SHA256.fullmatch(value):
+        if _corpus_path_matches_any(path, _CORPUS_EXACT_SHA256_PATHS) and _SHA256.fullmatch(value):
             return True
-        if (
-            path[0] in {"corpus_manifest", "corpus_parity_results"}
-            and path[-1] == "pair_identity"
-            and _CORPUS_PAIR_IDENTITY.fullmatch(value)
-        ):
+        if _corpus_path_matches_any(
+            path, _CORPUS_PAIR_IDENTITY_PATHS
+        ) and _CORPUS_PAIR_IDENTITY.fullmatch(value):
             return True
         field = path[-1]
         normalized = "".join(ArtifactSecretClassifier._key_tokens(field))
         if path in _HASH_PATHS and normalized in _HASH_FIELDS and _SHA256.fullmatch(value):
             return True
-        if (
-            path[0]
-            in {
-                "corpus_manifest",
-                "corpus_parity_results",
-                "corpus_record",
-                "corpus_trace",
-            }
-            and normalized in _CORPUS_HASH_FIELDS
-            and _SHA256.fullmatch(value)
-        ):
-            return True
-        if (
-            path[0] == "corpus_manifest"
-            and path[-1] in {"record_path", "result_path", "trace_path"}
-            and _CORPUS_PAYLOAD_PATH.fullmatch(value)
-        ):
+        if _corpus_path_matches_any(
+            path, _CORPUS_PAYLOAD_PATH_PATHS
+        ) and _CORPUS_PAYLOAD_PATH.fullmatch(value):
             return True
         if (
             path in {
@@ -1042,11 +1153,9 @@ class ArtifactSecretClassifier:
             and _GIT_COMMIT.fullmatch(value) is not None
         ):
             return True
-        if (
-            path[0] in {"corpus_manifest", "corpus_record"}
-            and normalized == "gitcommit"
-            and _GIT_COMMIT.fullmatch(value) is not None
-        ):
+        if _corpus_path_matches_any(
+            path, _CORPUS_GIT_COMMIT_PATHS
+        ) and _GIT_COMMIT.fullmatch(value) is not None:
             return True
         if path in _EVALUATION_ID_PATHS:
             return _EVALUATION_IDENTIFIER.fullmatch(value) is not None
