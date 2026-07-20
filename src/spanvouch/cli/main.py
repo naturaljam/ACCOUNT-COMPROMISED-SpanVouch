@@ -24,6 +24,10 @@ _HANDLER_IMPORTS = {
         "spanvouch.evaluation.evaluate_phase5_matrix",
         "main",
     ),
+    ("experiments", "analyze"): (
+        "spanvouch.evaluation.run_phase5_analysis",
+        "main",
+    ),
     ("review", ""): ("spanvouch.cli.review", "main"),
 }
 

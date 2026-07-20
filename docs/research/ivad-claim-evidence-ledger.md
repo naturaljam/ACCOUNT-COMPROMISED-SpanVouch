@@ -23,3 +23,13 @@ Phase 5 architecture and CI checks are offline engineering acceptance evidence
 only; they are not paper evidence. Formal DeepSeek/Qwen evidence: not collected.
 Cloud GPU: unapproved. Until a complete frozen formal matrix produces a verified
 analysis manifest and claim-gate JSON, the Phase 5 rows above remain unchanged.
+
+## Phase 5 claim-gate discipline
+
+The three Phase 5 rows above remain `planned; no Phase 5 evidence yet` until a
+verified Phase 5 analysis manifest (`spanvouch.phase5-analysis-manifest`) exists.
+At that point, and only at that point, each H1-H5 statement must copy its
+`supported`, `contradicted`, or `unresolved` outcome from `claim-gates.json` and
+cite the exact IDs and SHA-256 values for `metrics-by-condition.csv`, `paired-effects.csv`,
+`failure-accounting.csv`, and `risk-coverage.csv`. Engineering fixtures and fake
+provider bundles never advance a paper claim.

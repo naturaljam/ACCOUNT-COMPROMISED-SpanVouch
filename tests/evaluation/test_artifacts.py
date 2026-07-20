@@ -176,7 +176,7 @@ def test_bundle_writer_rejects_undeclared_external_input(
 def test_collect_git_provenance_records_non_secret_local_identity() -> None:
     provenance = collect_git_provenance(Path.cwd())
     assert len(provenance.git_commit) == 40
-    assert provenance.repository_identity == "local:phase4-integration"
+    assert provenance.repository_identity == f"local:{Path.cwd().name}"
 
 
 def test_bundle_writer_permits_provenance_hashes_but_rejects_raw_secrets(

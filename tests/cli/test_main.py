@@ -32,6 +32,11 @@ ROOT = Path(__file__).resolve().parents[2]
         (("labs", "labels", "--output-dir", "x"), "generate_labels", ("--output-dir", "x")),
         (("experiments", "run", "--help"), "experiments_run", ("--help",)),
         (("experiments", "evaluate", "--help"), "experiments_evaluate", ("--help",)),
+        (
+            ("experiments", "analyze", "--output-dir", "x"),
+            "analyze_experiment",
+            ("--output-dir", "x"),
+        ),
         (("review", "show", "--case-id", "c1"), "review", ("show", "--case-id", "c1")),
     ],
 )
