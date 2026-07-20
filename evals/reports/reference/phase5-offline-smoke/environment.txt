@@ -1,6 +1,6 @@
 architecture=portable
 dependency_lock_sha256=3e4fe9ed9a59e2448a95992366a5d427c563e94fdc8c315d967eab097b19d7fb
-git_commit=029b694168185cf9a6c92c0577ab3de9fbd72c8d
+git_commit=368a745ba10b04f46e8bdf67788eba2395a5b0d5
 implementation=offline-smoke
 os=portable
 package=spanvouch

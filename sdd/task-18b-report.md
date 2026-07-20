@@ -19,7 +19,7 @@
 ## Evidence identities
 
 - Reference bundle `manifest.json` file SHA-256:
-  `16d8518f8f6397033fa6240ff53dd7da34a77c9c7243a59dd98bae16b16c737d`
+  `7bfd56f2b190233d58db4e6f7651005e81e2c9fd7427d108d411cc48012811ae`
 - Reproducible wheel SHA-256:
   `8c08dc35560691166e179ba562898a457da9069d1457c713781c12942888987d`
 
@@ -30,9 +30,9 @@
 - The final integrated full suite reported 1,610 passing tests, 1 skipped test,
   and 93.58% coverage. This closes the earlier 92% historical gap.
 - The reference `manifest.json` file now has SHA-256
-  `16d8518f8f6397033fa6240ff53dd7da34a77c9c7243a59dd98bae16b16c737d`,
+  `7bfd56f2b190233d58db4e6f7651005e81e2c9fd7427d108d411cc48012811ae`,
   generated from clean code-under-test commit
-  `029b694168185cf9a6c92c0577ab3de9fbd72c8d`.
+  `368a745ba10b04f46e8bdf67788eba2395a5b0d5`.
 - DeepSeek paid pilot, Qwen/vLLM GPU checkpoint, and the formal paid matrix still
   require explicit spend approval. Offline acceptance made zero live provider and
   zero GPU calls.

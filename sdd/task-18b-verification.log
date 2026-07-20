@@ -39,8 +39,8 @@ PASS Docker
 INTEGRATION ADDENDUM
   Task17B paper asset emitter: integrated
   final integrated full suite: 1610 passed, 1 skipped; coverage=93.58%
-  committed reference manifest file sha256=16d8518f8f6397033fa6240ff53dd7da34a77c9c7243a59dd98bae16b16c737d
-  generating clean code-under-test commit=029b694168185cf9a6c92c0577ab3de9fbd72c8d
+  committed reference manifest file sha256=7bfd56f2b190233d58db4e6f7651005e81e2c9fd7427d108d411cc48012811ae
+  generating clean code-under-test commit=368a745ba10b04f46e8bdf67788eba2395a5b0d5
   offline E2E/reference, wheel, Docker, and CI gates: complete
   final full-suite rerun after the last architecture fix: complete
 
