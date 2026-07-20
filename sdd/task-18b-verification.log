@@ -38,10 +38,10 @@ PASS Docker
 
 INTEGRATION ADDENDUM
   Task17B paper asset emitter: integrated
-  full-suite baseline: 1591 passed, 1 skipped; coverage=93.58%
-  committed reference manifest file sha256=16ef8b19e705b214bb698514a82aaae1b02951c5837f87935410a8509ccdce8d
+  final integrated full suite: 1610 passed, 1 skipped; coverage=93.58%
+  committed reference manifest file sha256=7945b2183df777ee37a6c6ca722e6e999ba5ff65d455fe154db9dae9f35674df
   offline E2E/reference, wheel, Docker, and CI gates: complete
-  final full-suite rerun after the last architecture fix: pending release checkpoint
+  final full-suite rerun after the last architecture fix: complete
 
 PENDING EXTERNAL
   DeepSeek paid checkpoint: not run

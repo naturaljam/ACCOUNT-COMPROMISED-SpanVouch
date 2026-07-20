@@ -19,7 +19,7 @@
 ## Evidence identities
 
 - Reference bundle `manifest.json` file SHA-256:
-  `16ef8b19e705b214bb698514a82aaae1b02951c5837f87935410a8509ccdce8d`
+  `7945b2183df777ee37a6c6ca722e6e999ba5ff65d455fe154db9dae9f35674df`
 - Reproducible wheel SHA-256:
   `8c08dc35560691166e179ba562898a457da9069d1457c713781c12942888987d`
 
@@ -27,11 +27,10 @@
 
 - Task 17B paper asset generation is integrated. The offline E2E uses the approved
   asset-emitter boundary and the committed bundle reproduces byte-for-byte.
-- The last integrated full-suite baseline reported 1,591 passing tests, 1 skipped
-  test, and 93.58% coverage. This closes the earlier 92% historical gap. Rerun the
-  full suite after the final architecture fix before release.
+- The final integrated full suite reported 1,610 passing tests, 1 skipped test,
+  and 93.58% coverage. This closes the earlier 92% historical gap.
 - The reference `manifest.json` file now has SHA-256
-  `16ef8b19e705b214bb698514a82aaae1b02951c5837f87935410a8509ccdce8d`.
+  `7945b2183df777ee37a6c6ca722e6e999ba5ff65d455fe154db9dae9f35674df`.
 - DeepSeek paid pilot, Qwen/vLLM GPU checkpoint, and the formal paid matrix still
   require explicit spend approval. Offline acceptance made zero live provider and
   zero GPU calls.

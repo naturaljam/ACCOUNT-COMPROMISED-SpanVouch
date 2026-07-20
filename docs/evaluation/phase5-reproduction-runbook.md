@@ -83,7 +83,7 @@ uv run --no-sync python -m spanvouch.evaluation.offline_acceptance `
 Compare `config.json`, `metrics.json`, `structured-events.jsonl`, `README.md`, and
 their manifest payload digests byte-for-byte. The committed `manifest.json` file
 has SHA-256
-`16ef8b19e705b214bb698514a82aaae1b02951c5837f87935410a8509ccdce8d`.
+`7945b2183df777ee37a6c6ca722e6e999ba5ff65d455fe154db9dae9f35674df`.
 
 ## 5. Verify the delivery gates
 
@@ -101,10 +101,9 @@ docker compose restart api
 docker compose down --volumes --remove-orphans
 ```
 
-The last integrated baseline reported 1,591 passing tests, 1 skipped test, and
+The final integrated baseline reported 1,610 passing tests, 1 skipped test, and
 93.58% coverage. The repeated wheel, non-root container, health, writable
-persistence, restart, teardown, and no-residue checks passed. Rerun all commands
-after the final architecture fix before creating a release tag.
+persistence, restart, teardown, and no-residue checks passed.
 
 ## 6. Interpret the result
 
