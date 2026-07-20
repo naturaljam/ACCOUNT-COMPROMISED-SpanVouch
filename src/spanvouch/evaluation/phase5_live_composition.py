@@ -34,6 +34,7 @@ from spanvouch.evaluation.experiments.conditions import (
 from spanvouch.evaluation.experiments.config import (
     ConditionId,
     EndpointDeploymentProvenance,
+    ExperimentMode,
     Phase5ExperimentConfig,
 )
 from spanvouch.evaluation.experiments.diagnosis import (
@@ -55,6 +56,35 @@ from spanvouch.verification.invariant_engine import InvariantEngine
 
 _VERIFIER_INSTRUCTION = "Critique evidence sufficiency only."
 _POLICY_VERSION = "phase5-deterministic-v1"
+
+
+def _require_live_composition_authorization(
+    config: Phase5ExperimentConfig,
+    authorization: PaidRunAuthorization,
+    matrix_manifest_sha256: str,
+) -> tuple[Phase5ExperimentConfig, PaidRunAuthorization]:
+    """Reconstruct and bind authorization before any live infrastructure access."""
+    try:
+        validated_config = Phase5ExperimentConfig.model_validate(
+            config.model_dump(mode="python")
+        )
+        validated_authorization = PaidRunAuthorization.model_validate(
+            authorization.model_dump(mode="python")
+        )
+    except ValueError:
+        raise ProviderConfigurationError(
+            "live composition authorization is invalid"
+        ) from None
+    expected_formal_run = validated_config.mode is ExperimentMode.FORMAL
+    if (
+        not validated_authorization.allow_live_provider
+        or validated_authorization.experiment_id != validated_config.experiment_id
+        or validated_authorization.formal_run != expected_formal_run
+        or validated_authorization.frozen_manifest_sha256 is None
+        or validated_authorization.frozen_manifest_sha256 != matrix_manifest_sha256
+    ):
+        raise ProviderConfigurationError("live composition authorization is invalid")
+    return validated_config, validated_authorization
 
 
 def _required_environment(environ: Mapping[str, str], name: str) -> str:
@@ -335,6 +365,9 @@ def compose_live_executor(
     qwen_client: httpx.AsyncClient | None = None,
 ) -> _LiveConditionExecutor:
     """Build the only live provider executor from validated experiment parents."""
+    config, authorization = _require_live_composition_authorization(
+        config, authorization, matrix_manifest_sha256
+    )
     providers = _compose_live_providers(
         config,
         environ=os.environ if environ is None else environ,

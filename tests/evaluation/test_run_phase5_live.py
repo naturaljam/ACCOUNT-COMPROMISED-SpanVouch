@@ -17,7 +17,10 @@ from spanvouch.evaluation.experiments.config import (
     freeze_formal_config,
     load_experiment_config,
 )
-from spanvouch.evaluation.experiments.provider import ProviderConfigurationError
+from spanvouch.evaluation.experiments.provider import (
+    PaidRunAuthorization,
+    ProviderConfigurationError,
+)
 from spanvouch.evaluation.experiments.runner import OutcomeStatus, ProviderPhaseRepository
 from tests.evaluation.experiments.test_planner import _candidate_pair
 
@@ -325,3 +328,51 @@ def test_pilot_live_cli_defers_to_manifest_approval_before_provider_env(
                 "--allow-live-provider",
             ]
         )
+
+
+@pytest.mark.parametrize(
+    "authorization_change",
+    [
+        {"allow_live_provider": False},
+        {"experiment_id": "phase5-wrong-experiment"},
+        {"formal_run": True},
+        {"frozen_manifest_sha256": None},
+        {"frozen_manifest_sha256": "b" * 64},
+        {"frozen_manifest_sha256": "raw-sensitive-input"},
+    ],
+)
+def test_direct_composition_rejects_unbound_authorization_before_composition(
+    authorization_change: dict[str, object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = load_experiment_config(Path("evals/configs/phase5-pilot.json"))
+    matrix_manifest_sha256 = "a" * 64
+    authorization = PaidRunAuthorization(
+        experiment_id=config.experiment_id,
+        allow_live_provider=True,
+        formal_run=False,
+        frozen_manifest_sha256=matrix_manifest_sha256,
+    ).model_copy(update=authorization_change)
+    composition_calls = 0
+
+    def reject_composition(*args: object, **kwargs: object) -> object:
+        nonlocal composition_calls
+        composition_calls += 1
+        raise AssertionError("provider composition occurred before authorization binding")
+
+    monkeypatch.setattr(
+        phase5_live_composition, "_compose_live_providers", reject_composition
+    )
+
+    with pytest.raises(ProviderConfigurationError, match="authorization") as raised:
+        phase5_live_composition.compose_live_executor(
+            candidates=(),
+            config=config,
+            authorization=authorization,
+            matrix_manifest_sha256=matrix_manifest_sha256,
+            environ={},
+        )
+
+    assert composition_calls == 0
+    assert raised.value.__cause__ is None
+    assert config.experiment_id not in str(raised.value)
+    assert matrix_manifest_sha256 not in str(raised.value)
