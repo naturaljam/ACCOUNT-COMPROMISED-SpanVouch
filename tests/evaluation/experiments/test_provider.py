@@ -83,6 +83,8 @@ def pricing() -> Pricing:
 def base_identity() -> RequestIdentity:
     return RequestIdentity.from_request(
         experiment_id="phase5-pilot",
+        experiment_config_sha256="e" * 64,
+        deployment_provenance_sha256="f" * 64,
         trace_sha256="a" * 64,
         diagnosis_sha256="b" * 64,
         condition_id="b2_deepseek_shared",
@@ -99,6 +101,8 @@ def test_request_identity_changes_for_every_causal_input() -> None:
     base = base_identity()
     fields = (
         "experiment_id",
+        "experiment_config_sha256",
+        "deployment_provenance_sha256",
         "trace_sha256",
         "diagnosis_sha256",
         "condition_id",

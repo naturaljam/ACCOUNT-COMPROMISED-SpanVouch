@@ -76,6 +76,37 @@ def test_checked_in_pilot_configuration_is_complete() -> None:
     assert config.budget.monthly_cap_cny == Decimal("1000")
     assert config.budget.pilot_fraction == Decimal("0.10")
     assert config.budget.stop_fraction == Decimal("0.80")
+    assert config.live_provenance.deepseek.provider == "deepseek"
+    assert config.live_provenance.qwen.container_repo_digest.startswith(
+        "vllm/vllm-openai@sha256:"
+    )
+
+
+def test_pilot_and_formal_configs_reject_missing_live_provenance() -> None:
+    payload = load_experiment_config(
+        Path("evals/configs/phase5-pilot.json")
+    ).model_dump(mode="json")
+    payload.pop("live_provenance")
+    with pytest.raises(ValueError, match="live_provenance"):
+        Phase5ExperimentConfig.model_validate(payload)
+
+
+def test_qwen_live_provenance_rejects_any_missing_immutable_pin() -> None:
+    payload = load_experiment_config(
+        Path("evals/configs/phase5-pilot.json")
+    ).model_dump(mode="json")
+    qwen = payload["live_provenance"]["qwen"]
+    for field in (
+        "container_repo_digest",
+        "hf_revision",
+        "chat_template_sha256",
+        "dtype",
+        "max_model_len",
+    ):
+        changed = {**payload, "live_provenance": {**payload["live_provenance"]}}
+        changed["live_provenance"]["qwen"] = {**qwen, field: None}
+        with pytest.raises(ValueError, match=field):
+            Phase5ExperimentConfig.model_validate(changed)
 
 
 def test_formal_config_rejects_unfrozen_primary_fields() -> None:

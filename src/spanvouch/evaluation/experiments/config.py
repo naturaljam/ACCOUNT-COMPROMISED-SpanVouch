@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Mapping
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
@@ -161,6 +161,78 @@ class BudgetPolicy(BaseModel):
     stop_fraction: Decimal = Field(gt=0, le=Decimal("0.80"))
 
 
+class PricingFileProvenance(BaseModel):
+    """Immutable, credential-free identity of one canonical pricing file."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    canonical_sha256: str = Field(pattern=SHA256_PATTERN)
+    source_url: str = Field(min_length=1)
+    effective_date: date
+    currency: Literal["CNY"]
+
+
+class EndpointDeploymentProvenance(BaseModel):
+    """Sanitized endpoint, deployment and pricing identity frozen before a run."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    provider: Literal["deepseek", "qwen"]
+    model: str = Field(min_length=1)
+    endpoint_class: str = Field(min_length=1)
+    base_url_sha256: str = Field(pattern=SHA256_PATTERN)
+    pricing: PricingFileProvenance
+    container_repo_digest: str | None = None
+    hf_revision: str | None = None
+    chat_template_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
+    dtype: str | None = Field(default=None, min_length=1)
+    max_model_len: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def require_provider_specific_pins(self) -> Self:
+        """Require the full self-hosted serving identity for Qwen experiments."""
+        if self.provider == "qwen":
+            required = {
+                "container_repo_digest": self.container_repo_digest,
+                "hf_revision": self.hf_revision,
+                "chat_template_sha256": self.chat_template_sha256,
+                "dtype": self.dtype,
+                "max_model_len": self.max_model_len,
+            }
+            missing = next((name for name, value in required.items() if value is None), None)
+            if missing is not None:
+                raise ValueError(f"qwen live provenance requires {missing}")
+            container_repo_digest = self.container_repo_digest
+            hf_revision = self.hf_revision
+            assert container_repo_digest is not None and hf_revision is not None
+            if not container_repo_digest.startswith("vllm/vllm-openai@sha256:") or (
+                len(container_repo_digest) != len("vllm/vllm-openai@sha256:") + 64
+            ):
+                raise ValueError("container_repo_digest must be a full vLLM RepoDigest")
+            if len(hf_revision) != 40:
+                raise ValueError("hf_revision must be an exact 40-character revision")
+        return self
+
+    @property
+    def sha256(self) -> str:
+        return canonical_sha256(self)
+
+
+class LiveDeploymentProvenance(BaseModel):
+    """The complete approved live provider identity for Phase 5."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    deepseek: EndpointDeploymentProvenance
+    qwen: EndpointDeploymentProvenance
+
+    @model_validator(mode="after")
+    def validate_roles(self) -> Self:
+        if self.deepseek.provider != "deepseek" or self.qwen.provider != "qwen":
+            raise ValueError("live provenance provider roles are invalid")
+        return self
+
+
 class Phase5ExperimentConfig(BaseModel):
     """A validated, immutable Phase 5 experiment configuration."""
 
@@ -177,6 +249,7 @@ class Phase5ExperimentConfig(BaseModel):
     isolated_verifier: ModelEndpointConfig
     cross_model_verifier: ModelEndpointConfig
     budget: BudgetPolicy
+    live_provenance: LiveDeploymentProvenance
     coverage_loss_tolerance: float | None = Field(default=None, ge=0.0, le=0.10)
     frozen_at_utc: datetime | None = None
     config_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
@@ -188,6 +261,19 @@ class Phase5ExperimentConfig(BaseModel):
             raise ValueError("configuration must contain all six conditions exactly once")
         if len(self.frameworks) != 2 or set(self.frameworks) != {"langgraph", "autogen"}:
             raise ValueError("configuration must contain both frameworks exactly once")
+        endpoint_pairs = (
+            (self.generator, self.live_provenance.deepseek),
+            (self.shared_verifier, self.live_provenance.deepseek),
+            (self.isolated_verifier, self.live_provenance.deepseek),
+            (self.cross_model_verifier, self.live_provenance.qwen),
+        )
+        for endpoint, provenance in endpoint_pairs:
+            if (endpoint.provider, endpoint.model, endpoint.endpoint_class) != (
+                provenance.provider,
+                provenance.model,
+                provenance.endpoint_class,
+            ):
+                raise ValueError("live provenance does not match configured endpoint")
 
         if self.mode is ExperimentMode.PILOT:
             if self.repetitions != 3:

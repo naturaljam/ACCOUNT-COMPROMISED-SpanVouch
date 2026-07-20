@@ -164,6 +164,8 @@ class _GuardedFake:
             raise self.error
         rebuilt = RequestIdentity.from_request(
             experiment_id=self.identity.experiment_id,
+            experiment_config_sha256=self.identity.experiment_config_sha256,
+            deployment_provenance_sha256=self.identity.deployment_provenance_sha256,
             trace_sha256=self.identity.trace_sha256,
             diagnosis_sha256=self.identity.diagnosis_sha256,
             condition_id=self.identity.condition_id,
@@ -235,6 +237,8 @@ def _semantic_provider(
     )
     identity = RequestIdentity.from_request(
         experiment_id=plan.experiment_id,
+        experiment_config_sha256=plan.experiment_config_sha256,
+        deployment_provenance_sha256="f" * 64,
         trace_sha256=plan.trace_sha256,
         diagnosis_sha256=plan.diagnosis_sha256,
         condition_id=plan.condition_id.value,

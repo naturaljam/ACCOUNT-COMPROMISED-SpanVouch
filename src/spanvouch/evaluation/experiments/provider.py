@@ -71,6 +71,8 @@ class RequestIdentity(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     experiment_id: str = Field(min_length=1)
+    experiment_config_sha256: str = Field(pattern=SHA256_PATTERN)
+    deployment_provenance_sha256: str = Field(pattern=SHA256_PATTERN)
     trace_sha256: str = Field(pattern=SHA256_PATTERN)
     diagnosis_sha256: str = Field(pattern=SHA256_PATTERN)
     condition_id: str = Field(min_length=1)
@@ -90,6 +92,8 @@ class RequestIdentity(BaseModel):
         cls,
         *,
         experiment_id: str,
+        experiment_config_sha256: str,
+        deployment_provenance_sha256: str,
         trace_sha256: str,
         diagnosis_sha256: str,
         condition_id: str,
@@ -115,6 +119,8 @@ class RequestIdentity(BaseModel):
         )
         return cls(
             experiment_id=experiment_id,
+            experiment_config_sha256=experiment_config_sha256,
+            deployment_provenance_sha256=deployment_provenance_sha256,
             trace_sha256=trace_sha256,
             diagnosis_sha256=diagnosis_sha256,
             condition_id=condition_id,
@@ -392,6 +398,8 @@ class GuardedProvider:
     ) -> None:
         rebuilt = RequestIdentity.from_request(
             experiment_id=self.identity.experiment_id,
+            experiment_config_sha256=self.identity.experiment_config_sha256,
+            deployment_provenance_sha256=self.identity.deployment_provenance_sha256,
             trace_sha256=self.identity.trace_sha256,
             diagnosis_sha256=self.identity.diagnosis_sha256,
             condition_id=self.identity.condition_id,

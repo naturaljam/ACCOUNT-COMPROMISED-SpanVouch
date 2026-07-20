@@ -179,6 +179,11 @@ class _LiveConditionExecutor:
         )
         identity = RequestIdentity.from_request(
             experiment_id=plan.experiment_id,
+            experiment_config_sha256=plan.experiment_config_sha256,
+            deployment_provenance_sha256={
+                "deepseek": self._config.live_provenance.deepseek.sha256,
+                "qwen": self._config.live_provenance.qwen.sha256,
+            }[plan.provider],
             trace_sha256=plan.trace_sha256,
             diagnosis_sha256=plan.diagnosis_sha256,
             condition_id=plan.condition_id.value,

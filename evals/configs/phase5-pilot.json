@@ -56,5 +56,36 @@
     "monthly_cap_cny": "1000",
     "pilot_fraction": "0.10",
     "stop_fraction": "0.80"
+  },
+  "live_provenance": {
+    "deepseek": {
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "endpoint_class": "chat-completions",
+      "base_url_sha256": "a34e2a4708ed1c61008a151688838dcf1c44d4e7f08054633e72ba7c0b16cfc1",
+      "pricing": {
+        "canonical_sha256": "3e8fcf52ed24ef0c21b2d3f99be333d5e737036b7999e33bce0d5172e7b0149d",
+        "source_url": "https://pricing.example.invalid/source",
+        "effective_date": "2026-07-20",
+        "currency": "CNY"
+      }
+    },
+    "qwen": {
+      "provider": "qwen",
+      "model": "Qwen/Qwen3-14B",
+      "endpoint_class": "chat-completions",
+      "base_url_sha256": "2131c8ae0a1637006924ec5766c3487ee9cf0b0485d0eb5e6246eac3a348b84d",
+      "pricing": {
+        "canonical_sha256": "c7467fe613957326feb1df240831a4e7abec8066ea468e2d8ef6b579937a31ee",
+        "source_url": "https://pricing.example.invalid/source",
+        "effective_date": "2026-07-20",
+        "currency": "CNY"
+      },
+      "container_repo_digest": "vllm/vllm-openai@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "hf_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "chat_template_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "dtype": "bfloat16",
+      "max_model_len": 32768
+    }
   }
 }
