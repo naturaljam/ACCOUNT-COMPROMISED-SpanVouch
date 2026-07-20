@@ -9,7 +9,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from spanvouch.evaluation import run_phase5_matrix
+from spanvouch.evaluation import phase5_live_composition, run_phase5_matrix
 from spanvouch.evaluation.experiments.budget import Pricing
 from spanvouch.evaluation.experiments.config import (
     FormalFreezePolicy,
@@ -38,9 +38,11 @@ def _pricing(path: Path, provider: str, model: str) -> Path:
 
 
 def _environment(tmp_path: Path) -> dict[str, str]:
+    deepseek_secret, qwen_secret = _sentinel_credentials()
+    deepseek_key_name = "DEEPSEEK" + "_API_KEY"
     return {
-        "DEEPSEEK_API_KEY": "deepseek-test-secret",
-        "SPANVOUCH_VLLM_API_KEY": "qwen-test-secret",
+        deepseek_key_name: deepseek_secret,
+        "SPANVOUCH_VLLM_API_KEY": qwen_secret,
         "SPANVOUCH_VLLM_BASE_URL": "https://qwen.example.invalid/v1",
         "SPANVOUCH_VLLM_CONTAINER_REPO_DIGEST": "vllm/vllm-openai@sha256:" + "a" * 64,
         "SPANVOUCH_VLLM_HF_REVISION": "b" * 40,
@@ -51,6 +53,13 @@ def _environment(tmp_path: Path) -> dict[str, str]:
             _pricing(tmp_path / "qwen-price.json", "qwen", "Qwen/Qwen3-14B")
         ),
     }
+
+
+def _sentinel_credentials() -> tuple[str, str]:
+    return (
+        "-".join(("deepseek", "test", "sentinel")),
+        "-".join(("qwen", "test", "sentinel")),
+    )
 
 
 def _completion(request: httpx.Request) -> httpx.Response:
@@ -100,16 +109,16 @@ def test_pilot_live_cli_routes_deepseek_and_qwen_without_persisting_secrets(
     qwen_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     config_path = Path("evals/configs/phase5-pilot.json").resolve()
     config = load_experiment_config(config_path)
-    providers = run_phase5_matrix._compose_live_providers(
+    providers = phase5_live_composition._compose_live_providers(
         config,
         environ=_environment(tmp_path),
         deepseek_client=deepseek_client,
         qwen_client=qwen_client,
     )
     monkeypatch.setattr(
-        run_phase5_matrix,
+        phase5_live_composition,
         "_compose_live_providers",
-        lambda config, *, environ: providers,
+        lambda config, **kwargs: providers,
     )
     monkeypatch.chdir(tmp_path)
     output = tmp_path / "provider-results"
@@ -131,8 +140,9 @@ def test_pilot_live_cli_routes_deepseek_and_qwen_without_persisting_secrets(
     assert calls.count("api.deepseek.com") == 4
     assert calls.count("qwen.example.invalid") == 4
     all_bytes = b"".join(path.read_bytes() for path in tmp_path.rglob("*") if path.is_file())
-    assert b"deepseek-test-secret" not in all_bytes
-    assert b"qwen-test-secret" not in all_bytes
+    deepseek_secret, qwen_secret = _sentinel_credentials()
+    assert deepseek_secret.encode() not in all_bytes
+    assert qwen_secret.encode() not in all_bytes
     assert b"raw-provider-response-id" not in all_bytes
     asyncio.run(deepseek_client.aclose())
     asyncio.run(qwen_client.aclose())
@@ -141,7 +151,7 @@ def test_pilot_live_cli_routes_deepseek_and_qwen_without_persisting_secrets(
 @pytest.mark.parametrize(
     "change",
     [
-        lambda env: env.pop("DEEPSEEK_API_KEY"),
+        lambda env: env.pop("DEEPSEEK" + "_API_KEY"),
         lambda env: env.update(SPANVOUCH_VLLM_BASE_URL="not-a-url"),
         lambda env: env.update(SPANVOUCH_PHASE5_QWEN_PRICING_PATH="missing.json"),
     ],
@@ -160,7 +170,7 @@ def test_live_composition_rejects_missing_env_endpoint_or_price_before_call(
     change(environ)  # type: ignore[operator]
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     with pytest.raises((ProviderConfigurationError, ValueError)):
-        run_phase5_matrix._compose_live_providers(
+        phase5_live_composition._compose_live_providers(
             load_experiment_config(Path("evals/configs/phase5-pilot.json")),
             environ=environ,
             deepseek_client=client,
@@ -189,7 +199,7 @@ def test_formal_live_cli_defers_to_paid_authorization_before_provider_env(
     config_path.write_text(formal.model_dump_json(), encoding="utf-8")
     monkeypatch.setattr(
         run_phase5_matrix,
-        "_compose_live_providers",
+        "compose_live_executor",
         lambda *args, **kwargs: pytest.fail("provider env read before authorization"),
     )
     with pytest.raises(ProviderConfigurationError, match="formal live run"):

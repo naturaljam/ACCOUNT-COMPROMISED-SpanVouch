@@ -18,6 +18,7 @@ FORBIDDEN_PROVIDER_PREFIXES = (
 )
 ALLOWED_ADAPTER_IMPORTERS = {
     "api/composition.py",
+    "evaluation/phase5_live_composition.py",
     "evaluation/run_diagnosis_eval.py",
     "evaluation/run_review_eval.py",
 }
