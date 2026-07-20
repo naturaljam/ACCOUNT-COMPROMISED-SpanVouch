@@ -1,0 +1,22 @@
+{
+  "description": "Hand-computed effects for deterministic Phase 5 statistics tests.",
+  "holm_raw": {
+    "a": 0.01,
+    "b": 0.04,
+    "c": 0.03,
+    "d": 0.20
+  },
+  "mcnemar": {
+    "candidate_only": 5,
+    "reference_only": 1,
+    "two_sided_exact_p": 0.21875
+  },
+  "zero_effect": 0.0,
+  "beneficial_b3_risk_effect": -1.0,
+  "cluster_repetitions": {
+    "template_a": 1,
+    "template_b": 3,
+    "whole_cluster_effects": [0.0, 0.75, 1.0],
+    "row_level_false_precision_effects": [0.25, 0.5]
+  }
+}
