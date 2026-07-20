@@ -190,6 +190,45 @@ def test_operational_failure_cannot_explain_apparent_risk_gain() -> None:
     assert result.claim_gate_passed is False
 
 
+def test_equal_failure_counts_on_different_cells_fail_claim_gate() -> None:
+    rows = (
+        row("a-ref", "a", "reference", accepted=True, correct=False),
+        row(
+            "a-cand",
+            "a",
+            "candidate",
+            accepted=False,
+            correct=None,
+            completion=False,
+            failure="provider_failure",
+        ),
+        row(
+            "b-ref",
+            "b",
+            "reference",
+            accepted=False,
+            correct=None,
+            completion=False,
+            failure="provider_failure",
+        ),
+        row("b-cand", "b", "candidate", accepted=True, correct=True),
+    )
+
+    result = paired_cluster_bootstrap(
+        rows,
+        comparison_id="informative-missingness",
+        reference_condition="reference",
+        candidate_condition="candidate",
+        metric="risk",
+        draws=100,
+        seed=23,
+        undefined_tolerance=1.0,
+    )
+
+    assert result.operational_failure_explains_gain is True
+    assert result.claim_gate_passed is False
+
+
 def test_completion_effect_is_autogen_minus_langgraph() -> None:
     rows = (
         row("a-ref", "a", "reference", accepted=False, correct=None, completion=False),

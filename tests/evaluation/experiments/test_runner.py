@@ -249,6 +249,67 @@ async def test_budget_admission_pauses_whole_framework_pair_before_calls(
 
 
 @pytest.mark.asyncio
+async def test_paused_manifest_resumes_without_rebilling_completed_plans(
+    tmp_path: Path,
+) -> None:
+    plans, matrix = _plans_and_matrix()
+    repository = ProviderPhaseRepository(tmp_path / "provider-results")
+    first_executor = FakeExecutor()
+    first = await ExperimentRunner(
+        executor=first_executor,
+        admission=Admission(ConditionId.B3),
+    ).run_provider_phase(plans=plans, matrix=matrix, repository=repository)
+    first_manifest_sha256 = repository.manifest_sha256
+    retained = {
+        entry.plan_id: entry.outcome_sha256
+        for entry in first.entries
+        if entry.status is not OutcomeStatus.PAUSED
+    }
+
+    resumed_executor = FakeExecutor()
+    resumed = await ExperimentRunner(executor=resumed_executor).run_provider_phase(
+        plans=plans,
+        matrix=matrix,
+        repository=repository,
+    )
+
+    assert resumed.provider_phase_complete is True
+    assert resumed.supersedes_manifest_sha256 == first_manifest_sha256
+    assert {plan.condition_id for plan in resumed_executor.calls} == {ConditionId.B3}
+    assert {
+        entry.plan_id: entry.outcome_sha256
+        for entry in resumed.entries
+        if entry.plan_id in retained
+    } == retained
+    assert repository.verify_superseded_manifest(first_manifest_sha256) == first
+    for entry in first.entries:
+        if entry.status is OutcomeStatus.PAUSED:
+            outcome = repository.load(entry.plan_id)
+            assert outcome.supersedes_outcome_sha256 == entry.outcome_sha256
+            archived = repository.load_superseded(entry.outcome_sha256)
+            assert archived.status is OutcomeStatus.PAUSED
+            assert archived.plan.plan_id == entry.plan_id
+    never_paused = next(
+        entry for entry in first.entries if entry.status is OutcomeStatus.COMPLETED
+    )
+    assert repository.latest_superseded(never_paused.plan_id) is None
+
+    paused_entry = next(
+        entry for entry in first.entries if entry.status is OutcomeStatus.PAUSED
+    )
+    archived_path = (
+        repository.root
+        / "history"
+        / "r"
+        / paused_entry.outcome_sha256[:12]
+        / f"{paused_entry.outcome_sha256}.json"
+    )
+    archived_path.write_bytes(b"{}")
+    with pytest.raises(ValueError, match="superseded provider outcome"):
+        repository.verify(expected_manifest_sha256=repository.manifest_sha256)
+
+
+@pytest.mark.asyncio
 async def test_executor_pause_stops_remaining_paid_pair_before_second_call(
     tmp_path: Path,
 ) -> None:

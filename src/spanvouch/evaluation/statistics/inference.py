@@ -220,17 +220,19 @@ def _operational_failure_explains_gain(
 ) -> bool:
     if metric != "risk" or estimate is None or estimate >= 0:
         return False
-    reference_failures = sum(
-        row.condition_id == reference_condition
-        and row.operational_failure in _POST_CANDIDATE_FAILURES
+    reference_failures = {
+        _cell_id(row): row.operational_failure
         for row in rows
-    )
-    candidate_failures = sum(
-        row.condition_id == candidate_condition
+        if row.condition_id == reference_condition
         and row.operational_failure in _POST_CANDIDATE_FAILURES
+    }
+    candidate_failures = {
+        _cell_id(row): row.operational_failure
         for row in rows
-    )
-    return candidate_failures > reference_failures
+        if row.condition_id == candidate_condition
+        and row.operational_failure in _POST_CANDIDATE_FAILURES
+    }
+    return candidate_failures != reference_failures
 
 
 def paired_cluster_bootstrap(

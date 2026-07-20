@@ -24,7 +24,7 @@ def observation(identifier: str, **updates: object) -> ConditionObservation:
         "input_tokens": 0,
         "output_tokens": 0,
         "cost_cny": Decimal("0"),
-        "latency_ms": 0.0,
+        "latency_ms": None,
     }
     payload.update(updates)
     return ConditionObservation.model_validate(payload)
@@ -134,3 +134,23 @@ def test_observation_rejects_impossible_acceptance_and_pre_candidate_state() -> 
             candidate_exists=True,
             operational_failure="framework_incompatibility",
         )
+
+
+def test_risk_coverage_curve_rejects_mixed_conditions() -> None:
+    rows = (
+        observation("b2", condition_id="b2"),
+        observation("b3", condition_id="b3"),
+    )
+
+    with pytest.raises(ValueError, match="exactly one condition"):
+        risk_coverage_curve(rows, continuous=True)
+
+
+def test_mean_latency_includes_valid_zero_latency_rows() -> None:
+    rows = (
+        observation("not-measured"),
+        observation("cache-hit", latency_ms=0.0),
+        observation("provider-call", latency_ms=10.0),
+    )
+
+    assert compute_condition_metrics(rows).mean_latency_ms == 5.0

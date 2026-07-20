@@ -106,6 +106,7 @@ class ProviderPlanOutcome(BaseModel):
     status: OutcomeStatus
     result: ConditionResult | None = None
     terminal_code: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_-]*$")
+    supersedes_outcome_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
 
     @model_validator(mode="after")
     def validate_outcome(self) -> Self:
@@ -163,6 +164,9 @@ class ProviderPhaseManifest(BaseModel):
     total_output_tokens: int = Field(ge=0)
     total_cost_cny: Decimal = Field(ge=0)
     provider_phase_complete: bool
+    supersedes_manifest_sha256: str | None = Field(
+        default=None, pattern=SHA256_PATTERN
+    )
 
     @model_validator(mode="after")
     def validate_accounting(self) -> Self:
@@ -208,6 +212,85 @@ class ProviderPhaseRepository:
 
     def exists(self, plan_id: str) -> bool:
         return os.path.lexists(self._plan_root(plan_id))
+
+    def reopen_incomplete_manifest(self, expected_manifest_sha256: str) -> ProviderPhaseManifest:
+        manifest = self.verify(expected_manifest_sha256=expected_manifest_sha256)
+        if manifest.provider_phase_complete:
+            raise ValueError("complete provider manifest cannot be reopened")
+        source = self.root / "manifest"
+        destination = self.root / "history" / "m" / expected_manifest_sha256[:12]
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        publish_directory_no_replace(source, destination)
+        return manifest
+
+    def supersede_paused(self, plan_id: str) -> str:
+        outcome = self.load(plan_id)
+        if outcome.status is not OutcomeStatus.PAUSED:
+            raise ValueError("only paused provider outcomes can be superseded")
+        digest = sha256(_model_bytes(outcome)).hexdigest()
+        source = self._plan_root(plan_id)
+        destination = self.root / "history" / "r" / digest[:12]
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        publish_directory_no_replace(source, destination)
+        return digest
+
+    def verify_superseded_manifest(
+        self, manifest_sha256: str
+    ) -> ProviderPhaseManifest:
+        if re.fullmatch(SHA256_PATTERN, manifest_sha256) is None:
+            raise ValueError("superseded manifest hash must be SHA-256")
+        root = self.root / "history" / "m" / manifest_sha256[:12]
+        snapshot = read_verified_directory_tree(root)
+        content = snapshot.files.get(f"{manifest_sha256}.json")
+        if snapshot.directories or len(snapshot.files) != 1 or content is None:
+            raise ValueError("superseded provider manifest has invalid layout")
+        if sha256(content).hexdigest() != manifest_sha256:
+            raise ValueError("superseded provider manifest hash mismatch")
+        manifest = ProviderPhaseManifest.model_validate_json(content)
+        if _model_bytes(manifest) != content or manifest.provider_phase_complete:
+            raise ValueError("superseded provider manifest is invalid")
+        return manifest
+
+    def load_superseded(self, outcome_sha256: str) -> ProviderPlanOutcome:
+        if re.fullmatch(SHA256_PATTERN, outcome_sha256) is None:
+            raise ValueError("superseded outcome hash must be SHA-256")
+        root = self.root / "history" / "r" / outcome_sha256[:12]
+        snapshot = read_verified_directory_tree(root)
+        content = snapshot.files.get(f"{outcome_sha256}.json")
+        if snapshot.directories or len(snapshot.files) != 1 or content is None:
+            raise ValueError("superseded provider outcome has invalid layout")
+        if sha256(content).hexdigest() != outcome_sha256:
+            raise ValueError("superseded provider outcome hash mismatch")
+        outcome = ProviderPlanOutcome.model_validate_json(content)
+        if _model_bytes(outcome) != content or outcome.status is not OutcomeStatus.PAUSED:
+            raise ValueError("only verified paused outcomes belong in superseded history")
+        return outcome
+
+    def latest_superseded(self, plan_id: str) -> str | None:
+        root = self.root / "history" / "r"
+        if not root.is_dir():
+            return None
+        outcomes: dict[str, ProviderPlanOutcome] = {}
+        referenced: set[str] = set()
+        for directory in root.iterdir():
+            if not directory.is_dir() or re.fullmatch(r"[0-9a-f]{12}", directory.name) is None:
+                raise ValueError("superseded provider outcome has invalid layout")
+            names = tuple(path.name for path in directory.iterdir())
+            if len(names) != 1 or re.fullmatch(r"[0-9a-f]{64}\.json", names[0]) is None:
+                raise ValueError("superseded provider outcome has invalid layout")
+            digest = names[0].removesuffix(".json")
+            outcome = self.load_superseded(digest)
+            if outcome.plan.plan_id != plan_id:
+                continue
+            outcomes[digest] = outcome
+            if outcome.supersedes_outcome_sha256 is not None:
+                referenced.add(outcome.supersedes_outcome_sha256)
+        if not outcomes:
+            return None
+        latest = set(outcomes) - referenced
+        if len(latest) != 1:
+            raise ValueError("superseded provider outcome history is not a single chain")
+        return next(iter(latest))
 
     def publish(self, outcome: ProviderPlanOutcome) -> ProviderResultEntry:
         validated = ProviderPlanOutcome.model_validate(outcome.model_dump(mode="python"))
@@ -319,6 +402,28 @@ class ProviderPhaseRepository:
         manifest = ProviderPhaseManifest.model_validate_json(content)
         if _model_bytes(manifest) != content:
             raise ValueError("provider manifest is not canonical JSON")
+        if manifest.supersedes_manifest_sha256 is not None:
+            archived_manifest = self.verify_superseded_manifest(
+                manifest.supersedes_manifest_sha256
+            )
+            current_identity = (
+                manifest.experiment_id,
+                manifest.experiment_config_sha256,
+                manifest.corpus_manifest_sha256,
+                manifest.candidate_manifest_sha256,
+                manifest.matrix_manifest_sha256,
+                manifest.plan_ids,
+            )
+            archived_identity = (
+                archived_manifest.experiment_id,
+                archived_manifest.experiment_config_sha256,
+                archived_manifest.corpus_manifest_sha256,
+                archived_manifest.candidate_manifest_sha256,
+                archived_manifest.matrix_manifest_sha256,
+                archived_manifest.plan_ids,
+            )
+            if archived_identity != current_identity:
+                raise ValueError("superseded provider manifest identity mismatch")
         actual_plan_dirs = {
             path.name for path in (self.root / "results").iterdir() if path.is_dir()
         }
@@ -327,6 +432,11 @@ class ProviderPhaseRepository:
         for expected in manifest.entries:
             if self.entry(expected.plan_id) != expected:
                 raise ValueError("provider result entry failed manifest verification")
+            outcome = self.load(expected.plan_id)
+            if outcome.supersedes_outcome_sha256 is not None:
+                archived = self.load_superseded(outcome.supersedes_outcome_sha256)
+                if archived.plan.plan_id != expected.plan_id:
+                    raise ValueError("superseded provider outcome plan mismatch")
         return manifest
 
 
@@ -389,6 +499,7 @@ class ExperimentRunner:
                 != validated_matrix.corpus_manifest_sha256
             ):
                 raise ValueError("runner plan parent hashes do not match matrix")
+        supersedes_manifest_sha256: str | None = None
         if os.path.lexists(repository.root / "manifest"):
             existing_manifest = repository.verify(
                 expected_manifest_sha256=repository.manifest_sha256
@@ -414,16 +525,27 @@ class ExperimentRunner:
             )
             if actual_identity != expected_identity:
                 raise ValueError("existing provider manifest belongs to another matrix")
-            return existing_manifest
+            if existing_manifest.provider_phase_complete:
+                return existing_manifest
+            supersedes_manifest_sha256 = repository.manifest_sha256
+            repository.reopen_incomplete_manifest(supersedes_manifest_sha256)
 
         groups = _execution_groups(validated_plans)
         outcomes: dict[str, ProviderPlanOutcome] = {}
+        superseded: dict[str, str] = {}
         for group in groups:
-            existing_outcomes = {
-                plan.plan_id: repository.load(plan.plan_id)
-                for plan in group
-                if repository.exists(plan.plan_id)
-            }
+            existing_outcomes: dict[str, ProviderPlanOutcome] = {}
+            for plan in group:
+                if repository.exists(plan.plan_id):
+                    existing = repository.load(plan.plan_id)
+                    if existing.status is OutcomeStatus.PAUSED:
+                        superseded[plan.plan_id] = repository.supersede_paused(plan.plan_id)
+                    else:
+                        existing_outcomes[plan.plan_id] = existing
+                else:
+                    previous = repository.latest_superseded(plan.plan_id)
+                    if previous is not None:
+                        superseded[plan.plan_id] = previous
             outcomes.update(existing_outcomes)
             missing = tuple(
                 plan for plan in group if plan.plan_id not in existing_outcomes
@@ -439,12 +561,15 @@ class ExperimentRunner:
                         plan=plan,
                         status=OutcomeStatus.PAUSED,
                         terminal_code="budget-paused",
+                        supersedes_outcome_sha256=superseded.get(plan.plan_id),
                     )
                     repository.publish(outcome)
                     outcomes[plan.plan_id] = outcome
                 continue
             for index, plan in enumerate(missing):
-                outcome = await self._execute(plan)
+                outcome = await self._execute(
+                    plan, supersedes_outcome_sha256=superseded.get(plan.plan_id)
+                )
                 repository.publish(outcome)
                 outcomes[outcome.plan.plan_id] = outcome
                 if (
@@ -456,6 +581,7 @@ class ExperimentRunner:
                             plan=paired_plan,
                             status=OutcomeStatus.PAUSED,
                             terminal_code=outcome.terminal_code,
+                            supersedes_outcome_sha256=superseded.get(paired_plan.plan_id),
                         )
                         repository.publish(paired_outcome)
                         outcomes[paired_plan.plan_id] = paired_outcome
@@ -514,11 +640,17 @@ class ExperimentRunner:
                 outcome.status is not OutcomeStatus.PAUSED
                 for outcome in ordered_outcomes
             ),
+            supersedes_manifest_sha256=supersedes_manifest_sha256,
         )
         repository.finalize(manifest)
         return manifest
 
-    async def _execute(self, plan: ConditionPlan) -> ProviderPlanOutcome:
+    async def _execute(
+        self,
+        plan: ConditionPlan,
+        *,
+        supersedes_outcome_sha256: str | None = None,
+    ) -> ProviderPlanOutcome:
         try:
             result = await self._executor.execute(plan)
             result = ConditionResult.model_validate(result.model_dump(mode="python"))
@@ -528,10 +660,14 @@ class ExperimentRunner:
                 plan=plan,
                 status=OutcomeStatus.NOT_INVOKED_BY_POLICY,
                 terminal_code=error.code,
+                supersedes_outcome_sha256=supersedes_outcome_sha256,
             )
         except ExecutionPaused as error:
             return ProviderPlanOutcome(
-                plan=plan, status=OutcomeStatus.PAUSED, terminal_code=error.code
+                plan=plan,
+                status=OutcomeStatus.PAUSED,
+                terminal_code=error.code,
+                supersedes_outcome_sha256=supersedes_outcome_sha256,
             )
         except asyncio.CancelledError:
             return ProviderPlanOutcome(
@@ -540,12 +676,14 @@ class ExperimentRunner:
                 result=self._failed_result(
                     plan, ExperimentFailureCategory.INFRASTRUCTURE, "cancelled"
                 ),
+                supersedes_outcome_sha256=supersedes_outcome_sha256,
             )
         except RunnerExecutionError as error:
             return ProviderPlanOutcome(
                 plan=plan,
                 status=OutcomeStatus.FAILED,
                 result=self._failed_result(plan, error.category, error.code),
+                supersedes_outcome_sha256=supersedes_outcome_sha256,
             )
         except (TypeError, ValueError):
             return ProviderPlanOutcome(
@@ -554,6 +692,7 @@ class ExperimentRunner:
                 result=self._failed_result(
                     plan, ExperimentFailureCategory.CONTRACT_INVALID, "invalid-result"
                 ),
+                supersedes_outcome_sha256=supersedes_outcome_sha256,
             )
         return ProviderPlanOutcome(
             plan=plan,
@@ -563,6 +702,7 @@ class ExperimentRunner:
                 else OutcomeStatus.FAILED
             ),
             result=result,
+            supersedes_outcome_sha256=supersedes_outcome_sha256,
         )
 
     def _failed_result(

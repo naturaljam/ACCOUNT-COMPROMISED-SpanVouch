@@ -86,7 +86,7 @@ class ConditionObservation(BaseModel):
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
     cost_cny: Decimal = Field(default=Decimal("0"), ge=0)
-    latency_ms: float = Field(default=0.0, ge=0.0)
+    latency_ms: float | None = Field(default=None, ge=0.0)
 
     @model_validator(mode="after")
     def validate_state(self) -> Self:
@@ -181,7 +181,7 @@ def compute_condition_metrics(
     grounding = [row.grounded for row in eligible if row.grounded is not None]
     disagreement = [row.disagreement for row in eligible if row.disagreement is not None]
     joint = [row.joint_error for row in eligible if row.joint_error is not None]
-    latencies = [row.latency_ms for row in rows if row.latency_ms > 0]
+    latencies = [row.latency_ms for row in rows if row.latency_ms is not None]
     scheduled_count = len(rows)
     eligible_count = len(eligible)
 
@@ -244,8 +244,14 @@ def risk_coverage_curve(
     *,
     continuous: bool,
 ) -> tuple[RiskCoveragePoint, ...]:
-    rows = tuple(observations)
-    eligible = tuple(row for row in rows if row.scheduled and row.candidate_exists)
+    rows = tuple(
+        ConditionObservation.model_validate(row.model_dump(mode="python"))
+        for row in observations
+        if row.scheduled
+    )
+    if len({row.condition_id for row in rows}) != 1:
+        raise ValueError("risk-coverage curve requires exactly one condition")
+    eligible = tuple(row for row in rows if row.candidate_exists)
     if not eligible:
         raise ValueError("risk-coverage curve requires eligible candidates")
     if not continuous:

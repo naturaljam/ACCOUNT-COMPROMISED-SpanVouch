@@ -9,6 +9,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_pytest_uses_importlib_mode_for_duplicate_test_basenames() -> None:
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    addopts = project["tool"]["pytest"]["ini_options"]["addopts"]
+
+    assert "--import-mode=importlib" in addopts
+
+
 def test_autogen_dependencies_are_bounded() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
         "project"
