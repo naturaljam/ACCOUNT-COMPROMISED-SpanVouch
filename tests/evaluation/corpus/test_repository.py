@@ -253,7 +253,15 @@ def test_freeze_rejects_parity_hash_mismatch_and_cleans_staging(
     assert not tuple(tmp_path.glob(".corpus.tmp-*"))
 
 
-def test_failed_publish_cleans_only_the_owned_staging_tree(
+def test_posix_tombstone_name_is_outside_staging_namespace(tmp_path: Path) -> None:
+    staging = tmp_path / ".corpus.tmp-owned"
+    tombstone = artifacts_module._posix_cleanup_tombstone(staging)
+    assert tombstone.parent == tmp_path
+    assert tombstone.name.startswith(".corpus.rollback-")
+    assert not tombstone.match(".corpus.tmp-*")
+
+
+def test_failed_publish_cleans_or_quarantines_only_the_owned_staging_tree(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     record: ExecutionRecord,
@@ -273,6 +281,12 @@ def test_failed_publish_cleans_only_the_owned_staging_tree(
         _freeze(destination, record, parity_results, manifest_metadata)
     assert not destination.exists()
     assert not tuple(tmp_path.glob(".corpus.tmp-*"))
+    tombstones = tuple(tmp_path.glob(".corpus.rollback-*"))
+    if sys.platform == "win32":
+        assert not tombstones
+    else:
+        assert len(tombstones) == 1
+        assert (tombstones[0] / "manifest.json").is_file()
 
 
 def test_failed_publish_preserves_foreign_staging_replacement(

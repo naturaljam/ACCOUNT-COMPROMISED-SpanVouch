@@ -670,7 +670,7 @@ def _delete_posix_owned_staging(  # pragma: no cover - POSIX dir_fd API is absen
     before removal.  Keep the uniquely named quarantine as a fail-closed tombstone;
     a separate trusted maintenance process may remove it while the corpus is idle.
     """
-    quarantine = staging.parent / f".{staging.name}.rollback-{uuid.uuid4().hex}"
+    quarantine = _posix_cleanup_tombstone(staging)
     try:
         _publish_no_replace(staging, quarantine)
     except FileNotFoundError:
@@ -686,6 +686,11 @@ def _delete_posix_owned_staging(  # pragma: no cover - POSIX dir_fd API is absen
         return False
     # Even a confirmed owner can be replaced after the final handle closes.
     return False
+
+
+def _posix_cleanup_tombstone(staging: Path) -> Path:
+    destination_name = staging.name.removeprefix(".").partition(".tmp-")[0]
+    return staging.parent / f".{destination_name}.rollback-{uuid.uuid4().hex}"
 
 
 def _require_real_directory(path: Path) -> None:
