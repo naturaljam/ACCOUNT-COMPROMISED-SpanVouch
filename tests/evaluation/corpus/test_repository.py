@@ -6,6 +6,7 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -331,6 +332,7 @@ def test_failed_publish_child_substitution_never_deletes_foreign_tree(
     assert substituted
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows handle-sharing contract")
 @pytest.mark.parametrize("replacement_kind", ("root", "intermediate", "payload"))
 def test_verify_pins_root_intermediate_and_payload_while_reading(
     tmp_path: Path,
@@ -410,6 +412,7 @@ def test_directory_fsync_has_explicit_windows_unsupported_fallback(
     repository_module._fsync_directory(tmp_path)
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows routing contract")
 def test_windows_snapshot_route_never_enters_posix_reader(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -430,14 +433,53 @@ def test_posix_only_paths_retain_no_follow_dir_fd_and_identity_constraints() -> 
     read_source = inspect.getsource(artifacts_module._read_verified_posix_tree)
     capture_source = inspect.getsource(artifacts_module._capture_posix_tree_entries)
     delete_source = inspect.getsource(artifacts_module._delete_posix_owned_staging)
-    for source in (read_source, capture_source, delete_source):
+    for source in (read_source, capture_source):
         assert "O_NOFOLLOW" in source
         assert "dir_fd=" in source or "fstat(" in source
     assert "follow_symlinks=False" in read_source
     assert "_artifact_stat_signature" in read_source
     assert "_artifact_stat_signature" in capture_source
-    assert "os.rename(" in delete_source
-    assert "actual != expected_entry" in delete_source
+    assert "_capture_posix_tree_entries" in delete_source
+    assert "os.unlink(" not in delete_source
+    assert "os.rmdir(" not in delete_source
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX dir_fd cleanup contract")
+def test_posix_final_name_swap_is_retained_without_masking_publish_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    record: ExecutionRecord,
+    parity_results: tuple[ParityResult, ...],
+    manifest_metadata: CorpusManifestMetadata,
+) -> None:
+    destination = tmp_path / "corpus"
+    original_publish = repository_module.publish_directory_no_replace
+    original_capture = artifacts_module._capture_posix_tree_entries
+    foreign: Path | None = None
+
+    def fail_publish(_source: Path, _destination: Path) -> None:
+        raise OSError("publish failed")
+
+    def swap_final_name(root: Path) -> object:
+        nonlocal foreign
+        if ".rollback-" in root.name and foreign is None:
+            root.rename(root.with_name(f"{root.name}.owned"))
+            root.mkdir()
+            foreign = root
+        return original_capture(root)
+
+    monkeypatch.setattr(repository_module, "publish_directory_no_replace", fail_publish)
+    monkeypatch.setattr(artifacts_module, "_capture_posix_tree_entries", swap_final_name)
+    with pytest.raises(OSError, match="publish failed"):
+        _freeze(destination, record, parity_results, manifest_metadata)
+
+    assert foreign is not None and foreign.is_dir()
+    monkeypatch.setattr(
+        repository_module, "publish_directory_no_replace", original_publish
+    )
+    repository = _freeze(destination, record, parity_results, manifest_metadata)
+    assert repository.verify().entries == (CorpusEntry.from_record(record),)
+    assert foreign.is_dir()
 
 
 def test_formal_repository_is_explicitly_read_only(

@@ -663,109 +663,29 @@ def _capture_posix_tree_entries(  # pragma: no cover - POSIX dir_fd API is absen
 def _delete_posix_owned_staging(  # pragma: no cover - POSIX dir_fd API is absent on Windows
     staging: Path, identity: OwnedDirectoryIdentity
 ) -> bool:
+    """Quarantine a POSIX tree, but never delete it through a raceable name.
+
+    POSIX does not expose an inode-conditional unlink/rmdir operation.  Even after
+    validating a pinned descriptor, a concurrent rename can replace its pathname
+    before removal.  Keep the uniquely named quarantine as a fail-closed tombstone;
+    a separate trusted maintenance process may remove it while the corpus is idle.
+    """
     quarantine = staging.parent / f".{staging.name}.rollback-{uuid.uuid4().hex}"
     try:
         _publish_no_replace(staging, quarantine)
     except FileNotFoundError:
         return True
+    try:
+        actual_entries = _capture_posix_tree_entries(quarantine)
+    except (OSError, RuntimeError):
+        return False
     expected_entries: tuple[
         tuple[str, int, int, int, int, int, str | None], ...
     ] = identity.native_entries
-    expected = {entry[0]: entry for entry in expected_entries}
-    no_follow = getattr(os, "O_NOFOLLOW", 0)
-    directory_flag = getattr(os, "O_DIRECTORY", 0)
-
-    def signature(
-        relative: str, metadata: os.stat_result, content_sha256: str | None = None
-    ) -> tuple[str, int, int, int, int, int, str | None]:
-        return (
-            relative,
-            metadata.st_dev,
-            metadata.st_ino,
-            metadata.st_mode,
-            metadata.st_size,
-            metadata.st_mtime_ns,
-            content_sha256,
-        )
-
-    def restore(directory_fd: int, temporary_name: str, name: str) -> None:
-        os.rename(
-            temporary_name,
-            name,
-            src_dir_fd=directory_fd,
-            dst_dir_fd=directory_fd,
-        )
-
-    def delete_children(directory_fd: int, relative: str) -> None:
-        names = sorted(os.listdir(directory_fd))
-        expected_children = {
-            path.rsplit("/", maxsplit=1)[-1]
-            for path in expected
-            if path and path.rpartition("/")[0] == relative
-        }
-        if set(names) != expected_children:
-            raise RuntimeError("artifact staging ownership changed")
-        for name in names:
-            child_relative = f"{relative}/{name}" if relative else name
-            temporary_name = f".cleanup-{uuid.uuid4().hex}"
-            os.rename(
-                name,
-                temporary_name,
-                src_dir_fd=directory_fd,
-                dst_dir_fd=directory_fd,
-            )
-            metadata = os.stat(
-                temporary_name, dir_fd=directory_fd, follow_symlinks=False
-            )
-            expected_entry = expected[child_relative]
-            if stat.S_ISDIR(metadata.st_mode):
-                if signature(child_relative, metadata) != expected_entry:
-                    restore(directory_fd, temporary_name, name)
-                    raise RuntimeError("artifact staging ownership changed")
-                child_fd = os.open(
-                    temporary_name,
-                    os.O_RDONLY | no_follow | directory_flag,
-                    dir_fd=directory_fd,
-                )
-                try:
-                    delete_children(child_fd, child_relative)
-                finally:
-                    os.close(child_fd)
-                os.rmdir(temporary_name, dir_fd=directory_fd)
-                continue
-            file_fd = os.open(
-                temporary_name, os.O_RDONLY | no_follow, dir_fd=directory_fd
-            )
-            try:
-                digest = sha256()
-                while chunk := os.read(file_fd, 64 * 1024):
-                    digest.update(chunk)
-                actual = signature(
-                    child_relative, os.fstat(file_fd), digest.hexdigest()
-                )
-            finally:
-                os.close(file_fd)
-            if actual != expected_entry:
-                restore(directory_fd, temporary_name, name)
-                raise RuntimeError("artifact staging ownership changed")
-            os.unlink(temporary_name, dir_fd=directory_fd)
-
-    try:
-        root_fd = os.open(quarantine, os.O_RDONLY | no_follow | directory_flag)
-        try:
-            if signature("", os.fstat(root_fd)) != expected.get(""):
-                raise RuntimeError("artifact staging ownership changed")
-            delete_children(root_fd, "")
-        finally:
-            os.close(root_fd)
-        os.rmdir(quarantine)
-        return True
-    except Exception:
-        try:
-            _publish_no_replace(quarantine, staging)
-        except Exception:
-            raise RuntimeError("artifact staging cleanup conflict") from None
+    if actual_entries != expected_entries:
         return False
+    # Even a confirmed owner can be replaced after the final handle closes.
+    return False
 
 
 def _require_real_directory(path: Path) -> None:
