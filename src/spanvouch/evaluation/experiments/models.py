@@ -34,6 +34,7 @@ class ExperimentFailureCategory(StrEnum):
 class ConditionStatus(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
+    NOT_INVOKED_BY_POLICY = "not_invoked_by_policy"
 
 
 class SelectiveAction(StrEnum):
@@ -41,6 +42,7 @@ class SelectiveAction(StrEnum):
     REVISE = "revise"
     REPLAN = "replan"
     ABSTAIN = "abstain"
+    REVIEW = "review_required"
 
 
 class FailureSource(StrEnum):
@@ -148,7 +150,9 @@ class ConditionResult(BaseModel):
     request_audit_sha256s: tuple[str, ...]
     usage: ProviderUsage | None = None
     cost_cny: Decimal | None = Field(default=None, ge=0)
-    cache_status: Literal["not_required", "hit", "miss", "failed"]
+    cache_status: Literal[
+        "not_required", "not_invoked_by_policy", "hit", "miss", "failed"
+    ]
     started_at_utc: datetime
     completed_at_utc: datetime
     failure: ExperimentFailure | None = None
@@ -177,6 +181,12 @@ class ConditionResult(BaseModel):
             raise ValueError("failed condition requires typed failure")
         if self.status is ConditionStatus.COMPLETED and self.failure is not None:
             raise ValueError("completed condition cannot contain failure")
+        if self.status is ConditionStatus.NOT_INVOKED_BY_POLICY and (
+            self.failure is not None or self.cache_status != "not_invoked_by_policy"
+        ):
+            raise ValueError(
+                "policy-skipped condition must be failure-free and explicitly cached"
+            )
         if self.usage is not None and self.usage.request_id is not None:
             raise ValueError("condition usage must not retain a raw request ID")
         return self
