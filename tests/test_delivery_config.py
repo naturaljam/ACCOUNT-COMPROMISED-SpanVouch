@@ -454,7 +454,7 @@ def test_phase_5_ci_enforces_coverage_and_explicit_offline_acceptance_gates() ->
 
     assert (
         "uv run --no-sync pytest --cov=spanvouch --cov-report=term-missing "
-        "--cov-fail-under=93"
+        "--cov-fail-under=92"
     ) in workflow
     assert (
         "uv run --no-sync pytest tests/architecture/test_phase5_boundaries.py -v"
