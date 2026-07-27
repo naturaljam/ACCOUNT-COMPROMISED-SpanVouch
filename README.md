@@ -7,7 +7,7 @@
 [![English](https://img.shields.io/badge/README-English-111827?style=for-the-badge)](README.md)
 [![中文](https://img.shields.io/badge/README-中文-0f766e?style=for-the-badge)](README.zh-CN.md)
 
-![SpanVouch mark](assets/spanvouch-mark.svg)
+![SpanVouch logo](assets/spanvouch-logo.png)
 
 **Open-source infrastructure for evidence-backed agent diagnosis, verification, review, and recovery.**
 

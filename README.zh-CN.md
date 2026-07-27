@@ -5,7 +5,7 @@
 [![CI](https://github.com/naturaljam/SpanVouch/actions/workflows/ci.yml/badge.svg)](https://github.com/naturaljam/SpanVouch/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2F8552.svg)](LICENSE)
 
-![SpanVouch mark](assets/spanvouch-mark.svg)
+![SpanVouch 标志](assets/spanvouch-logo.png)
 
 **面向 Agent 诊断、验证、复核与恢复的开源工程基础设施。**
 
