@@ -2,205 +2,89 @@
 
 [![CI](https://github.com/naturaljam/SpanVouch/actions/workflows/ci.yml/badge.svg)](https://github.com/naturaljam/SpanVouch/actions/workflows/ci.yml)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-2F855A.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-2F8552.svg)](LICENSE)
 
-**Evidence-backed diagnosis, verification, and human review for tool-using agents.**
+![SpanVouch mark](assets/spanvouch-mark.svg)
 
-SpanVouch turns an agent execution trace into a reviewable engineering artifact. It finds
-likely failures, binds every claim to trace evidence, verifies the diagnosis through an
-independent path, permits at most one evidence-guided revision, and records the final human
-decision in durable storage.
+**Open-source infrastructure for evidence-backed agent diagnosis, verification, review, and recovery.**
 
-The default workflow is deterministic and fully offline. Model-backed diagnosis and
-semantic verification are optional, explicit, and guarded against accidental paid calls.
+SpanVouch turns an agent execution trace into an auditable engineering workflow: structured evidence,
+bounded diagnosis, independent verification, human decisions, and durable recovery. The default path
+is deterministic and offline. Provider-backed calls are explicit opt-in.
 
-## Why SpanVouch exists
+## Why it matters
 
-Agent traces capture activity, but they are hard to trust. A plausible diagnosis can cite the
-wrong tool call, overlook an invalid argument, or turn verifier disagreement into false
-confidence. Logs alone do not provide a controlled path from failure to release decision.
+- strict TraceIR and versioned schemas instead of ad-hoc log parsing;
+- rules-first diagnosis with optional provider adapters;
+- independent verification, abstention, and one bounded revision;
+- SQLite persistence, leases, idempotency, immutable events, and compare-and-swap updates;
+- frozen datasets, manifests, and deterministic reports for regression control.
 
-SpanVouch closes that path:
-
-- **Structured evidence:** strict TraceIR and versioned public contracts replace ad hoc log
-  parsing.
-- **Bounded diagnosis:** rules-first operation works offline; provider-backed diagnosis is
-  opt-in.
-- **Independent verification:** deterministic and isolated semantic verifiers re-check
-  evidence instead of accepting diagnostic prose at face value.
-- **Human authority:** automation can recommend, abstain, or request one revision; only a
-  human can confirm, correct, or reject a case.
-- **Durable recovery:** SQLite persistence, leases, idempotency keys, immutable events, and
-  compare-and-swap updates keep interrupted reviews recoverable.
-- **Regression evidence:** frozen datasets, canonical manifests, multi-framework labs, and
-  byte-stable reports make behavior reproducible in continuous integration (CI).
-
-## How the engineering loop works
-
-```mermaid
-flowchart LR
-    A["Agent execution"] --> B["TraceIR ingestion"]
-    B --> C["Evidence-backed diagnosis"]
-    C --> D["Independent verification"]
-    D -->|"Evidence gap"| E["One bounded revision"]
-    E --> D
-    D --> F["Human review"]
-    F -->|"Confirm / correct / reject"| G["Durable decision record"]
-    G --> H["Regression artifacts"]
-```
-
-The core dependency direction is deliberately narrow:
+## Engineering loop
 
 ```text
-contracts <- trace <- diagnosis <- verification <- review
+agent trace -> TraceIR -> diagnosis -> independent verification
+             -> bounded revision -> human review -> durable decision
 ```
 
-FastAPI, SQLite, LangGraph, model providers, agent frameworks, and evaluation labs sit
-behind adapters or at the delivery edge. Architecture tests prevent those dependencies
-from leaking back into the core.
+Core dependency direction: `contracts <- trace <- diagnosis <- verification <- review`.
 
-## What SpanVouch includes
+The IVAD (Independently Verified Agent Diagnosis) boundary is implemented as an engineering
+protocol: diagnosis is never treated as verified until an independent verifier and a human
+decision have completed their steps.
 
-SpanVouch connects diagnosis, review, evaluation, and delivery through tested boundaries.
+## What you can build
 
-| Area | What is included |
-| --- | --- |
-| Trace contracts | Strict Pydantic schemas, canonical JSON, SHA-256 identities, and frozen valid fixtures |
-| Diagnosis | Deterministic rules engine plus an explicitly authorized DeepSeek adapter |
-| Verification | Deterministic checks, optional semantic verification, abstention, and one-revision limit |
-| Review | FastAPI and command-line interface (CLI) workflows for create, inspect, resume, confirm, correct, and reject |
-| Recovery | SQLite persistence, process-safe leases, idempotent commands, immutable event order, and CAS updates |
-| Evaluation | SupportLab and OpsLab, LangGraph and AutoGen adapters, frozen corpora, controlled matrices, and reproducible reports |
-| Delivery | Locked dependencies, wheel builds, non-root Docker image, Compose health checks, and persistent data volume |
-| Safety | Secret-minimized trace views, offline defaults, live-call opt-in, budget ledgers, and provenance-bound artifacts |
+SpanVouch is a foundation for internal agent quality platforms, support-operations review,
+tool-call incident analysis, and compliance-oriented audit trails. It includes FastAPI and CLI
+delivery, SQLite recovery, Docker/Compose packaging, LangGraph and AutoGen adapters, and offline
+evaluation labs such as SupportLab and OpsLab.
 
-## Try SpanVouch offline
+## Quick start
 
-### Requirements
-
-- Python 3.12
-- [uv](https://docs.astral.sh/uv/) 0.8.x
-- Docker with Compose v2 for the container path
-
-Install the locked development environment:
+Requirements: Python 3.12, [uv](https://docs.astral.sh/uv/) 0.8.x, and optionally Docker Compose v2.
 
 ```bash
 git clone https://github.com/naturaljam/SpanVouch.git
 cd SpanVouch
 uv sync --frozen --group dev
+uv run spanvouch dataset generate --output .cache/readme-check --seed 20260715
+uv run spanvouch evaluate diagnosis --output .cache/rules.json
+uv run spanvouch evaluate review --output .cache/review-rules.json
 ```
 
-Generate the frozen sample dataset and run both offline evaluators:
-
-```bash
-uv run spanvouch dataset generate \
-  --output .cache/readme-check \
-  --seed 20260715
-
-uv run spanvouch evaluate diagnosis \
-  --output .cache/rules.json
-
-uv run spanvouch evaluate review \
-  --output .cache/review-rules.json
-```
-
-These commands need no provider key and make no network request.
-
-## Run the review service
-
-Start the API locally:
-
-```bash
-uv run uvicorn spanvouch.api.app:app --host 127.0.0.1 --port 8000
-```
-
-The application programming interface (API) exposes these endpoints:
+Start the local API with `uv run uvicorn spanvouch.api.app:app --host 127.0.0.1 --port 8000`.
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
-| `GET` | `/health` | Service health |
-| `POST` | `/v1/traces` | Ingest a TraceIR document |
-| `POST` | `/v1/traces/{trace_id}/diagnoses` | Diagnose an ingested trace |
-| `POST` | `/v1/traces/{trace_id}/diagnosis-reviews` | Create and execute a review case |
-| `GET` | `/v1/diagnosis-reviews/{case_id}` | Read the complete case timeline |
-| `POST` | `/v1/diagnosis-reviews/{case_id}/resume` | Resume recoverable work |
-| `POST` | `/v1/diagnosis-reviews/{case_id}/decisions` | Record the human decision |
+| GET | `/health` | service health |
+| POST | `/v1/traces` | ingest a TraceIR document |
+| POST | `/v1/traces/{trace_id}/diagnoses` | diagnose a trace |
+| POST | `/v1/traces/{trace_id}/diagnosis-reviews` | create a review case |
+| GET | `/v1/diagnosis-reviews/{case_id}` | read the case timeline |
+| POST | `/v1/diagnosis-reviews/{case_id}/resume` | resume recoverable work |
+| POST | `/v1/diagnosis-reviews/{case_id}/decisions` | record a human decision |
 
-OpenAPI documentation is available at [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs).
+OpenAPI is available at `http://127.0.0.1:8000/docs` while the service is running.
+The diagnosis endpoint is `POST /v1/traces/{trace_id}/diagnoses`.
 
-To diagnose a trace without creating a review case, call `POST /v1/traces/{trace_id}/diagnoses`.
-
-### Review a frozen trace end to end
-
-The repository includes a frozen SupportLab trace at
-`evals/datasets/supportlab-v1/traces.jsonl`. Extract its first record and send it to
-`POST /v1/traces`:
+For a complete offline review, use the frozen trace at
+`evals/datasets/supportlab-v1/traces.jsonl`, post it to `POST /v1/traces`, then use the CLI:
 
 ```bash
-mkdir -p .cache
-python -c 'from pathlib import Path; source=Path("evals/datasets/supportlab-v1/traces.jsonl"); Path(".cache/spanvouch-demo-trace.json").write_text(source.read_text(encoding="utf-8").splitlines()[0] + "\n", encoding="utf-8")'
-
-trace_id="$(
-  curl --fail --silent --show-error \
-    -H 'content-type: application/json' \
-    --data-binary @.cache/spanvouch-demo-trace.json \
-    http://127.0.0.1:8000/v1/traces \
-  | python -c 'import json,sys; print(json.load(sys.stdin)["trace_id"])'
-)"
-
-created="$(uv run spanvouch review create \
-  --trace-id "$trace_id" \
-  --diagnoser rules \
-  --verifier deterministic \
-  --idempotency-key demo-create-001)"
-```
-
-The create response contains the case identifier and optimistic-lock version. Use both to
-inspect and confirm the diagnosis:
-
-```bash
-case_id="$(python -c \
-  'import json,sys; print(json.loads(sys.argv[1])["case"]["case_id"])' \
-  "$created")"
-version="$(python -c \
-  'import json,sys; print(json.loads(sys.argv[1])["case"]["version"])' \
-  "$created")"
-
+trace_id="$(curl --fail --silent --show-error -H 'content-type: application/json' \
+  --data-binary @.cache/spanvouch-demo-trace.json http://127.0.0.1:8000/v1/traces \
+  | python -c 'import json,sys; print(json.load(sys.stdin)["trace_id"])')"
+created="$(uv run spanvouch review create --trace-id "$trace_id" --idempotency-key demo-create-001)"
+case_id="$(python -c 'import json,sys; print(json.loads(sys.argv[1])["case"]["case_id"])' "$created")"
+version="$(python -c 'import json,sys; print(json.loads(sys.argv[1])["case"]["version"])' "$created")"
 uv run spanvouch review show --case-id "$case_id"
-
-uv run spanvouch review decide \
-  --case-id "$case_id" \
-  --action confirm \
-  --expected-version "$version" \
-  --reviewer-label local-reviewer \
+uv run spanvouch review decide --case-id "$case_id" --action confirm \
+  --expected-version "$version" --reviewer-label local-reviewer \
   --idempotency-key demo-decision-001
 ```
-
-The CLI is an HTTP client for the same review workflow:
-
-```bash
-uv run spanvouch review create \
-  --trace-id trace_id \
-  --diagnoser rules \
-  --verifier deterministic \
-  --idempotency-key demo-create-001
-
-uv run spanvouch review show --case-id case_id
-
-uv run spanvouch review decide \
-  --case-id case_id \
-  --action confirm \
-  --expected-version version \
-  --reviewer-label local-reviewer \
-  --idempotency-key demo-decision-001
-```
-
-Review state defaults to `.data/spanvouch.db`. Set `SPANVOUCH_DB_PATH` to use another
-SQLite location.
 
 ## Docker
-
-Run the API as a non-root container with persistent review storage:
 
 ```bash
 docker compose up --build --detach --wait api
@@ -208,102 +92,88 @@ curl --fail http://127.0.0.1:8000/health
 docker compose down
 ```
 
-`docker compose down` preserves the `spanvouch_data` volume. Add `--volumes` only when you
-intend to delete stored review data. The optional Phoenix service is available through the
-`phoenix` Compose service for local observability work.
+The image runs unprivileged and stores review state in a persistent SQLite volume.
 
-## Use optional model providers
+## Optional providers and safety
 
-Offline rules and deterministic verification are the defaults. To use DeepSeek diagnosis
-or hybrid semantic verification:
+Rules and deterministic verification never need a provider key. DeepSeek diagnosis and hybrid
+semantic verification require `DEEPSEEK_API_KEY` plus an explicit `--allow-live-api` flag. Live
+calls may incur cost and are excluded from CI. The included service has no authentication or RBAC;
+keep it on localhost or put it behind an authenticated gateway.
 
-1. start from `.env.example`;
-2. set `DEEPSEEK_API_KEY` in the process environment, never a tracked file;
-3. begin with an allowlisted smoke sample;
-4. pass `--allow-live-api` explicitly.
+## Project status
 
-Example:
+This is an open-source engineering release with an end-to-end offline workflow, tested contracts,
+delivery artifacts, and reproducible CI gates. Phase 6 is not presented as completed functionality.
+Claims about model effectiveness require separately reproduced, provider-authorized experiments.
 
-```bash
-uv run spanvouch evaluate diagnosis \
-  --diagnoser deepseek \
-  --allow-live-api \
-  --run-id invalid_argument-01 \
-  --output .cache/deepseek-smoke.json
-```
+## Commercialization paths
 
-Live calls can incur cost and are excluded from CI. Phase 5 experiment tooling adds frozen
-provider identities, shared budget ledgers, GPU lease records, and separated label joins;
-see the [reproduction runbook](docs/evaluation/phase5-reproduction-runbook.md) before using
-those paths.
+The MIT-licensed core can support private deployments, enterprise policy and audit integrations,
+multi-team or multi-model adapters, managed hosting, and optional enterprise support. These are
+extension directions, not claims of existing customers, SLAs, or production certification.
 
-## Verify reproducibility and quality
-
-The repository includes six versioned public contract roots, deterministic datasets,
-manifest-bound evaluation artifacts, dependency-direction tests, and offline end-to-end
-acceptance tests. CI enforces:
-
-```bash
-uv run ruff check src tests
-uv run mypy
-uv run pytest --cov=spanvouch --cov-fail-under=92
-uv build --wheel --build-constraints build-constraints.txt --require-hashes --no-cache
-docker compose config --quiet
-```
-
-CI also regenerates frozen datasets, compares deterministic reports byte for byte, builds
-the image, runs it as UID/GID `10001:10001`, and verifies SQLite state across a container
-restart. The detailed engineering evidence is recorded in the
-[Phase 5 acceptance report](docs/evaluation/phase5-acceptance.md).
-
-## Understand the security model
-
-SpanVouch stores canonical diagnostic trace views, diagnosis revisions, verifier summaries,
-events, and human decisions. It is designed not to persist prompts, authorization headers,
-API keys, hidden reasoning, or raw provider responses.
-
-The included service does not provide authentication or role-based access control (RBAC). `reviewer_label` is audit
-text supplied by the caller, not an authenticated identity. Keep the default service bound
-to localhost unless you add an authenticated gateway and deployment controls appropriate
-for your environment. See [SECURITY.md](SECURITY.md) for vulnerability reporting.
-
-## Explore the repository
-
-The source tree separates core contracts from adapters, delivery layers, and evaluation.
+## Repository map
 
 ```text
-src/spanvouch/
-  contracts/      Versioned public schemas and canonical serialization
-  trace/          Trace projection and repositories
-  diagnosis/      Rules and provider-backed diagnosis
-  verification/   Deterministic and semantic verification
-  review/         Workflow, persistence ports, revision, and decisions
-  adapters/       SQLite, LangGraph, model, and framework integrations
-  api/            FastAPI composition and routes
-  cli/            Operator-facing commands
-  evaluation/     Reproducible datasets, matrices, statistics, and artifacts
-  labs/           Deterministic agent failure environments
-tests/             Unit, contract, architecture, integration, and E2E tests
-evals/             Frozen datasets, configs, schemas, and reference reports
-docs/              Contracts, ADRs, runbooks, migrations, and technical background
+src/spanvouch/   core contracts, trace, diagnosis, verification, review, API, CLI
+schemas/v1/      versioned public schemas
+tests/           unit, contract, architecture, integration, and E2E tests
+evals/           frozen datasets, configs, and reference reports
 ```
-
-## Read the technical background
-
-IVAD, Independently Verified Agent Diagnosis, is the protocol behind SpanVouch's separation
-of diagnosis, evidence verification, abstention, and human authority. The repository keeps
-its protocol designs and evaluation records for auditability, but offline engineering
-acceptance is not presented as evidence of improved model accuracy.
-
-Start with the [contract catalog](docs/contracts/catalog.md),
-[core/adapters ADR](docs/architecture/adr-003-core-adapter-boundaries.md), and
-[Phase 3 review runbook](docs/evaluation/phase3-reproduction-runbook.md).
 
 ## Contributing
 
-Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before changing
-contracts, frozen artifacts, or provider boundaries.
+Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) and
+[SECURITY.md](SECURITY.md). Keep provider execution opt-in, preserve contract compatibility,
+and include focused tests for behavior changes.
 
 ## License
 
 SpanVouch is available under the [MIT License](LICENSE).
+
+---
+
+# SpanVouch 中文说明
+
+SpanVouch 是一个面向工具调用型 Agent 的开源工程基础设施，用于把执行轨迹转化为可审计的
+“证据 -> 诊断 -> 独立验证 -> 人工决策 -> 持久恢复”闭环。
+
+## 工程定位
+
+项目默认离线运行，规则诊断和确定性验证无需模型费用。所有 provider 调用都必须显式授权，
+并带有预算、allowlist 和 provenance 边界。核心代码、契约、API、CLI、Docker 交付和 CI 回归
+验证已形成统一工程闭环。
+
+## 核心能力
+
+- 严格 TraceIR、版本化 schema、规范化 JSON 和内容哈希；
+- 规则优先的诊断，以及可选的 provider adapter；
+- 独立验证、弃权和最多一次证据驱动修订；
+- SQLite、租约、幂等键、不可变事件和乐观锁恢复；
+- FastAPI、CLI、Docker/Compose，以及 LangGraph、AutoGen 适配器；
+- 冻结数据集和字节级确定性报告，便于持续集成回归。
+
+## 快速开始
+
+```bash
+uv sync --frozen --group dev
+uv run spanvouch dataset generate --output .cache/readme-check --seed 20260715
+uv run spanvouch evaluate diagnosis --output .cache/rules.json
+uv run uvicorn spanvouch.api.app:app --host 127.0.0.1 --port 8000
+```
+
+默认数据库路径是 `.data/spanvouch.db`，可通过 `SPANVOUCH_DB_PATH` 覆盖。
+
+## 商业化方向
+
+MIT 核心可用于企业内部 Agent 质量平台、私有化部署、审计与合规集成、多团队多模型适配，
+以及未来的托管服务和企业支持。这些是可扩展方向，不代表已有客户、SLA 或生产认证。
+
+## 当前状态与边界
+
+这是一个开源工程发布，不把项目包装成论文研究成果；Phase 6 也未宣称完成。当前服务未内置
+认证和 RBAC，建议仅绑定 localhost 或置于受控网关之后。模型效果结论必须通过独立、获授权的
+实验得到，不能由离线工程测试替代。
+
+欢迎提交 Issue 和 Pull Request。项目采用 MIT License。

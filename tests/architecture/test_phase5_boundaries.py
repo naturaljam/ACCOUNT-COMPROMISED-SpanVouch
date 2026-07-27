@@ -260,30 +260,15 @@ def test_ci_has_offline_phase5_gate_and_preserves_build_jobs() -> None:
         assert forbidden.lower() not in workflow.lower()
 
 
-def test_phase5_docs_separate_engineering_from_research_acceptance() -> None:
-    runbook = (ROOT / "docs" / "evaluation" / "phase5-reproduction-runbook.md")
-    acceptance = ROOT / "docs" / "evaluation" / "phase5-acceptance.md"
-    assert runbook.is_file()
-    assert acceptance.is_file()
-    combined = "\n".join(
-        (
-            (ROOT / "README.md").read_text(encoding="utf-8"),
-            runbook.read_text(encoding="utf-8"),
-            acceptance.read_text(encoding="utf-8"),
-            (ROOT / "docs" / "research" / "reproducibility.md").read_text(
-                encoding="utf-8"
-            ),
-        )
-    ).lower()
+def test_phase5_public_snapshot_states_engineering_boundaries() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8").lower()
     for required in (
         "supportlab",
         "opslab",
         "langgraph",
         "autogen",
-        "b0-b5",
-        "offline engineering acceptance",
-        "not paper evidence",
-        "cloud gpu: unapproved",
-        "formal deepseek/qwen evidence: not collected",
+        "offline",
+        "phase 6 is not presented as completed",
+        "provider-authorized experiments",
     ):
-        assert required in combined
+        assert required in readme

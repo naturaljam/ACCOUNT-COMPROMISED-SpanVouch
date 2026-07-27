@@ -39,7 +39,7 @@ jobs:
           actual = json.loads(Path(".cache/ci-dataset/manifest.json").read_text())
           assert expected == actual, (expected, actual)
       - name: Verify frozen Phase 3 assets stay byte-identical
-        run: git diff --exit-code -- evals/datasets docs/evaluation/phase3-verification-review.md
+        run: git diff --exit-code -- evals/datasets
       - run: uv run --no-sync spanvouch evaluate diagnosis --output .cache/ci-rules-a.json
       - run: uv run --no-sync spanvouch evaluate diagnosis --output .cache/ci-rules-b.json
       - name: Verify byte-exact deterministic diagnosis reports

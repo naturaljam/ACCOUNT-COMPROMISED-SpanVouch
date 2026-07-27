@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">SpanVouch mark</title>
+  <desc id="desc">A connected trace node enclosed by a verification shield.</desc>
+  <rect width="256" height="256" rx="48" fill="#0f172a"/>
+  <path d="M128 35 195 61v56c0 47-28 80-67 104-39-24-67-57-67-104V61l67-26Z" fill="#14b8a6"/>
+  <path d="m83 123 29 29 61-65" fill="none" stroke="#f8fafc" stroke-linecap="round" stroke-linejoin="round" stroke-width="18"/>
+  <circle cx="83" cy="123" r="10" fill="#f8fafc"/>
+  <circle cx="112" cy="152" r="10" fill="#f8fafc"/>
+  <circle cx="173" cy="87" r="10" fill="#f8fafc"/>
+</svg>

@@ -263,18 +263,3 @@ def test_svg_is_an_accessible_projection_of_risk_coverage_csv() -> None:
     assert b"<desc>" in svg
     assert b"supportlab / langgraph / b3" in svg
     assert render_risk_coverage_svg(csv_bytes.replace(b"0.250000", b"0.500000")) != svg
-
-
-def test_paper_skeletons_and_ledger_keep_claims_gated() -> None:
-    root = Path(__file__).parents[2]
-    method = (root / "docs/paper/method.md").read_text("utf-8")
-    setup = (root / "docs/paper/experiment-setup.md").read_text("utf-8")
-    results = (root / "docs/paper/results.md").read_text("utf-8")
-    ledger = (root / "docs/research/ivad-claim-evidence-ledger.md").read_text("utf-8")
-
-    assert "IVAD" in method and "B0-B5" in method and "two-stage" in method
-    assert "config hash" in setup and "budget" in setup and "exclusions" in setup
-    assert "<!-- PHASE5_GENERATED_RESULTS_START -->" in results
-    assert "<!-- PHASE5_GENERATED_RESULTS_END -->" in results
-    assert "analysis manifest" in ledger
-    assert "planned; no Phase 5 evidence yet" in ledger

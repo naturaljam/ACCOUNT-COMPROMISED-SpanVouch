@@ -34,9 +34,10 @@ Changes to the API image or persistence path should also pass the Docker smoke w
 
 ## Change contracts and artifacts
 
-The roots listed in `docs/contracts/catalog.md` are public, versioned contracts. A new
-required field, changed meaning, or removed field requires an explicit compatibility
-decision and the corresponding schema, fixture, and contract-test updates.
+The schemas under `schemas/v1/` and their fixtures under
+`tests/contracts/fixtures/v1/` are public, versioned contracts. A new required field,
+changed meaning, or removed field requires an explicit compatibility decision and the
+corresponding schema, fixture, and contract-test updates.
 
 Frozen datasets and evaluation reports are content-addressed evidence. Do not edit generated
 bytes by hand. Use the owning generator, review the manifest and provenance changes, and

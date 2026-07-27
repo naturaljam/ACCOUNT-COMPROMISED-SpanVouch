@@ -56,32 +56,8 @@ def test_frozen_dataset_fixtures_are_checked_out_with_lf_endings() -> None:
     assert set(result.stdout.splitlines()) == expected
 
 
-def test_phase_3_verification_documents_exact_sqlite_process_gate() -> None:
-    runbook = (ROOT / "docs" / "evaluation" / "phase3-reproduction-runbook.md").read_text(
-        encoding="utf-8"
-    )
-
-    assert (
-        r".\.venv\Scripts\python.exe -m pytest "
-        r"tests/review/test_sqlite_process_stability.py -q"
-    ) in runbook
-    assert ".github/workflows/ci.yml" in runbook
-    assert "Smoke-test containerized API" in runbook
-
-
-def test_phase_3_verification_report_matches_frozen_acceptance_bytes() -> None:
-    verification = ROOT / "docs" / "evaluation" / "phase3-verification-review.md"
-
-    assert hashlib.sha256(verification.read_bytes()).hexdigest() == (
-        "b67345396cfd86a7eb96db98b76834dee057983e8f38491c59c2376fc2bb2e74"
-    )
-
-
 def test_phase_2_delivery_is_safe_and_reproducible() -> None:
-    required_files = (
-        ".env.example",
-        "docs/evaluation/phase2-diagnosis-evaluation.md",
-    )
+    required_files = (".env.example", "README.md")
     missing = [path for path in required_files if not (ROOT / path).is_file()]
     assert not missing, f"missing Phase 2 delivery files: {missing}"
 
@@ -107,7 +83,6 @@ def test_phase_1_delivery_configuration_is_reproducible() -> None:
         "compose.yaml",
         ".github/workflows/ci.yml",
         "README.md",
-        "docs/architecture/adr-001-traceir-boundary.md",
     )
     missing = [path for path in required_files if not (ROOT / path).is_file()]
     assert not missing, f"missing Phase 1 delivery files: {missing}"
@@ -401,7 +376,6 @@ def test_phase_4_release_candidate_documents_delivery_and_six_contract_roots() -
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     legacy_environment = "AF" + "C_DB_PATH"
-    legacy_migration_filename = "af" + "c-to-spanvouch.md"
 
     assert project["project"]["name"] == "spanvouch"
     assert project["project"]["version"] == "0.2.0"
@@ -415,8 +389,8 @@ def test_phase_4_release_candidate_documents_delivery_and_six_contract_roots() -
     assert "tests/contracts tests/architecture tests/test_delivery_config.py -v" in workflow
     assert "git diff --exit-code -- evals/datasets" in workflow
     assert 'actual["candidates_sha256"] == expected["candidates_sha256"]' not in workflow
-    assert "docs/contracts/catalog.md" in readme
     assert "IVAD" in readme
+    assert not (ROOT / "docs").exists()
 
     expected_roots = {
         "artifact-manifest",
@@ -437,16 +411,8 @@ def test_phase_4_release_candidate_documents_delivery_and_six_contract_roots() -
     assert schema_roots == expected_roots
     assert fixture_roots == expected_roots
 
-    required_release_files = (
-        "docs/contracts/catalog.md",
-        "docs/architecture/adr-002-contract-versioning.md",
-        "docs/architecture/adr-003-core-adapter-boundaries.md",
-        "docs/migrations/" + legacy_migration_filename,
-        "docs/research/reproducibility.md",
-        "docs/research/ivad-claim-evidence-ledger.md",
-    )
-    missing = [path for path in required_release_files if not (ROOT / path).is_file()]
-    assert not missing, f"missing Phase 4 release documentation: {missing}"
+    assert (ROOT / "schemas" / "v1").is_dir()
+    assert (ROOT / "evals" / "datasets").is_dir()
 
 
 def test_phase_5_ci_enforces_coverage_and_explicit_offline_acceptance_gates() -> None:
@@ -481,11 +447,7 @@ def test_phase_4_acceptance_evidence_includes_a_clean_offline_reference_bundle()
         "c3fc1f4fc2015cbc0a3d6691bf01da98e1a77f7ac139d37f7e75cd2038742f9b"
     )
 
-    acceptance = ROOT / "docs" / "evaluation" / "phase4-research-foundation.md"
-    assert acceptance.is_file(), "missing Phase 4 acceptance report"
-    report = acceptance.read_text(encoding="utf-8")
-    assert "adds no paper effectiveness result" in report
-    assert "POSIX exact-object directory unlink is unsupported" in report
+    assert (bundle / "README.md").is_file()
 
 
 def test_phase_4_reference_bundle_limits_label_boundaries_to_metrics_analysis() -> None:
@@ -509,29 +471,7 @@ def test_phase_4_reference_bundle_limits_label_boundaries_to_metrics_analysis() 
         for key in forbidden_label_keys
     )
 
-    reproducibility = (ROOT / "docs" / "research" / "reproducibility.md").read_text(
-        encoding="utf-8"
-    )
-    normalized_reproducibility = " ".join(reproducibility.lower().split())
-    provider_boundary = "only from provider-visible, pre-call inputs/messages/snapshots"
-    metrics_boundary = "post-call `metrics.json` may include `mutation_kind`"
-    assert provider_boundary in normalized_reproducibility
-    assert metrics_boundary in normalized_reproducibility
-    assert (
-        "raw provider bodies, and local environment values are excluded from the entire bundle"
-        in normalized_reproducibility
-    )
-
-    acceptance = (ROOT / "docs" / "evaluation" / "phase4-research-foundation.md").read_text(
-        encoding="utf-8"
-    )
-    normalized_acceptance = " ".join(acceptance.split())
-    assert "Task 16 input/base: `197e94439e12e2365412d046c56473ba35f432d3`" in acceptance
-    assert (
-        "Original final acceptance evidence commit: `bbe811599e8086515591dcb1677e288dcbd2c510`"
-        in normalized_acceptance
-    )
-    assert "not a claim about this corrective commit's self-SHA" in acceptance
+    assert (ROOT / "README.md").is_file()
 
 
 def test_active_old_product_name_scan_has_no_literal_hits() -> None:
