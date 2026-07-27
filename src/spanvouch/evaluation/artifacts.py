@@ -717,6 +717,10 @@ def _read_verified_windows_tree(root: Path) -> VerifiedDirectorySnapshot:
         _close_windows_tree(pinned, kernel32)
 
 
+def _windows_last_error() -> int:
+    return int(vars(ctypes)["get_last_error"]())
+
+
 def _read_windows_node_bytes(node: Any, kernel32: Any) -> bytes:
     kernel32.SetFilePointerEx.argtypes = (
         wintypes.HANDLE,
@@ -731,7 +735,7 @@ def _read_windows_node_bytes(node: Any, kernel32: Any) -> bytes:
         None,
         0,
     ):
-        raise OSError(ctypes.get_last_error(), "unable to rewind artifact payload")
+        raise OSError(_windows_last_error(), "unable to rewind artifact payload")
     chunks: list[bytes] = []
     buffer = ctypes.create_string_buffer(64 * 1024)
     while True:
@@ -743,7 +747,7 @@ def _read_windows_node_bytes(node: Any, kernel32: Any) -> bytes:
             ctypes.byref(read),
             None,
         ):
-            raise OSError(ctypes.get_last_error(), "unable to read artifact payload")
+            raise OSError(_windows_last_error(), "unable to read artifact payload")
         if read.value == 0:
             return b"".join(chunks)
         chunks.append(buffer.raw[: read.value])

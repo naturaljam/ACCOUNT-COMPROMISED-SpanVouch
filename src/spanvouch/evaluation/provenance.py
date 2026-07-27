@@ -505,6 +505,10 @@ def _windows_kernel32() -> Any:
     return kernel32
 
 
+def _windows_last_error() -> int:
+    return int(vars(ctypes)["get_last_error"]())
+
+
 def _pin_windows_tree(path: Path, kernel32: Any) -> _WindowsPinnedNode:
     root = path
 
@@ -520,7 +524,7 @@ def _pin_windows_tree(path: Path, kernel32: Any) -> _WindowsPinnedNode:
         )
         invalid_handle = ctypes.c_void_p(-1).value
         if raw_handle == invalid_handle:
-            raise OSError(ctypes.get_last_error(), "unable to pin rollback artifact")
+            raise OSError(_windows_last_error(), "unable to pin rollback artifact")
         handle = int(raw_handle)
         node: _WindowsPinnedNode | None = None
         try:
@@ -528,7 +532,7 @@ def _pin_windows_tree(path: Path, kernel32: Any) -> _WindowsPinnedNode:
             if not kernel32.GetFileInformationByHandle(
                 wintypes.HANDLE(handle), ctypes.byref(information)
             ):
-                raise OSError(ctypes.get_last_error(), "unable to inspect rollback artifact")
+                raise OSError(_windows_last_error(), "unable to inspect rollback artifact")
             metadata = current.stat(follow_symlinks=False)
             is_directory = bool(information.file_attributes & _FILE_ATTRIBUTE_DIRECTORY)
             is_reparse = bool(
@@ -597,7 +601,7 @@ def _hash_windows_handle(handle: int, kernel32: Any) -> str:
             ctypes.byref(read),
             None,
         ):
-            raise OSError(ctypes.get_last_error(), "unable to read rollback artifact")
+            raise OSError(_windows_last_error(), "unable to read rollback artifact")
         if read.value == 0:
             return digest.hexdigest()
         digest.update(buffer.raw[: read.value])
@@ -665,9 +669,9 @@ def _dispose_windows_tree(node: _WindowsPinnedNode, kernel32: Any) -> None:
         ctypes.byref(disposition),
         ctypes.sizeof(disposition),
     ):
-        raise OSError(ctypes.get_last_error(), "unable to delete rollback artifact")
+        raise OSError(_windows_last_error(), "unable to delete rollback artifact")
     if not kernel32.CloseHandle(wintypes.HANDLE(node.handle)):
-        raise OSError(ctypes.get_last_error(), "unable to close rollback artifact")
+        raise OSError(_windows_last_error(), "unable to close rollback artifact")
     node.handle = 0
 
 
