@@ -1,10 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
   <title id="title">SpanVouch mark</title>
-  <desc id="desc">A connected trace node enclosed by a verification shield.</desc>
-  <rect width="256" height="256" rx="48" fill="#0f172a"/>
-  <path d="M128 35 195 61v56c0 47-28 80-67 104-39-24-67-57-67-104V61l67-26Z" fill="#14b8a6"/>
-  <path d="m83 123 29 29 61-65" fill="none" stroke="#f8fafc" stroke-linecap="round" stroke-linejoin="round" stroke-width="18"/>
-  <circle cx="83" cy="123" r="10" fill="#f8fafc"/>
-  <circle cx="112" cy="152" r="10" fill="#f8fafc"/>
-  <circle cx="173" cy="87" r="10" fill="#f8fafc"/>
+  <desc id="desc">A continuous trace loop forming an abstract S and V.</desc>
+  <rect width="256" height="256" rx="56" fill="#111827"/>
+  <path d="M183 72c-15-17-38-26-63-26-36 0-62 18-62 43 0 23 18 34 54 42l25 6c27 6 40 15 40 34 0 27-28 45-67 45-27 0-51-10-66-28" fill="none" stroke="#2dd4bf" stroke-linecap="round" stroke-width="24"/>
+  <path d="m77 127 41 42 61-75" fill="none" stroke="#f9fafb" stroke-linecap="round" stroke-linejoin="round" stroke-width="18"/>
+  <circle cx="183" cy="72" r="11" fill="#fbbf24"/>
+  <circle cx="57" cy="188" r="11" fill="#fbbf24"/>
 </svg>
