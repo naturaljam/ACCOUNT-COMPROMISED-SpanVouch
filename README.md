@@ -65,6 +65,7 @@ Start the API with `uv run uvicorn spanvouch.api.app:app --host 127.0.0.1 --port
 | POST | `/v1/diagnosis-reviews/{case_id}/decisions` | record a human decision |
 
 OpenAPI is available at `http://127.0.0.1:8000/docs` while the service is running.
+The diagnosis endpoint is `POST /v1/traces/{trace_id}/diagnoses`.
 
 For an offline end-to-end review, use the frozen trace at `evals/datasets/supportlab-v1/traces.jsonl`,
 post it to `POST /v1/traces`, then use the CLI to inspect and decide the case:
