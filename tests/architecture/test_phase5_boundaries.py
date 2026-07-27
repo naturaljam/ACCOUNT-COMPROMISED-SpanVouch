@@ -268,7 +268,7 @@ def test_phase5_public_snapshot_states_engineering_boundaries() -> None:
         "langgraph",
         "autogen",
         "offline",
-        "phase 6 is not presented as completed",
-        "provider-authorized experiments",
+        "commercial deployment",
+        "provider",
     ):
         assert required in readme
