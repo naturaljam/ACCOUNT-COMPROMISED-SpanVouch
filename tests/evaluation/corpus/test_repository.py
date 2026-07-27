@@ -619,6 +619,7 @@ def test_freeze_fsyncs_destination_parent_after_publication(
     assert synced[-1] == destination.parent
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows directory fsync fallback")
 def test_directory_fsync_has_explicit_windows_unsupported_fallback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

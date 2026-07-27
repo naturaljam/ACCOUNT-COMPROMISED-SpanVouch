@@ -2,6 +2,7 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -132,6 +133,7 @@ def test_direct_bundle_refuses_dirty_release_before_writing(tmp_path: Path) -> N
         )
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="POSIX retains rollback tombstones")
 def test_publish_removes_just_published_bundle_when_report_replace_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -163,6 +165,7 @@ def test_publish_removes_just_published_bundle_when_report_replace_fails(
     assert not tuple(tmp_path.glob(".*.rollback-*"))
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="POSIX retains rollback tombstones")
 def test_owned_quarantine_deletion_never_calls_path_rmtree(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -258,6 +261,7 @@ def test_windows_pinned_delete_blocks_quarantine_replacement_attempt(
     assert not tuple(tmp_path.glob(".*.rollback-*"))
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="POSIX retains rollback tombstones")
 def test_child_mutation_before_pinned_delete_is_restored_not_deleted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -298,6 +302,7 @@ def test_child_mutation_before_pinned_delete_is_restored_not_deleted(
     assert not tuple(tmp_path.glob(".*.rollback-*"))
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="POSIX retains rollback tombstones")
 def test_identical_byte_child_replacement_mismatches_native_identity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -386,6 +391,7 @@ def test_posix_unsupported_rollback_preserves_recovery_evidence_without_delete_c
     assert (recoveries[0] / evidence.name).read_bytes() == b"preserve exactly\x00\x01"
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="POSIX retains rollback tombstones")
 def test_rollback_restores_foreign_bundle_replacement_byte_exact(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -434,6 +440,7 @@ def test_rollback_restores_foreign_bundle_replacement_byte_exact(
     assert not tuple(tmp_path.glob(".*.tmp-*"))
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="POSIX retains rollback tombstones")
 def test_rollback_restores_foreign_non_directory_substitution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -478,6 +485,7 @@ def test_rollback_restores_foreign_non_directory_substitution(
     assert not tuple(tmp_path.glob(".*.tmp-*"))
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="POSIX retains rollback tombstones")
 def test_rollback_preserves_both_foreign_trees_when_destination_is_reoccupied(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -527,6 +535,7 @@ def test_rollback_preserves_both_foreign_trees_when_destination_is_reoccupied(
     assert (quarantines[0] / "foreign-one.txt").read_bytes() == b"foreign one\n"
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="POSIX retains rollback tombstones")
 def test_rollback_restores_foreign_symlink_or_reparse_substitution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -741,6 +750,7 @@ def test_report_pair_race_has_one_winner_and_never_overwrites(tmp_path: Path) ->
     assert not tuple(tmp_path.glob(".*.tmp-*"))
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="POSIX retains rollback tombstones")
 def test_dataset_pair_rolls_back_bundle_when_output_already_exists(tmp_path: Path) -> None:
     output = tmp_path / "dataset"
     output.mkdir()

@@ -545,24 +545,27 @@ def test_active_old_product_name_scan_has_no_literal_hits() -> None:
         f"import {legacy_import}",
         "Agent Failure" + " Clinic",
     )
-    result = subprocess.run(
-        [
-            "rg",
-            "-n",
-            "--fixed-strings",
-            *(item for pattern in patterns for item in ("-e", pattern)),
-            "src",
-            "tests",
-            "pyproject.toml",
-            "Dockerfile",
-            "compose.yaml",
-            ".env.example",
-            "README.md",
-            ".github",
-        ],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
+    paths = (
+        ROOT / "src",
+        ROOT / "tests",
+        ROOT / "pyproject.toml",
+        ROOT / "Dockerfile",
+        ROOT / "compose.yaml",
+        ROOT / ".env.example",
+        ROOT / "README.md",
+        ROOT / ".github",
     )
-    assert result.returncode == 1, result.stdout + result.stderr
+    files = (
+        path
+        for root in paths
+        for path in ([root] if root.is_file() else root.rglob("*"))
+        if path.is_file()
+        and path.suffix in {"", ".example", ".md", ".py", ".toml", ".yaml", ".yml"}
+    )
+    hits = {
+        (path.relative_to(ROOT).as_posix(), pattern)
+        for path in files
+        for pattern in patterns
+        if pattern in path.read_text(encoding="utf-8")
+    }
+    assert hits == set()
