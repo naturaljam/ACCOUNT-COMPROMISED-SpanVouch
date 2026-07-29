@@ -1,0 +1,183 @@
+\section{Problem Formulation}
+\label{sec:problem}
+
+\subsection{Agent Trajectories and Addressable Evidence}
+
+Let an agent execution be represented by an immutable trajectory
+$\tau=(s_1,\ldots,s_n)$, where each span $s_i$ records an entity, operation,
+parent relation, time interval, status, and a finite map of attributes. A
+stable selector $p=(i,f)$ addresses field $f$ of span $s_i$. Resolving $p$
+against $\tau$ yields an evidence item
+\begin{equation}
+    e=(i,f,v,H(v)),
+\end{equation}
+where $v$ is the canonical field value and $H$ is SHA-256 over its canonical
+serialization. An evidence reference is valid only if the span and field
+exist, the observed value equals $v$, and the recorded digest equals $H(v)$.
+Validity establishes that a citation is authentic; it does not establish that
+the evidence is relevant or sufficient for a causal claim.
+
+\subsection{Structured Diagnosis}
+
+A diagnosis report is
+\begin{equation}
+    d=(r,y,S,C,E,q,m),
+\end{equation}
+where $r\in\{\textsc{diagnosed},\textsc{no-failure},\textsc{abstained}\}$ is
+the report status, $y$ is a failure type when $r=\textsc{diagnosed}$, $S$ is a set of
+decisive spans, $C=(c_1,\ldots,c_k)$ is a bounded causal chain, $E$ is a set of
+evidence references, $q\in[0,1]$ is a model-reported confidence, and $m$ is
+provenance. Each claim $c_j$ names its causal stage and the subset of $E$ used
+to support it. A report may instead return \textsc{no-failure} or abstain with
+a structured reason. Contract~v1 does not encode a separate
+responsible-entity field; attribution is represented by decisive spans and
+causal claims. Entity-level evaluation is therefore defined only when the
+reference label is derivable from span metadata or supplied through a separately
+versioned contract. The contract constrains
+syntax, identity, integrity, and state consistency; semantic support is
+evaluated separately.
+
+\subsection{Independent Verification Protocol}
+
+Given $(\tau,d)$, verifier channel $k$ produces
+\begin{equation}
+    z_k=(u_k,F_k,G_k,m_k),
+\end{equation}
+where $u_k\in\{\textsc{verified},\textsc{needs-evidence},
+\textsc{review-required}\}$, $F_k$ is a set of findings, $G_k$ is a set of
+typed evidence gaps, and $m_k$ records verifier provenance. Hard deterministic
+findings---for example, an invalid selector, hash mismatch, impossible time
+order, or scope violation---make a report ineligible for automatic acceptance.
+The semantic channel evaluates relevance, sufficiency, counter-evidence, and
+alternative causal explanations. We call the protocol independently verified
+when channel inputs and failure sources are deliberately separated and their
+residual error correlation is measured; we do not assume statistical
+independence a priori.
+
+\subsection{Selective Diagnosis Risk}
+
+Let $L^{\mathrm{rep}}(d,y^*)\in\{0,1\}$ be a report-level loss against an
+execution-derived reference $y^*$. The loss is one when any prespecified
+critical component is wrong: report status, failure type, decisive-span set,
+causal relation, or evidence sufficiency. Entity attribution may be added only
+for datasets whose gold responsibility label is derivable from the frozen span
+representation. Equivalent sufficient-evidence sets and the adjudication
+procedure are frozen before calibration. Adjudication is completed without
+access to calibration scores or acceptance decisions, and every sampled report
+receives a certification loss $\widetilde L^{\mathrm{rep}}$: it equals the
+adjudicated loss when all critical labels resolve and is set conservatively to
+one if any critical label remains unresolved. No report or group is excluded
+because a critical label is unresolved.
+
+The independent Bernoulli unit is a preregistered group $G_i$ keyed by the
+tuple (task template, repository, environment); all report opportunities that
+share the tuple belong to the same group. These groups are sampled independently
+from the in-distribution group population. Their report opportunities
+$j=1,\ldots,N_i$ and grouping keys are fixed without using calibration outcomes.
+A frozen scalar error score $s(x)$ assigns larger values to riskier reports. At
+candidate $\lambda$, report-level acceptance is
+\begin{equation}
+    B_{ij}(\lambda)=
+    \mathbf{1}\{s(X_{ij})\leq\lambda\}\mathbf{1}\{H_{ij}=1\},
+\end{equation}
+where $H_{ij}$ is deterministic eligibility. The prespecified group policy
+accepts a group iff it accepts at least one report and assigns a binary group
+loss iff any accepted report has a frozen critical defect:
+\begin{align}
+    A_i^{G}(\lambda)
+        &=\mathbf{1}\!\left\{\sum_{j=1}^{N_i}B_{ij}(\lambda)>0\right\},\\
+    L_i^{G}(\lambda)
+        &=\mathbf{1}\!\left\{\sum_{j=1}^{N_i}
+          B_{ij}(\lambda)\widetilde L_{ij}^{\mathrm{rep}}>0\right\}.
+\end{align}
+The population group acceptance rate and primary selective risk are
+\begin{align}
+    a_G(\lambda) &= \Pr(A_i^G(\lambda)=1),\\
+    p_\lambda^G &=
+    \Pr(L_i^G(\lambda)=1\mid A_i^G(\lambda)=1).
+\end{align}
+Hard deterministic violations are never eligible, regardless of their learned
+risk score.
+
+For $n$ independently sampled calibration groups, define
+\begin{equation}
+    M_\lambda^G=\sum_{i=1}^{n}A_i^G(\lambda),\quad
+    K_\lambda^G=\sum_{i=1}^{n}A_i^G(\lambda)L_i^G(\lambda).
+\end{equation}
+Empty group acceptance is infeasible, not zero risk, and
+$K_\lambda^G/M_\lambda^G$ is defined only when $M_\lambda^G>0$. The analogous
+individual-report ratio and its report counts are descriptive because reports
+within a group need not be independent.
+
+Before calibration, we freeze the score, deterministic tie-breaking, minimum
+accepted-group count $m_{\min}$, and a finite candidate family $\Lambda$. For
+overall failure probability $\delta$, let $U_\lambda$ be the one-sided
+Clopper--Pearson upper bound for $p_\lambda^G$, using per-candidate failure
+probability $\delta/|\Lambda|$ so that the bounds hold simultaneously over the
+family~\cite{clopper1934use}. Explicitly,
+\begin{equation}
+    U_\lambda=
+    \begin{cases}
+        1, & M_\lambda^G=0\ \text{or}\ K_\lambda^G=M_\lambda^G,\\
+        \begin{aligned}
+        &\operatorname{Beta}^{-1}\!\left(
+        1-\frac{\delta}{|\Lambda|}; K_\lambda^G+1,\right.\\[-1mm]
+        &\qquad\left.M_\lambda^G-K_\lambda^G\right),
+        \end{aligned} & \text{otherwise}.
+    \end{cases}
+\end{equation}
+The feasible set is
+\begin{equation}
+    \mathcal{F}=\{\lambda\in\Lambda:
+    U_\lambda\leq\alpha,\ M_\lambda^G\geq m_{\min}\}.
+\end{equation}
+
+\paragraph{Conditional finite-sample guarantee.}
+For every fixed $\lambda\in\Lambda$, conditional on the number of accepted
+groups, the erroneous accepted-group count is binomial with parameter
+$p_\lambda^G$ under independent group sampling and a frozen pipeline. The
+one-sided exact bounds therefore satisfy
+\begin{equation}
+    \Pr\!\left(\forall\lambda\in\Lambda:
+    p_\lambda^G\leq U_\lambda\right)\geq 1-\delta
+\end{equation}
+by the union bound. Consequently, whenever $\mathcal{F}$ is nonempty, any
+candidate selected from $\mathcal{F}$ by the frozen rule satisfies
+$p_\lambda^G\leq\alpha$ with probability at least $1-\delta$. This statement
+is conditional on the defined sampling population, frozen loss, complete
+candidate family, and absence of calibration-dependent pipeline changes.
+
+The chosen operating point maximizes calibration group acceptance over
+$\mathcal{F}$, with the frozen tie-breaker, and is evaluated once on untouched
+test data. If $\mathcal{F}$ is empty, the outcome is ``no feasible operating
+point.'' This yields a calibration-only PAC certificate under frozen-pipeline
+and i.i.d.-group assumptions~\cite{xu2025scrc}; it is not ordinary conformal
+risk control applied directly to the random selective-risk ratio
+~\cite{angelopoulos2024crc}. With zero erroneous accepted groups, one fixed
+candidate, and one-sided 95\% confidence, the exact upper bound requires 59
+accepted independent calibration groups for $\alpha=0.05$ and 29 for
+$\alpha=0.10$.
+Alternative treatments of unresolved labels are reported separately as
+sensitivity analyses and do not inherit this certificate.
+
+\paragraph{Untouched-test evaluation.}
+The selected candidate is fixed before test access and evaluated exactly once.
+Test counts and uncertainty estimate its realized performance; they neither
+repeat candidate selection nor retroactively alter the calibration certificate.
+
+\subsection{Bounded Evidence Acquisition}
+
+When verification yields an actionable gap $G$, an acquisition policy
+$\pi(G)$ may choose one action from a finite allowlist. Level~0 uses existing
+evidence, Level~1 reveals an already recorded but omitted field or span, and
+Level~2 replays at most one allowlisted read-only and idempotent operation. The
+action, returned evidence, cost, and resulting diagnosis revision are logged.
+Because acquisition changes the observed feature distribution, the decision
+rule after acquisition is calibrated for the complete policy over routing,
+action, diagnosis revision, re-verification, and final acceptance
+~\cite{xu2026bcea}. If the acquisition policy is selected on calibration data,
+the simultaneously corrected family is the frozen policy-by-threshold family;
+otherwise the policy is frozen on development data before calibration. No
+pre-acquisition threshold is reused after acquisition. If no action is
+permitted or the post-acquisition report remains ineligible, the system
+abstains.

@@ -1,0 +1,90 @@
+\section{Results}
+\label{sec:results}
+
+\subsection{Controlled Evidence-Contract Results}
+
+Table~\ref{tab:mutation-results} reports every frozen candidate. All 20 valid
+reports passed deterministic verification. All 16 mutated reports were
+intercepted, yielding 20/20 valid-report acceptance, 16/16 hard-defect recall,
+and 0/20 false blocks on this controlled benchmark. The verifier routed
+repairable selector and grounding defects to \textsc{needs-evidence}; it routed
+scope, hash-integrity, and diagnosis-conflict defects directly to
+\textsc{review-required}.
+
+\begin{table}[t]
+    \caption{Deterministic verification on the 36-candidate frozen benchmark.
+    ``NE'' denotes \textsc{needs-evidence}; ``HR'' denotes
+    \textsc{review-required}.}
+    \label{tab:mutation-results}
+    \centering
+    \small
+    \begin{tabular}{@{}lrrr@{}}
+        \toprule
+        Candidate family & $n$ & NE & HR \\
+        \midrule
+        Valid, unmodified & 20 & 0 & 0 \\
+        Unsupported scope & 6 & 0 & 6 \\
+        Invalid selector & 2 & 2 & 0 \\
+        Value/hash mismatch & 2 & 0 & 2 \\
+        Claim not grounded & 2 & 2 & 0 \\
+        Critical span not grounded & 2 & 2 & 0 \\
+        Diagnosis conflict & 2 & 0 & 2 \\
+        \midrule
+        All injected defects & 16 & 6 & 10 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+These results test exact implemented rules against programmed defects. They do
+not estimate performance on naturally occurring diagnoses and do not measure
+the optional semantic verifier. Their contribution is narrower: the
+claim--evidence contract creates an executable boundary that distinguishes
+valid reports from six classes of known invalid report.
+
+\subsection{System Validation Results}
+
+Table~\ref{tab:system-results} summarizes the system-level evidence. The audited
+public snapshot at Git revision
+\nolinkurl{441871aa19cd4d7c129a721a449c5a098780afd1} collects 1,638 tests;
+its complete local release gate recorded 1,637 passes, one platform-specific
+skip, and 93.40\% statement coverage.
+Static analysis, packaging, Compose validation, and the unprivileged container
+path passed. The accepted recovery gate also completed all 20 independent
+SQLite stability processes and preserved an end-to-end review decision across
+an API-container restart.
+
+\begin{table}[t]
+    \caption{SpanVouch engineering validation. The exact public Git revision
+    is stated in the accompanying text.}
+    \label{tab:system-results}
+    \centering
+    \small
+    \begin{tabular}{@{}p{0.30\columnwidth}p{0.62\columnwidth}@{}}
+        \toprule
+        Validation surface & Observed result \\
+        \midrule
+        Code snapshot & Public Git revision named above \\
+        Public contracts & 6 versioned roots with strict valid/invalid fixtures \\
+        Release suite & 1,637 passed, 1 skipped; 93.40\% coverage \\
+        Static/delivery gates & Ruff, strict mypy, locked wheel, and Compose passed \\
+        Process recovery & 20/20 SQLite processes completed \\
+        Container recovery & Unprivileged API retained the terminal decision after restart \\
+        Frozen artifact & Manifest and metrics hashes reproduced exactly \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsection{Offline Matrix Results}
+
+The offline matrix evaluated all 24 scheduled domain--framework--condition
+cells. It completed four adapter executions and both framework-parity
+comparisons, then generated the evaluated-results manifest, statistical assets,
+claim-gate report, and paper assets. Repeated executions produced identical
+bundles. The run attempted zero provider requests and zero GPU operations.
+
+The matrix result establishes that every B0--B5 delivery and analysis interface
+is executable across both labs and framework adapters. It does not rank the six
+conditions: fake semantic-provider outputs intentionally make the recorded
+condition risks unsuitable for an effectiveness comparison. Real-provider
+false-acceptance, correlated-error, and empirical target-risk results therefore
+remain outside the reported findings.

@@ -1,0 +1,83 @@
+\section{Introduction}
+\label{sec:introduction}
+
+Tool-using agents interleave model decisions with retrieval, API calls, code
+execution, and interactions among agents. When an execution fails, the final
+error rarely identifies the decisive cause. A malformed argument may be
+repaired downstream, an early context error may surface only after several
+valid actions, and a failed tool call may be a consequence rather than the
+cause. Agent failure diagnosis must therefore recover a causal report from the
+trajectory and ground that report in evidence that another process can locate
+and check.
+
+Recent systems make trajectory-based attribution increasingly concrete.
+AgentRx derives and checks execution constraints before localizing a critical
+step~\cite{barke2026agentrx}; AgenTracer combines controlled injection,
+counterfactual replay, and learned attribution~\cite{zhang2025agentracer}; and
+VerifyMAS verifies failure hypotheses over complete multi-agent
+trajectories~\cite{qiao2026verifymas}. Who\&When Pro further scales controlled
+failure injection and golden attribution labels~\cite{liu2026whowhenpro}.
+These methods improve localization, supervision, and hypothesis testing, but
+they leave a downstream decision unresolved: when should a system trust a
+structured diagnosis rather than treat it as another plausible model output?
+
+Three failure modes make this trust decision distinct from attribution alone.
+First, citation validity is weaker than evidential support: a model can cite a
+real field that is irrelevant, insufficient, or contradicted elsewhere in the
+trajectory. Second, a critic does not create independent evidence. A diagnoser
+and verifier can share a model family, provider, prompt assumptions, retrieved
+summaries, or the same misleading trajectory abstraction. Third, deployment
+requires selective acceptance. Rejecting uncertain reports can lower observed
+error only by sacrificing acceptance, while a threshold chosen after inspecting
+calibration outcomes requires selection-aware uncertainty accounting.
+
+We introduce \emph{Independently Verified Agent Diagnosis} (\method), a
+protocol that makes these trust boundaries explicit. Each diagnosis contains a
+bounded causal chain whose claims resolve to immutable trajectory fields and
+canonical hashes. A deterministic channel enforces identity, integrity,
+temporal, structural, scope, and evidence-coverage constraints; a separately
+controlled semantic channel re-evaluates relevance, sufficiency,
+counter-evidence, and alternative causal accounts without access to evaluator
+labels or the diagnoser's hidden reasoning. Verification can accept, request at
+most one auditable revision, abstain, or defer to a human decision.
+
+IVAD also formalizes acceptance at the level where its risk statement is
+defined. Reports that share a preregistered task-template, repository, and
+environment tuple form one group. The protocol freezes the loss, scoring rule,
+finite candidate family, minimum accepted-group count, and tie-breaker before
+calibration. Simultaneous one-sided exact-binomial bounds identify candidates
+whose group-selective risk is at most a target $\alpha$ under independent-group
+and frozen-pipeline assumptions. The selected candidate is evaluated once on
+untouched test data; if no candidate is feasible, the protocol returns no
+operating point rather than relaxing the target.
+
+\system is the open-source reference implementation of these ideas. It
+provides six versioned public contracts, strict trace projection, deterministic
+and optional semantic verification, one bounded revision, human authority,
+recoverable SQLite state, API and command-line delivery, LangGraph and AutoGen
+adapters, two controlled agent labs, and content-addressed evaluation
+artifacts. The checked-in validation traverses the complete 24-cell offline
+domain--framework--condition matrix with no provider or GPU calls. This
+evidence tests executability, parity, provenance, and recovery; it does not
+substitute fake-provider behavior for a semantic-effectiveness result.
+
+\begin{anonsuppress}
+Source code: \href{https://github.com/naturaljam/SpanVouch}
+{\nolinkurl{github.com/naturaljam/SpanVouch}}.
+\end{anonsuppress}
+
+This paper makes four contributions:
+\begin{itemize}
+    \item We define IVAD, a diagnosis protocol whose causal claims bind to
+    immutable trajectory fields through a machine-checkable claim--evidence
+    contract.
+    \item We separate hard factual eligibility from controlled semantic
+    verification and make diagnoser--verifier information overlap an explicit
+    experimental variable.
+    \item We formulate accepted-diagnosis correctness as group-selective risk
+    and give a finite-candidate, simultaneous calibration protocol with an
+    explicit no-feasible-point outcome.
+    \item We develop SpanVouch, a reproducible implementation that connects
+    contracts, diagnosis, verification, bounded review, durable recovery,
+    framework adapters, and manifest-bound evaluation in one system.
+\end{itemize}

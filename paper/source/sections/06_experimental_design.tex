@@ -1,0 +1,78 @@
+\section{Evaluation}
+\label{sec:experiments}
+
+The evaluation separates properties that can be established without a model
+provider from claims that require real semantic-verifier observations. We ask
+three questions. \textbf{RQ1} tests whether the implemented evidence contract
+accepts contract-valid reports and intercepts controlled integrity, grounding,
+scope, and conflict defects. \textbf{RQ2} tests whether SpanVouch preserves
+determinism, recovery, dependency boundaries, and delivery behavior across its
+full release gate. \textbf{RQ3} tests whether the multi-domain,
+multi-framework B0--B5 artifact pipeline executes end to end without leaking
+labels or requiring a live provider. The formal semantic-effectiveness and
+group-selective-risk study remains governed by the protocol below, but its
+unexecuted outcomes are not mixed with RQ1--RQ3.
+
+\subsection{Frozen Deterministic Benchmark}
+
+The primary controlled benchmark contains 36 SupportLab diagnosis candidates
+derived from 20 frozen traces. Twenty candidates are contract-valid,
+unmodified reports. The other 16 contain one programmed defect from six
+families: unsupported scope (6), invalid selector (2), evidence-value hash
+mismatch (2), ungrounded claim (2), ungrounded critical span (2), and diagnosis
+conflict (2). The deterministic verifier processes every candidate without a
+provider call. A valid candidate succeeds only when it receives
+\textsc{verified}; a mutation is intercepted when it receives
+\textsc{needs-evidence} or \textsc{review-required} with the corresponding
+typed finding.
+
+The checked-in reference bundle binds the candidate and label manifests,
+configuration, code revision, runtime, and output hashes. Its artifact-manifest
+SHA-256 is
+\nolinkurl{f8f33da259ff055edf626ac50f35102e1763e7ee00e8d9a046003e945f1ee3a5};
+the metrics SHA-256 is
+\nolinkurl{c3fc1f4fc2015cbc0a3d6691bf01da98e1a77f7ac139d37f7e75cd2038742f9b}.
+
+\subsection{Release and Recovery Validation}
+
+The release gate combines unit, contract, architecture, integration, process,
+and end-to-end tests. Contract tests cover the six public schema roots and
+valid/invalid fixtures. Architecture tests enforce dependency direction and
+provider-label isolation. Recovery tests exercise idempotency, compare-and-swap
+updates, owner-fenced leases, multi-process SQLite access, and state persistence
+across an API-container restart. Static and delivery gates run Ruff, strict
+mypy, locked wheel construction, Compose validation, and an unprivileged
+container smoke test.
+
+\subsection{Offline Multi-Framework Matrix}
+
+The pipeline validation crosses two domains (SupportLab and OpsLab), two
+frameworks (LangGraph and AutoGen), and six verifier conditions. B0 accepts a
+contract-valid diagnosis without a verifier; B1 applies deterministic
+verification; B2 and B3 exercise shared-context and isolated semantic-verifier
+interfaces; B4 exercises an isolated cross-model interface; and B5 composes
+deterministic and isolated semantic interfaces. In this validation, semantic
+conditions use declared fake providers and therefore carry no semantic-
+effectiveness interpretation.
+
+The run schedules $2\times2\times6=24$ cells, records four framework-adapter
+executions and two parity comparisons, joins labels only after the provider
+phase, and generates metrics, claim gates, paper assets, and a manifest. The
+artifact explicitly records \code{fake\_\allowbreak{}evidence=true}, zero provider calls,
+and zero GPU calls. Repeating the run must produce byte-identical bundles.
+
+\subsection{Real-Provider and Risk Protocol}
+
+The result-bearing semantic study uses the same frozen traces and diagnoses
+across B0--B5. Provider-visible inputs exclude labels, mutation metadata,
+expected findings, split identity, credentials, and hidden reasoning. The
+primary semantic endpoint is a correct, evidence-supported diagnosis under
+execution-derived labels; paired bootstrap intervals resample scenario-template
+clusters and prespecified primary comparisons use Holm correction.
+
+The group-selective study freezes development, calibration, and untouched test
+groups before outcome analysis. It reports every $(K_\lambda^G,M_\lambda^G)$
+pair, simultaneous upper bound, accepted-group minimum, feasibility decision,
+and selected candidate. Provider failures and contract-invalid outputs remain
+visible. No value from the fake-provider matrix enters this study's
+effectiveness or risk calculations.

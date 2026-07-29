@@ -1,0 +1,89 @@
+\section{The IVAD Method}
+\label{sec:method}
+
+\subsection{Overview}
+
+\method is designed to convert an agent trajectory into a selective,
+evidence-constrained
+diagnostic decision. Given a failed execution, the method (1) projects the raw
+trace into a sanitized diagnostic context and addressable evidence catalog,
+(2) generates a structured diagnosis, (3) independently re-parses its evidence
+through deterministic and semantic verification channels, and (4) chooses
+among acceptance, one bounded acquisition action, and abstention.
+Figure~\ref{fig:ivad-system} shows how SpanVouch realizes projection,
+structured diagnosis, dual-channel verification, bounded revision, human
+decision, and manifest-bound persistence. The group-selective controller and
+Level~1/2 acquisition actions are protocol components whose empirical claims
+require qualifying calibration and provider artifacts; the engineering results
+reported here do not substitute for those outcomes.
+
+\subsection{Claim--Evidence Contract}
+
+The claim--evidence contract prevents natural-language explanations from being
+treated as self-authenticating evidence. Each causal claim names one or more
+evidence identifiers, and every identifier resolves through a stable selector
+to an immutable trajectory value and digest. Deterministic validation checks
+the span tree, selector existence, canonical value, hash, duplicate references,
+critical-span grounding, scope, and domain invariants. These checks are hard
+constraints: a semantic score cannot override them.
+
+Contract v1 has six roots:\newline
+{\footnotesize\code{spanvouch.trace/1.0}; \code{spanvouch.diagnosis/1.0};\newline
+\code{spanvouch.diagnostic-context/1.0};\newline
+\code{spanvouch.verification/1.0}; \code{spanvouch.review/1.0};\newline
+\code{spanvouch.artifact-manifest/1.0}.} Package versions and contract versions
+are independent: a package release need not change a contract, and a contract
+revision is not implied by a package release. Selectors, canonical values, and
+hashes are therefore machine-checkable bindings. They do not establish that a
+cited item is semantically relevant or that the cited items are causally
+sufficient for a claim.
+
+\subsection{Controlled Failure Separation}
+
+The semantic verifier receives the structured claim, sanitized trajectory, and
+allowed evidence catalog, but not the diagnoser's hidden reasoning or evaluator
+labels. It judges whether the cited facts support the claimed failure and
+responsibility, whether decisive counter-evidence is unaddressed, and whether
+an alternative causal account remains viable. The experimental design varies
+model identity, provider, prompt, retrieved summaries, and visible rationale
+to measure which forms of separation reduce correlated false acceptance.
+The B0--B5 design compares these conditions across paired LangGraph and
+AutoGen scenario-template clusters. The offline matrix reported in this paper
+validates those interfaces with declared fake providers; estimating incremental
+defect detection or correlated false acceptance requires real-provider outcomes.
+
+\subsection{Group-Selective Risk Protocol}
+
+Verification produces hard eligibility constraints and soft features such as
+channel disagreement, evidence coverage, semantic support, and distributional
+indicators. IVAD freezes a scalar error score, its direction, deterministic
+tie-breaking, a finite candidate family $\Lambda$, target $\alpha$, confidence
+level $1-\delta$, and minimum accepted-group count $m_{\min}$ before
+calibration. The independently sampled unit is a preregistered task group, not
+an individual report. A group incurs loss when any accepted report within it
+has a frozen critical defect.
+
+Calibration records $(K_\lambda^G,M_\lambda^G)$ for every candidate and applies
+simultaneous one-sided exact-binomial bounds. The protocol selects the feasible
+candidate with greatest calibration group acceptance, applies a frozen
+tie-breaker, and evaluates the result once on untouched test data. If no
+candidate meets both the risk bound and accepted-group minimum, IVAD reports no
+feasible operating point. Section~\ref{sec:problem} states the full conditional
+finite-sample guarantee and its assumptions. SpanVouch supplies the contracts,
+artifact identities, and evaluation pipeline needed to execute this protocol;
+the engineering results in this paper do not claim empirical target-risk
+attainment.
+
+\subsection{One-Shot Layered Acquisition}
+
+An acquisition action is triggered only by a typed evidence gap. The policy
+selects the least costly permitted level, records the action and budget, allows
+at most one diagnosis revision, and then repeats verification. The no-
+acquisition and post-acquisition paths use a jointly frozen calibration
+protocol over routing, action, revision, re-verification, and final acceptance.
+If calibration labels select an acquisition policy, $\Lambda$ is the complete
+frozen policy-by-threshold family covered by the simultaneous correction;
+otherwise the policy is frozen on development data before calibration. No
+pre-acquisition threshold is reused after acquisition. This design makes the
+acceptance recovered by acquisition measurable against tokens, tool calls,
+latency, and monetary cost.

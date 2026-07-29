@@ -1,0 +1,89 @@
+\section{Background and Related Work}
+\label{sec:related-work}
+
+\subsection{Failure Attribution for LLM Agents}
+
+Agent failure attribution has progressed from direct trajectory classification
+to more structured forms of localization and verification. Who\&When formalizes
+responsible-agent and decisive-step attribution, while TRAIL and MAST provide
+trajectory corpora and failure taxonomies~\cite{zhang2025whowhen,deshpande2025trail,cemri2025mast}.
+AgentRx synthesizes
+constraints and validates them step by step before an LLM judge identifies a
+critical step and failure category~\cite{barke2026agentrx}. AgenTracer uses
+counterfactual replay and programmed fault injection to train a specialized
+failure tracer~\cite{zhang2025agentracer}. VerifyMAS changes the inference
+problem from direct agent--error prediction to full-trajectory hypothesis
+verification~\cite{qiao2026verifymas}; DoVer uses intervention and checkpoint
+replay to test debugging hypotheses~\cite{ma2026dover}. HarnessFix further joins
+trace representation, diagnosis, scoped repair, and regression validation
+\cite{chen2026harnessfix}. Who\&When Pro contributes a much larger
+controlled benchmark constructed by replaying a successful prefix before
+injecting a failure~\cite{liu2026whowhenpro}. \method is complementary to
+these localization methods: it studies whether a produced diagnosis should be
+accepted, acquired upon, or rejected after its evidence and verification
+failure modes are explicitly represented.
+
+\subsection{Uncertainty and Risk Control for Agent Attribution}
+
+Conformal Agent Error Attribution constructs contiguous prediction sets over
+trajectory locations and provides finite-sample coverage guarantees for
+sequential error localization~\cite{feng2026conformalagent}. Its prediction
+object is a set of possible error locations used for rollback. Our primary
+risk object is different: a bounded loss over the correctness and evidential
+sufficiency of an accepted diagnosis report. Conformal Risk Control provides a
+general finite-sample framework for bounded monotone losses
+\cite{angelopoulos2024crc}. Selective Conformal Risk Control
+combines selective prediction with conformal risk control and includes a
+calibration-only PAC-style variant~\cite{xu2025scrc}. We use this line as the
+statistical basis for testing risk--coverage control and compare against more
+general risk-controlled selective trust decisions such as
+SCoRE~\cite{bai2026score}, while treating
+exchangeability, simultaneous threshold selection, and acquisition-induced
+distribution changes as explicit assumptions rather than automatic
+properties of an agent system.
+
+\subsection{Verification and Critic-Based Agent Workflows}
+
+Generator--critic and self-refinement workflows commonly use another model
+call to review or revise an output. For failure diagnosis, however, the number
+of reviewers is less important than their information and failure overlap.
+AgentRewardBench shows that trajectory judges have systematic and
+benchmark-dependent weaknesses~\cite{lu2025agentrewardbench}; LLM critics can
+surface bugs but can also introduce false findings~\cite{mcaleese2024critics};
+and distinct models may retain strongly correlated errors
+\cite{kim2025correlated}. GroundEval shows the complementary value of checking
+stateful evidence paths with deterministic constraints rather than final-answer
+plausibility alone~\cite{flynt2026groundeval}.
+\method therefore separates deterministic facts from semantic judgments,
+restricts the semantic verifier to a structured diagnosis and sanitized source
+trajectory, and measures the effect of sharing models, providers, prompts, and
+retrieved summaries. This turns ``independent verification'' from a role name
+into an experimental variable.
+
+\subsection{Adaptive Evidence Acquisition}
+
+Adaptive retrieval methods allocate information-gathering effort according to
+estimated task difficulty or model uncertainty. Adaptive-RAG routes questions
+among no-retrieval, single-step, and iterative retrieval strategies
+\cite{jeong2024adaptiverag}; DRAGIN decides when and what to retrieve during
+generation~\cite{su2024dragin}; and SeaKR uses self-aware uncertainty to select
+knowledge expected to reduce uncertainty~\cite{yao2025seakr}. Related agentic
+search and adaptive elicitation methods collect information sequentially during
+reasoning~\cite{li2025searcho1,wang2025adaptiveelicitation}. These systems
+primarily acquire information to improve task answers. \method instead
+acquires provenance-preserving evidence to resolve a verifier-identified
+diagnostic gap under an explicit action budget, then recalibrates the complete
+post-acquisition decision policy. BCEA is especially close at the decision
+level: it replaces a binary answer--abstain choice with answering, abstention,
+or bounded evidence acquisition for vision--language claims
+\cite{xu2026bcea}. IVAD instead acts over typed diagnostic evidence gaps,
+preserves immutable trajectory provenance, and defines risk over accepted
+diagnosis reports rather than task answers.
+
+Taken together, these lines provide the individual mechanisms on which IVAD
+builds: trajectory localization, evidence-path checking, critic judgments,
+selective risk control, and budgeted acquisition. IVAD does not claim any one
+of these components in isolation. Its distinction is their composition around
+an evidence-bearing diagnosis contract, controlled verifier contexts,
+preregistered group-level acceptance, and recalibration of the complete policy
+after acquisition; SpanVouch makes that composition executable.

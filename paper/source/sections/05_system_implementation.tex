@@ -1,0 +1,89 @@
+\section{SpanVouch Reference Implementation}
+\label{sec:implementation}
+
+\input{figures/ivad-system}
+
+\subsection{Architecture and Contracts}
+
+\system implements IVAD as a Python system with dependency direction
+\code{contracts} $\leftarrow$ \code{trace} $\leftarrow$ \code{diagnosis}
+$\leftarrow$ \code{verification} $\leftarrow$ \code{review}. Delivery,
+storage, framework, and model integrations remain outside these core layers.
+Architecture tests enforce the direction so that a provider or orchestration
+framework cannot redefine the evidence and decision semantics.
+
+The public Contract v1 surface has six roots: \traceir, diagnostic context,
+diagnosis, verification, review, and artifact manifest. Models reject unknown
+fields and use canonical JSON for stable SHA-256 identities. A package release
+does not implicitly change a contract version, which allows stored traces,
+reports, and decisions to retain their original interpretation.
+
+\subsection{Trace Projection and Evidence Binding}
+
+\code{TraceProjector} converts a raw execution into a sanitized diagnostic
+context while preserving stable span identity and causal structure.
+\code{EvidenceCatalog} resolves selectors of the form
+\code{span-id::\allowbreak{}field-path} to a canonical value and digest. Provider-visible
+views exclude credentials, authorization headers, raw provider responses,
+hidden reasoning, evaluator labels, mutation metadata, and split identity.
+
+\code{DiagnosisEngine} produces a bounded report containing status, failure
+type, decisive spans, at most three staged causal claims, evidence references,
+confidence, and provenance. The deterministic rules diagnoser supplies the
+offline path; a provider-backed diagnoser uses the same output contract and
+must pass strict parsing before its report enters verification.
+
+\subsection{Separated Verification}
+
+\code{DeterministicVerifier} re-resolves every cited selector from the stored
+context. It checks report binding, canonical values and hashes, duplicate
+references, causal and critical-span grounding, evidence budgets, temporal and
+scope constraints, clean-trace conflicts, and domain invariants. These checks
+form hard eligibility: a semantic score cannot override a failed integrity or
+scope rule.
+
+\code{SemanticVerifier} is an optional provider path that receives only the
+sanitized context and structured diagnosis. It evaluates relevance,
+sufficiency, counter-evidence, and alternative causal accounts, then returns a
+strict verification report. Invalid provider output becomes a typed
+human-review requirement rather than triggering an untracked repair call. The
+experiment adapters can vary model, provider, prompt, and visible context while
+holding the diagnosis bytes fixed.
+
+\subsection{Bounded Review and Recovery}
+
+Verifier reports use three workflow verdicts: \textsc{verified},
+\textsc{needs-evidence}, and \textsc{review-required}. The review state machine
+permits at most one evidence-guided diagnosis revision and repeats verification
+after that revision. Every path terminates in a human \textsc{confirm},
+\textsc{correct}, or \textsc{reject} decision; automation does not manufacture
+an authenticated reviewer identity.
+
+SQLite persistence stores sanitized snapshots, revisions, verifier reports,
+events, and terminal decisions. Idempotency keys, compare-and-swap transitions,
+owner-fenced leases, and immutable event order make interrupted cases
+recoverable across processes and service restarts. FastAPI and the HTTP-only
+command-line client expose the same application workflow. The container image
+runs as an unprivileged user and stores review state in a persistent volume.
+
+\subsection{Framework and Evaluation Adapters}
+
+SupportLab and OpsLab create controlled tool-using failures with execution-
+derived labels. LangGraph and AutoGen adapters implement a shared runtime port;
+parity checks compare terminal state, tool-call order, failure injection, and
+TraceIR projection before a trace becomes eligible for paired evaluation. The
+replay repository then freezes content-addressed traces so that verifier
+conditions consume identical diagnosis and trajectory bytes.
+
+\code{ArtifactManifest} binds code, contracts, datasets, configuration,
+prompts, model and provider identities, randomness, runtime, usage, cost, and
+payload provenance. The experiment runner fails closed before live execution
+unless an exact approved manifest, allowlisted plan, budget ledger, and explicit
+live flag agree. Offline rules, deterministic verification, artifact analysis,
+and the complete delivery path require no provider credential.
+
+The dashed path in Figure~\ref{fig:ivad-system} marks IVAD's formal
+group-selective controller and post-acquisition policy. SpanVouch supplies the
+contract and artifact interfaces required by that protocol; the results in this
+paper validate the implemented engineering path rather than empirical target-
+risk attainment.

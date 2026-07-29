@@ -1,0 +1,49 @@
+\begin{figure*}[t]
+    \centering
+    \begin{tikzpicture}[
+        box/.style={draw, rounded corners=2pt, align=center, minimum height=9mm,
+            text width=23mm, font=\footnotesize, fill=white},
+        implemented/.style={box, draw=black, line width=0.6pt},
+        formal/.style={box, draw=black, dashed, line width=0.6pt},
+        store/.style={box, draw=black, line width=0.6pt, fill=black!5},
+        flow/.style={-{Latex[length=2mm]}, line width=0.6pt},
+        audit/.style={-{Latex[length=2mm]}, line width=0.5pt, dashed}
+    ]
+        \node[implemented] at (0,0) (trace) {Immutable\\agent trace};
+        \node[implemented] at (3.00,0) (context) {Sanitized context\\and evidence catalog};
+        \node[implemented] at (6.00,0) (diagnosis) {Structured\\diagnosis};
+        \node[implemented] at (8.70,0.85) (det) {Deterministic\\verification};
+        \node[implemented] at (8.70,-0.85) (sem) {Separated semantic\\verification};
+        \node[implemented] at (11.50,0) (review) {Bounded revision\\and human decision};
+        \node[formal] at (14.50,0) (risk) {Group-selective\\risk protocol};
+        \node[store, text width=94mm] at (7.20,-2.55) (store)
+            {Immutable artifact manifest and persistent state\\
+            trace $\cdot$ diagnosis $\cdot$ verifier reports $\cdot$ decisions};
+
+        \draw[flow] (trace) -- (context);
+        \draw[flow] (context) -- (diagnosis);
+        \draw[flow] (diagnosis) -- (det);
+        \draw[flow] (diagnosis) -- (sem);
+        \draw[flow] (det) -- (review.north west);
+        \draw[flow] (sem) -- (review.south west);
+        \draw[flow] (review) -- (risk);
+        \draw[audit] (trace.south) |- (store.west);
+        \draw[audit] (context.south) -- (context.south |- store.north);
+        \draw[audit] (diagnosis.south) -- (diagnosis.south |- store.north);
+        \draw[audit] (review.south) -- (review.south |- store.north);
+        \draw[audit] (risk.south) |- (store.east);
+
+        \node[draw, rounded corners=2pt,
+            fit=(trace)(context)(diagnosis)(det)(sem)(review)(store),
+            inner sep=3mm, label={[font=\scriptsize]above:Implemented SpanVouch path}] {};
+    \end{tikzpicture}
+    \caption{IVAD information and decision flow in SpanVouch. Solid boxes are
+    implemented components exercised by the engineering validation. The dashed
+    box is the formal group-selective protocol; the paper specifies its
+    conditional guarantee but does not report empirical target-risk attainment.}
+    \label{fig:ivad-system}
+    \Description{A left-to-right pipeline from immutable agent trace to sanitized
+    context, structured diagnosis, deterministic and semantic verification,
+    bounded revision and human decision, and a dashed group-selective risk
+    protocol. Every component writes to SQLite state and an artifact manifest.}
+\end{figure*}

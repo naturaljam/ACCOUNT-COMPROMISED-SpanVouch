@@ -1,0 +1,37 @@
+\section{Limitations and Threats to Validity}
+\label{sec:limitations}
+
+The term ``independent'' denotes controlled failure separation, not statistical
+independence of verifier errors. Models may share training data, inductive
+biases, or misleading trajectory abstractions even when their APIs and prompts
+differ. Conditioned comparisons can estimate residual error correlation, but
+cannot prove that all shared failure causes have been removed.
+
+The selective-risk statement is conditional on the frozen loss and pipeline,
+independently sampled preregistered groups, a finite candidate family,
+simultaneous correction, and a positive accepted-group minimum. Group-disjoint
+splitting and grouped bootstrap intervals do not establish independent group
+sampling. The group-level any-defect loss can also be more conservative than
+report-level risk. Distribution, provider, and temporal shifts remain outside
+an in-distribution certificate unless separately calibrated or covered by a
+justified shift procedure.
+
+Controlled fault injection supplies reproducible causal labels but may
+not match naturally occurring compound failures. We therefore separate
+injected, replay-derived, and naturally observed cohorts and avoid pooling them
+without stratification. A minimal sufficient evidence set is not always
+unique. Evidence metrics must allow prespecified equivalent sets or adjudicated
+alternatives rather than penalizing every non-canonical proof. If a critical
+label remains unresolved after the preregistered pre-calibration adjudication,
+the primary certificate conservatively assigns loss one. This can overstate
+risk, but excluding unresolved reports would change the estimand and require a
+separately preregistered missingness or selection assumption. Alternative label
+treatments are therefore uncertified sensitivity analyses. Fifth, one bounded
+read-only action cannot recover evidence that was never logged or that requires
+an unsafe side effect. Such cases must remain abstentions.
+
+The reported deterministic benchmark tests programmed contract defects, and
+the offline matrix uses declared fake providers. These results establish
+implemented rule behavior and pipeline reproducibility, not semantic-verifier
+effectiveness or empirical target-risk attainment. No human-participant study
+supports a claim about debugging time or operational decision quality.
