@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use SpanVouch or IVAD, please cite the IVAD preprint."
+title: "SpanVouch: Evidence-Backed Failure Diagnosis for AI Agents"
+type: software
+authors:
+  - family-names: Liu
+    given-names: Hanzhe
+    affiliation: Independent Researcher
+repository-code: "https://github.com/naturaljam/SpanVouch"
+url: "https://github.com/naturaljam/SpanVouch"
+license: MIT
+version: 0.2.0
+date-released: 2026-07-29
+keywords:
+  - AI agents
+  - failure diagnosis
+  - independent verification
+  - evidence grounding
+  - selective risk control
+preferred-citation:
+  type: article
+  title: "IVAD: Evidence-Constrained and Risk-Controlled Failure Diagnosis for AI Agents"
+  authors:
+    - family-names: Liu
+      given-names: Hanzhe
+      affiliation: Independent Researcher
+  year: 2026
+  url: "https://github.com/naturaljam/SpanVouch/blob/main/paper/IVAD.pdf"

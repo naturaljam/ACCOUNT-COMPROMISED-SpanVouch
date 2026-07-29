@@ -24,4 +24,6 @@ The reported results validate deterministic contract behavior, system integrity,
 
 ## Copyright
 
-Copyright 2026 Hanzhe Liu. The SpanVouch software is licensed under the repository's MIT License. The paper, figures, and paper source are not covered by that software license. Redistribution from this repository is permitted; other reuse requires the copyright holder's permission unless a separate paper license is granted.
+Copyright 2026 Hanzhe Liu. The paper, figures, and paper source are licensed under
+the [Creative Commons Attribution 4.0 International License](https://creativecommons.org/licenses/by/4.0/).
+The SpanVouch software remains separately licensed under the repository's MIT License.
