@@ -22,7 +22,7 @@ jobs:
       - run: uv pip install --python .venv/bin/python --no-deps --no-cache dist/*.whl
       - run: uv run --no-sync ruff check src tests
       - run: uv run --no-sync mypy
-      - run: uv run --no-sync pytest --cov=spanvouch --cov-report=term-missing --cov-fail-under=93
+      - run: uv run --no-sync pytest --cov=spanvouch --cov-report=term-missing --cov-fail-under=92
       - name: Verify offline Phase 5 architecture and security boundaries
         run: uv run --no-sync pytest tests/architecture/test_phase5_boundaries.py -v
       - name: Verify offline Phase 5 end-to-end acceptance

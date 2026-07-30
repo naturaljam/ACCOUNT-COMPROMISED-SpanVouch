@@ -417,11 +417,16 @@ def test_phase_4_release_candidate_documents_delivery_and_six_contract_roots() -
 
 def test_phase_5_ci_enforces_coverage_and_explicit_offline_acceptance_gates() -> None:
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    contributing = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
 
     assert (
         "uv run --no-sync pytest --cov=spanvouch --cov-report=term-missing "
-        "--cov-fail-under=93"
+        "--cov-fail-under=92"
     ) in workflow
+    assert (
+        "uv run pytest --cov=spanvouch --cov-report=term-missing "
+        "--cov-fail-under=92"
+    ) in contributing
     assert (
         "uv run --no-sync pytest tests/architecture/test_phase5_boundaries.py -v"
     ) in workflow

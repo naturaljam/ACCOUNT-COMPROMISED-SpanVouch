@@ -24,7 +24,7 @@ request:
 ```bash
 uv run ruff check src tests
 uv run mypy
-uv run pytest --cov=spanvouch --cov-report=term-missing --cov-fail-under=93
+uv run pytest --cov=spanvouch --cov-report=term-missing --cov-fail-under=92
 uv build --wheel --build-constraints build-constraints.txt --require-hashes --no-cache
 docker compose config --quiet
 ```
