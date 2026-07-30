@@ -7,16 +7,16 @@
 <p align="center"><strong>面向生产级 AI Agent 的证据化失败诊断基础设施。</strong></p>
 
 <p align="center">
-  <a href="https://github.com/naturaljam/SpanVouch/actions/workflows/ci.yml"><img src="https://github.com/naturaljam/SpanVouch/actions/workflows/ci.yml/badge.svg" alt="CI 状态"></a>
-  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&amp;logoColor=white" alt="Python 3.12"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-2F8552.svg" alt="MIT 许可证"></a>
-  <a href="paper/IVAD.pdf"><img src="https://img.shields.io/badge/Paper-IVAD-b91c1c" alt="IVAD 论文"></a>
-  <a href="https://github.com/naturaljam/SpanVouch/releases/tag/v0.2.0"><img src="https://img.shields.io/badge/Release-v0.2.0-111827" alt="v0.2.0 版本"></a>
+  <a href="https://github.com/naturaljam/SpanVouch/actions/workflows/ci.yml">CI</a> &middot;
+  <a href="https://www.python.org/">Python 3.12</a> &middot;
+  <a href="LICENSE">MIT 许可证</a> &middot;
+  <a href="paper/IVAD.pdf">IVAD 论文</a> &middot;
+  <a href="https://github.com/naturaljam/SpanVouch/releases/tag/v0.2.0">v0.2.0</a>
 </p>
 
 <p align="center">
-  <a href="README.md"><img src="https://img.shields.io/badge/README-English-111827?style=for-the-badge" alt="英文 README"></a>
-  <a href="README.zh-CN.md"><img src="https://img.shields.io/badge/README-中文-0f766e?style=for-the-badge" alt="中文 README"></a>
+  <a href="README.md"><kbd>English</kbd></a>
+  <a href="README.zh-CN.md"><kbd>简体中文</kbd></a>
 </p>
 
 SpanVouch 将 Agent 执行轨迹转化为携带证据的诊断决策。它把因果主张绑定到不可变证据，拒绝结构无效的报告，将验证与诊断分离，限制自动修订次数，保留人工决定权，并把每次决定写入可恢复状态。确定性路径完全离线运行；provider 推理必须获得显式授权。

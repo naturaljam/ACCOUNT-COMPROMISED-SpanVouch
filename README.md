@@ -7,16 +7,16 @@
 <p align="center"><strong>Evidence-backed failure diagnosis infrastructure for production AI agents.</strong></p>
 
 <p align="center">
-  <a href="https://github.com/naturaljam/SpanVouch/actions/workflows/ci.yml"><img src="https://github.com/naturaljam/SpanVouch/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
-  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&amp;logoColor=white" alt="Python 3.12"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-2F8552.svg" alt="MIT License"></a>
-  <a href="paper/IVAD.pdf"><img src="https://img.shields.io/badge/Paper-IVAD-b91c1c" alt="IVAD paper"></a>
-  <a href="https://github.com/naturaljam/SpanVouch/releases/tag/v0.2.0"><img src="https://img.shields.io/badge/Release-v0.2.0-111827" alt="Release v0.2.0"></a>
+  <a href="https://github.com/naturaljam/SpanVouch/actions/workflows/ci.yml">CI</a> &middot;
+  <a href="https://www.python.org/">Python 3.12</a> &middot;
+  <a href="LICENSE">MIT License</a> &middot;
+  <a href="paper/IVAD.pdf">IVAD paper</a> &middot;
+  <a href="https://github.com/naturaljam/SpanVouch/releases/tag/v0.2.0">v0.2.0</a>
 </p>
 
 <p align="center">
-  <a href="README.md"><img src="https://img.shields.io/badge/README-English-111827?style=for-the-badge" alt="English README"></a>
-  <a href="README.zh-CN.md"><img src="https://img.shields.io/badge/README-中文-0f766e?style=for-the-badge" alt="Chinese README"></a>
+  <a href="README.md"><kbd>English</kbd></a>
+  <a href="README.zh-CN.md"><kbd>简体中文</kbd></a>
 </p>
 
 SpanVouch converts agent execution traces into evidence-bearing diagnosis decisions. It binds causal claims to immutable evidence, rejects structurally invalid reports, separates verification from diagnosis, limits automated revision, preserves human authority, and records every decision in recoverable state. The deterministic path runs offline; provider-backed reasoning requires explicit authorization.
