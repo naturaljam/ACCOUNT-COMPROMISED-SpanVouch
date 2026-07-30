@@ -1,56 +1,99 @@
-# SpanVouch
+<p align="center">
+  <img src="assets/spanvouch-logo.png" width="220" alt="SpanVouch logo">
+</p>
 
-[![CI](https://github.com/naturaljam/SpanVouch/actions/workflows/ci.yml/badge.svg)](https://github.com/naturaljam/SpanVouch/actions/workflows/ci.yml)
-[![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-2F8552.svg)](LICENSE)
-[![IVAD paper](https://img.shields.io/badge/Paper-IVAD-b91c1c?style=for-the-badge)](paper/IVAD.pdf)
+<h1 align="center">SpanVouch</h1>
 
-[![English](https://img.shields.io/badge/README-English-111827?style=for-the-badge)](README.md)
-[![中文](https://img.shields.io/badge/README-中文-0f766e?style=for-the-badge)](README.zh-CN.md)
+<p align="center"><strong>Evidence-backed failure diagnosis infrastructure for production AI agents.</strong></p>
 
-![SpanVouch logo](assets/spanvouch-logo.png)
+<p align="center">
+  <a href="https://github.com/naturaljam/SpanVouch/actions/workflows/ci.yml"><img src="https://github.com/naturaljam/SpanVouch/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&amp;logoColor=white" alt="Python 3.12"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-2F8552.svg" alt="MIT License"></a>
+  <a href="paper/IVAD.pdf"><img src="https://img.shields.io/badge/Paper-IVAD-b91c1c" alt="IVAD paper"></a>
+  <a href="https://github.com/naturaljam/SpanVouch/releases/tag/v0.2.0"><img src="https://img.shields.io/badge/Release-v0.2.0-111827" alt="Release v0.2.0"></a>
+</p>
 
-**Open-source infrastructure for evidence-backed agent diagnosis, verification, review, and recovery.**
+<p align="center">
+  <a href="README.md"><img src="https://img.shields.io/badge/README-English-111827?style=for-the-badge" alt="English README"></a>
+  <a href="README.zh-CN.md"><img src="https://img.shields.io/badge/README-中文-0f766e?style=for-the-badge" alt="Chinese README"></a>
+</p>
 
-SpanVouch turns agent execution traces into an auditable engineering workflow: structured evidence,
-bounded diagnosis, independent verification, human decisions, and durable recovery. The default path
-is deterministic and offline; provider-backed calls are explicit opt-in.
-
-[Read the IVAD preprint](paper/IVAD.pdf) or [inspect its LaTeX source](paper/source/).
-
-## Why SpanVouch
-
-- Strict TraceIR and versioned schemas replace ad-hoc log parsing.
-- Rules-first diagnosis supports optional provider adapters.
-- Independent verification supports abstention and one bounded revision.
-- SQLite persistence, leases, idempotency, immutable events, and CAS updates support recovery.
-- Frozen datasets, manifests, and deterministic reports provide regression control.
-
-## IVAD protocol
-
-Independently Verified Agent Diagnosis (IVAD) prevents a plausible diagnosis from becoming an operational decision without checkable evidence. SpanVouch is its open-source reference implementation.
+SpanVouch converts agent execution traces into evidence-bearing diagnosis decisions. It binds causal claims to immutable evidence, rejects structurally invalid reports, separates verification from diagnosis, limits automated revision, preserves human authority, and records every decision in recoverable state. The deterministic path runs offline; provider-backed reasoning requires explicit authorization.
 
 ```text
-immutable trace -> claim-evidence contract -> deterministic eligibility
-                -> separated semantic verification -> bounded revision
-                -> human decision -> durable artifact
+immutable trace -> sanitized evidence -> structured diagnosis
+                -> deterministic eligibility -> separated verification
+                -> bounded revision or abstention -> human decision
+                -> durable state + reproducible artifact
 ```
 
-IVAD separates five responsibilities:
+[Read the IVAD preprint](paper/IVAD.pdf) | [Browse the LaTeX source](paper/source/) | [Download release v0.2.0](https://github.com/naturaljam/SpanVouch/releases/tag/v0.2.0)
 
-- **Evidence binding**: every causal claim resolves to an immutable trajectory field and canonical hash
-- **Hard eligibility**: deterministic checks enforce identity, integrity, temporal order, scope, and evidence coverage
-- **Semantic verification**: an optional, separately controlled verifier checks relevance, sufficiency, counter-evidence, and alternative causes
-- **Bounded recovery**: the workflow permits at most one auditable revision before abstention or human review
-- **Risk-aware acceptance**: a frozen finite policy family uses simultaneous exact-binomial bounds and returns no operating point when no candidate satisfies the target
+## Why agent diagnosis needs an evidence layer
 
-The formal risk statement assumes a frozen loss and pipeline, independently sampled preregistered groups, a finite candidate family, simultaneous bounds, a positive minimum acceptance count, deterministic selection, and one untouched test evaluation.
+Agent failures do not behave like ordinary exceptions. A decisive error may occur several valid actions before the final symptom, cross model and tool boundaries, or propagate through a multi-agent workflow. A fluent explanation can still cite irrelevant evidence, omit counter-evidence, or repeat a correlated model error.
 
-## Validated results
+| Production situation | Research problem | Engineering requirement |
+| --- | --- | --- |
+| Long-horizon traces obscure the causal step | Localization is not the same as a trustworthy diagnosis | Preserve stable span identity and re-addressable evidence |
+| A valid citation may be irrelevant or insufficient | Evidence integrity does not imply semantic support | Check deterministic validity and semantic support in separate channels |
+| A second model may share the diagnoser's failure mode | Reviewer agreement does not imply independence | Control verifier inputs, provenance, and failure separation |
+| Thresholds trade fewer errors for lower acceptance | Risk must be stated over accepted diagnoses | Freeze selection rules and return no operating point when none is feasible |
+| Reviews outlive processes, retries, and deployments | A correct algorithm can still fail operationally | Persist state, enforce idempotency, and recover without duplicating decisions |
 
-The public snapshot at Git revision `441871aa19cd4d7c129a721a449c5a098780afd1` records the following evidence:
+## The job SpanVouch performs
 
-| Validation surface | Result |
+SpanVouch turns a failed execution into an operational decision that another engineer can inspect and reproduce. The system must:
+
+- resolve every causal claim to an immutable trajectory field and canonical hash
+- reject identity, integrity, temporal, scope, and evidence-coverage violations before semantic review
+- keep the diagnoser and optional semantic verifier under separate controls
+- allow at most one evidence-guided revision before abstention or human review
+- preserve reviewer authority, idempotency, leases, event history, and compare-and-swap state transitions
+- bind datasets, configurations, code identity, runtime provenance, outputs, and reports into verifiable artifacts
+
+This task defines the boundary between a plausible model response and an auditable engineering decision.
+
+## Technical core
+
+SpanVouch implements the full diagnosis lifecycle through versioned, independently testable layers.
+
+| Layer | Technical mechanism | Failure behavior |
+| --- | --- | --- |
+| Trace contract | TraceIR, canonical JSON, stable span selectors, SHA-256 identities | Reject malformed, ambiguous, or mutable evidence inputs |
+| Diagnostic context | Sanitized trajectory projection and typed evidence catalog | Exclude credentials, hidden reasoning, labels, and provider-private fields |
+| Diagnosis | Rules-first engine with optional provider adapters and bounded causal chains | Fail closed on unsupported output, missing evidence, or invalid provenance |
+| Deterministic verification | Identity, hash, temporal, structural, scope, conflict, and coverage checks | Block automatic acceptance regardless of model confidence |
+| Separated semantic verification | Optional verifier with controlled context, provider, prompt, and visible rationale | Produce typed findings, request one revision, or defer to a human |
+| Review and recovery | SQLite persistence, immutable events, leases, idempotency keys, and optimistic concurrency | Resume interrupted work without manufacturing or duplicating decisions |
+| Evaluation artifacts | Frozen corpora, manifests, provenance ledgers, deterministic reports, and claim gates | Stop when code, data, authorization, budget, or output identity disagrees |
+| Risk-aware acceptance | Frozen finite candidates, simultaneous exact-binomial bounds, minimum accepted groups, and one untouched test evaluation | Return no feasible operating point instead of relaxing the target |
+
+The public contract surface contains six versioned roots: trace, diagnostic context, diagnosis, verification, review, and artifact manifest. Framework and provider adapters remain outside the core dependency direction, so no orchestration framework or model vendor owns the decision contract.
+
+## IVAD research foundation
+
+[IVAD: Evidence-Constrained and Risk-Controlled Failure Diagnosis for AI Agents](paper/IVAD.pdf) introduces Independently Verified Agent Diagnosis (IVAD), the protocol that SpanVouch realizes. IVAD asks a narrower and more operational question than failure attribution alone: when may a system accept an evidence-bearing diagnosis, and when must it revise, abstain, or defer?
+
+The paper contributes three connected ideas:
+
+- **Evidence-bearing decision object**: a diagnosis contains bounded causal claims, stable evidence references, status, provenance, and explicit unresolved evidence
+- **Separated trust channels**: deterministic integrity, optional semantic support, bounded revision, and human authority cannot silently override one another
+- **Group-selective risk protocol**: a frozen finite policy family receives simultaneous one-sided exact-binomial bounds and an explicit no-feasible-point outcome
+
+The formal statement assumes a frozen loss and pipeline, independently sampled preregistered groups, a finite candidate family, simultaneous bounds, a positive minimum accepted-group count, deterministic selection, and one evaluation on untouched test data. SpanVouch supplies the contracts, state machine, adapters, and artifact identities required to execute that protocol.
+
+- [Read the 8-page preprint](paper/IVAD.pdf)
+- [Build from the reproducible LaTeX source](paper/source/)
+- [Review paper construction and CC BY 4.0 licensing](paper/README.md)
+- [Download the versioned PDF and source archive](https://github.com/naturaljam/SpanVouch/releases/tag/v0.2.0)
+
+## Validated engineering evidence
+
+The public evidence snapshot at Git revision `441871aa19cd4d7c129a721a449c5a098780afd1` records the following results.
+
+| Validation surface | Observed result |
 | --- | --- |
 | Evidence-contract benchmark | 36 candidates; 20/20 valid reports accepted; 16/16 injected defects intercepted; 0/20 false blocks |
 | Release suite | 1,638 tests collected; 1,637 passed; 1 skipped; 93.40% statement coverage |
@@ -58,25 +101,36 @@ The public snapshot at Git revision `441871aa19cd4d7c129a721a449c5a098780afd1` r
 | Adapter and parity checks | 4 adapter executions and 2 framework-parity comparisons completed |
 | Provider safety | 0 provider calls and 0 GPU calls in the checked-in offline matrix |
 
-These measurements validate deterministic contract behavior, recovery, delivery, and artifact reproducibility. They do not claim that the optional semantic verifier improves diagnosis or that a deployed operating point attains target risk.
+These measurements establish deterministic contract behavior, injected-defect interception, process recovery, delivery integrity, and offline artifact reproducibility. The offline matrix uses declared fake-provider conditions to exercise interfaces and orchestration without presenting those runs as semantic-effectiveness evidence. Provider-backed semantic gains and empirical target-risk attainment require their corresponding result-bearing artifacts.
 
-## Read the paper
+## What you can build
 
-**IVAD: Evidence-Constrained and Risk-Controlled Failure Diagnosis for AI Agents** presents the mathematical protocol, SpanVouch architecture, experimental design, evidence boundaries, and results.
+SpanVouch supplies the decision and evidence layer for systems that must explain agent failures without trusting free-form model output.
 
-- [Read the 8-page preprint](paper/IVAD.pdf)
-- [Browse the reproducible LaTeX source](paper/source/)
-- [Review paper build and licensing notes](paper/README.md)
+| Use case | SpanVouch contribution |
+| --- | --- |
+| Agent quality platform | Normalize traces, diagnose failures, enforce evidence policy, and compare regressions |
+| Production incident review | Preserve the causal record, verifier findings, revisions, and human decision timeline |
+| Tool-call governance | Bind claims to exact calls and expose scope, provenance, secret, and integrity violations |
+| Framework evaluation | Run the same diagnosis contract across LangGraph, AutoGen, SupportLab, and OpsLab adapters |
+| Enterprise audit workflow | Integrate policy gates, authenticated review, immutable events, and durable artifacts |
 
-## Build on it
+## Integration surfaces
 
-Use SpanVouch as the foundation for agent quality platforms, support-operation review, tool-call
-incident analysis, and audit trails. The release includes FastAPI and CLI delivery, SQLite recovery,
-Docker/Compose packaging, LangGraph and AutoGen adapters, plus SupportLab and OpsLab evaluation labs.
+The release exposes a Python package, command-line interface (CLI), FastAPI application, six JSON Schema contract roots, SQLite recovery storage, Docker Compose delivery, framework adapters, provider adapters, and frozen evaluation assets. The core path stays deterministic and provider-neutral.
 
-## Run SpanVouch
+| Surface | Included capability |
+| --- | --- |
+| Python and CLI | Dataset generation, diagnosis evaluation, review evaluation, and review operations |
+| HTTP API | Trace ingestion, diagnosis, review creation, recovery, inspection, and human decisions |
+| Contracts | Versioned JSON Schema for every public decision object |
+| Runtime | SQLite state, leases, idempotency, immutable events, and restart recovery |
+| Evaluation | Frozen datasets, multi-framework adapters, manifests, reports, and claim gates |
+| Deployment | Locked Python environment, unprivileged container, and persistent Compose volume |
 
-Requirements: Python 3.12, [uv](https://docs.astral.sh/uv/) 0.8.x, and optionally Docker Compose v2.
+## Run SpanVouch locally
+
+Install Python 3.12 and [uv 0.8.x](https://docs.astral.sh/uv/). Docker Compose v2 is optional.
 
 ```bash
 git clone https://github.com/naturaljam/SpanVouch.git
@@ -87,23 +141,29 @@ uv run spanvouch evaluate diagnosis --output .cache/rules.json
 uv run spanvouch evaluate review --output .cache/review-rules.json
 ```
 
-Start the API with `uv run uvicorn spanvouch.api.app:app --host 127.0.0.1 --port 8000`.
+Start the API:
+
+```bash
+uv run uvicorn spanvouch.api.app:app --host 127.0.0.1 --port 8000
+```
+
+OpenAPI is available at `http://127.0.0.1:8000/docs` while the service runs.
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
-| GET | `/health` | service health |
-| POST | `/v1/traces` | ingest a TraceIR document |
-| POST | `/v1/traces/{trace_id}/diagnoses` | diagnose a trace |
-| POST | `/v1/traces/{trace_id}/diagnosis-reviews` | create a review case |
-| GET | `/v1/diagnosis-reviews/{case_id}` | read the case timeline |
-| POST | `/v1/diagnosis-reviews/{case_id}/resume` | resume recoverable work |
-| POST | `/v1/diagnosis-reviews/{case_id}/decisions` | record a human decision |
+| GET | `/health` | Report service health |
+| POST | `/v1/traces` | Ingest a TraceIR document |
+| POST | `/v1/traces/{trace_id}/diagnoses` | Diagnose a trace |
+| POST | `/v1/traces/{trace_id}/diagnosis-reviews` | Create a review case |
+| GET | `/v1/diagnosis-reviews/{case_id}` | Read the case timeline |
+| POST | `/v1/diagnosis-reviews/{case_id}/resume` | Resume recoverable work |
+| POST | `/v1/diagnosis-reviews/{case_id}/decisions` | Record a human decision |
 
-OpenAPI is available at `http://127.0.0.1:8000/docs` while the service is running.
-The diagnosis endpoint is `POST /v1/traces/{trace_id}/diagnoses`.
+The diagnosis endpoint is `POST /v1/traces/{trace_id}/diagnoses`. Rules-based diagnosis needs no provider key. Provider-backed diagnosis also requires `DEEPSEEK_API_KEY` and `--allow-live-api`.
 
-For an offline end-to-end review, use the frozen trace at `evals/datasets/supportlab-v1/traces.jsonl`,
-post it to `POST /v1/traces`, then use the CLI to inspect and decide the case:
+## Run an offline review end to end
+
+Use the frozen SupportLab trace at `evals/datasets/supportlab-v1/traces.jsonl`. Post the selected trace to `POST /v1/traces`, then create, inspect, and decide the review case:
 
 ```bash
 trace_id="$(curl --fail --silent --show-error -H 'content-type: application/json' \
@@ -117,7 +177,9 @@ uv run spanvouch review decide --case-id "$case_id" --action confirm --expected-
   --reviewer-label local-reviewer --idempotency-key demo-decision-001
 ```
 
-## Docker
+## Run with Docker
+
+Docker Compose builds the locked image, starts the API as an unprivileged user, and stores review state in a persistent SQLite volume.
 
 ```bash
 docker compose up --build --detach --wait api
@@ -125,33 +187,37 @@ curl --fail http://127.0.0.1:8000/health
 docker compose down
 ```
 
-The image runs unprivileged and stores review state in a persistent SQLite volume.
+## Control provider access
 
-## Provider safety
-
-Rules and deterministic verification never need a provider key. DeepSeek diagnosis and hybrid
-semantic verification require `DEEPSEEK_API_KEY` and an explicit `--allow-live-api` flag. Live calls
-may incur cost and are excluded from CI. Put the service behind an authenticated gateway when it is
-exposed beyond localhost.
+Rules-based diagnosis and deterministic verification never require a provider key. DeepSeek diagnosis and hybrid semantic verification require `DEEPSEEK_API_KEY` plus the explicit `--allow-live-api` flag. Live calls may incur cost and remain outside continuous integration (CI). Place the API behind an authenticated gateway before exposing it beyond localhost.
 
 ## Commercial deployment
 
-The MIT-licensed core is designed to support private deployments, enterprise policy and audit
-integrations, multi-team or multi-model adapters, managed hosting, and enterprise support. The
-architecture keeps the core workflow independent of any single provider.
+The MIT-licensed core supports private deployment, agent quality and audit platforms, policy integration, multi-team or multi-model adapters, managed hosting, and enterprise support. Versioned contracts and provider-neutral workflow boundaries let teams replace models or frameworks without rewriting the evidence and decision layer.
 
-## Repository map
+## Repository layout
 
 ```text
-src/spanvouch/   core contracts, trace, diagnosis, verification, review, API, CLI
-schemas/v1/      versioned public schemas
+src/spanvouch/   contracts, trace, diagnosis, verification, review, API, CLI
+schemas/v1/      versioned public JSON Schema contracts
 tests/           unit, contract, architecture, integration, and E2E tests
-evals/           frozen datasets, configs, and reference reports
-paper/           IVAD preprint, LaTeX source, and build notes
+evals/           frozen datasets, configurations, and reference reports
+paper/           IVAD preprint, reproducible source, and build notes
 ```
 
-## Contributing and license
+## Cite IVAD and SpanVouch
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md) before opening an issue or
-pull request. SpanVouch software is available under the [MIT License](LICENSE). The paper has a
-separate copyright notice in [paper/README.md](paper/README.md).
+GitHub reads [`CITATION.cff`](CITATION.cff) and exposes the repository's citation metadata. Cite the IVAD preprint when your work depends on the protocol, formalization, or evaluation design:
+
+```bibtex
+@article{liu2026ivad,
+  title  = {IVAD: Evidence-Constrained and Risk-Controlled Failure Diagnosis for AI Agents},
+  author = {Liu, Hanzhe},
+  year   = {2026},
+  url    = {https://github.com/naturaljam/SpanVouch/blob/main/paper/IVAD.pdf}
+}
+```
+
+## Contribute and license
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md) before opening an issue or pull request. SpanVouch software is available under the [MIT License](LICENSE). The IVAD paper, figures, and source use [CC BY 4.0](paper/README.md).
