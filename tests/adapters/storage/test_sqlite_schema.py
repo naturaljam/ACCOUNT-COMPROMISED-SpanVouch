@@ -19,6 +19,7 @@ REQUIRED_TABLES = {
     "human_decisions",
     "workflow_events",
     "idempotency_keys",
+    "traces",
 }
 
 
@@ -29,7 +30,7 @@ def _table_names(connection: sqlite3.Connection) -> set[str]:
     return {str(row[0]) for row in rows}
 
 
-def test_initialize_creates_exact_schema_v2_and_is_repeatable(tmp_path: Path) -> None:
+def test_initialize_creates_exact_schema_v3_and_is_repeatable(tmp_path: Path) -> None:
     database = tmp_path / "reviews.sqlite3"
 
     initialize_database(database)
@@ -39,8 +40,8 @@ def test_initialize_creates_exact_schema_v2_and_is_repeatable(tmp_path: Path) ->
         assert _table_names(connection) == REQUIRED_TABLES
         assert connection.execute(
             "SELECT schema_version FROM schema_metadata WHERE singleton_key = 1"
-        ).fetchone() == (2,)
-    assert SCHEMA_VERSION == 2
+        ).fetchone() == (3,)
+    assert SCHEMA_VERSION == 3
 
 
 def test_connections_apply_required_pragmas(tmp_path: Path) -> None:
@@ -183,6 +184,7 @@ def test_schema_constraints_reject_invalid_audit_rows(tmp_path: Path) -> None:
                 "created_at",
                 "updated_at",
             ),
+            "traces": ("trace_id", "run_id", "trace_json", "trace_sha256"),
         }
 
         with pytest.raises(sqlite3.IntegrityError):
@@ -295,3 +297,32 @@ def test_schema_enforces_required_uniqueness_and_sha256_lengths(tmp_path: Path) 
         connection.execute(idempotency_sql, (sha256,))
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute(idempotency_sql, (sha256,))
+
+
+def test_initialize_migrates_v2_without_losing_review_state(tmp_path: Path) -> None:
+    database = tmp_path / "reviews.sqlite3"
+    initialize_database(database)
+    with connect_database(database) as connection:
+        connection.execute("DROP TABLE IF EXISTS traces")
+        connection.execute(
+            "UPDATE schema_metadata SET schema_version = 2 WHERE singleton_key = 1"
+        )
+        connection.execute(
+            "INSERT INTO review_cases("
+            "case_id, status, version, verification_mode, diagnoser, "
+            "current_revision_number, evidence_revision_count, created_at, updated_at"
+            ") VALUES ('case-before-migration', 'pending_verification', 0, "
+            "'deterministic', 'rules', 0, 0, '2026-07-30T00:00:00Z', "
+            "'2026-07-30T00:00:00Z')"
+        )
+
+    initialize_database(database)
+
+    with connect_database(database) as connection:
+        assert connection.execute(
+            "SELECT schema_version FROM schema_metadata WHERE singleton_key = 1"
+        ).fetchone() == (3,)
+        assert connection.execute(
+            "SELECT case_id FROM review_cases WHERE case_id = 'case-before-migration'"
+        ).fetchone() == ("case-before-migration",)
+        assert "traces" in _table_names(connection)

@@ -11,6 +11,7 @@ from fastapi import FastAPI
 
 from spanvouch.adapters.frameworks.langgraph_review import LangGraphReviewWorkflow
 from spanvouch.adapters.storage.sqlite import SQLiteReviewRepository
+from spanvouch.adapters.storage.sqlite_trace import SQLiteTraceRepository
 from spanvouch.api.composition import default_runtime, deterministic_runtime
 from spanvouch.api.routes.diagnoses import build_diagnosis_router
 from spanvouch.api.routes.diagnosis_reviews import build_diagnosis_review_router
@@ -21,7 +22,7 @@ from spanvouch.diagnosis.protocols import Diagnoser
 from spanvouch.review.application import ReviewApplication
 from spanvouch.review.protocols import ReviewRepository
 from spanvouch.review.reviser import DiagnosisReviser
-from spanvouch.trace.repository import InMemoryTraceRepository, TraceRepository
+from spanvouch.trace.repository import TraceRepository
 from spanvouch.verification.protocols import Verifier
 
 DEFAULT_REVIEW_DATABASE = Path(".data/spanvouch.db")
@@ -81,8 +82,13 @@ def create_app(
     review_service: ReviewApplication | None = None,
     review_database: str | Path | None = None,
 ) -> FastAPI:
-    trace_store = trace_repository or InMemoryTraceRepository()
     database = review_database or os.environ.get("SPANVOUCH_DB_PATH") or DEFAULT_REVIEW_DATABASE
+    managed_trace_store: SQLiteTraceRepository | None = None
+    if trace_repository is not None:
+        trace_store = trace_repository
+    else:
+        managed_trace_store = SQLiteTraceRepository(database)
+        trace_store = managed_trace_store
     review_store: ReviewRepository | None
     managed_database: str | Path | None = None
     if review_repository is not None:
@@ -116,9 +122,11 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        if managed_database is not None or managed_trace_store is not None:
+            _ensure_database_parent(database)
+        if managed_trace_store is not None:
+            await managed_trace_store.initialize()
         if review_store is not None:
-            if managed_database is not None:
-                _ensure_database_parent(managed_database)
             await review_store.initialize()
         yield
 

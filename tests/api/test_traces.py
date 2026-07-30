@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -79,6 +80,30 @@ def test_trace_ingestion_allows_idempotent_retry() -> None:
     assert first_response.status_code == 201
     assert retry_response.status_code == 201
     assert retry_response.json() == first_response.json()
+
+
+def test_default_trace_repository_persists_across_api_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "spanvouch.db"
+    monkeypatch.setenv("SPANVOUCH_DB_PATH", str(database))
+    payload = valid_trace_payload()
+
+    with TestClient(create_app()) as first_client:
+        assert first_client.post("/v1/traces", json=payload).status_code == 201
+
+    with TestClient(create_app()) as restarted_client:
+        diagnosis = restarted_client.post(
+            "/v1/traces/trace-api-1/diagnoses", json={}
+        )
+        conflicting = dict(payload)
+        conflicting["run_id"] = "run-api-2"
+        conflict = restarted_client.post("/v1/traces", json=conflicting)
+
+    assert diagnosis.status_code == 200
+    assert conflict.status_code == 409
+    assert conflict.json() == {"detail": "trace_id conflict: trace-api-1"}
 
 
 def test_trace_ingestion_returns_conflict_for_different_content_with_same_id() -> None:

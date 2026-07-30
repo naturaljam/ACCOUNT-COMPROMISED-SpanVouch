@@ -3,10 +3,11 @@ from pathlib import Path
 
 from spanvouch.review.errors import ReviewSchemaError
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+PREVIOUS_SCHEMA_VERSION = 2
 BUSY_TIMEOUT_MS = 5_000
 
-_SCHEMA_SQL = """
+_SCHEMA_V2_SQL = """
 CREATE TABLE schema_metadata (
     singleton_key INTEGER PRIMARY KEY CHECK (singleton_key = 1),
     schema_version INTEGER NOT NULL
@@ -130,19 +131,40 @@ CREATE TABLE idempotency_keys (
 );
 """
 
+_TRACE_SCHEMA_SQL = """
+CREATE TABLE traces (
+    trace_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    trace_json TEXT NOT NULL,
+    trace_sha256 TEXT NOT NULL CHECK (length(trace_sha256) = 64)
+);
+"""
+
+_SCHEMA_SQL = _SCHEMA_V2_SQL + _TRACE_SCHEMA_SQL
+
 
 def _normalize_schema_sql(value: str) -> str:
     return " ".join(value.rstrip(";").split())
 
 
-_EXPECTED_SCHEMA_SQL = {
-    statement.strip().split()[2]: _normalize_schema_sql(statement.strip())
-    for statement in _SCHEMA_SQL.split(";")
-    if statement.strip()
-}
+def _expected_schema(schema_sql: str) -> dict[str, str]:
+    return {
+        statement.strip().split()[2]: _normalize_schema_sql(statement.strip())
+        for statement in schema_sql.split(";")
+        if statement.strip()
+    }
 
 
-def _validate_schema_v2(connection: sqlite3.Connection) -> None:
+_EXPECTED_SCHEMA_V2_SQL = _expected_schema(_SCHEMA_V2_SQL)
+_EXPECTED_SCHEMA_SQL = _expected_schema(_SCHEMA_SQL)
+
+
+def _validate_schema(
+    connection: sqlite3.Connection,
+    *,
+    expected: dict[str, str],
+    version: int,
+) -> None:
     rows = connection.execute(
         "SELECT name, sql FROM sqlite_master "
         "WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
@@ -152,8 +174,16 @@ def _validate_schema_v2(connection: sqlite3.Connection) -> None:
         for name, sql in rows
         if sql is not None
     }
-    if actual != _EXPECTED_SCHEMA_SQL:
-        raise ReviewSchemaError("review schema structure does not match version 2")
+    if actual != expected:
+        raise ReviewSchemaError(
+            f"review schema structure does not match version {version}"
+        )
+
+
+def _execute_schema(connection: sqlite3.Connection, schema_sql: str) -> None:
+    for statement in schema_sql.split(";"):
+        if statement.strip():
+            connection.execute(statement)
 
 
 def connect_database(database: str | Path) -> sqlite3.Connection:
@@ -170,7 +200,7 @@ def connect_database(database: str | Path) -> sqlite3.Connection:
 
 
 def initialize_database(database: str | Path) -> None:
-    """Create schema v2 or verify that an existing database is exactly v2."""
+    """Create schema v3, migrate exact v2 databases, or verify exact v3 state."""
     connection = connect_database(database)
     try:
         connection.execute("BEGIN IMMEDIATE")
@@ -181,13 +211,28 @@ def initialize_database(database: str | Path) -> None:
             row = connection.execute(
                 "SELECT schema_version FROM schema_metadata WHERE singleton_key = 1"
             ).fetchone()
-            if row != (SCHEMA_VERSION,):
+            if row == (PREVIOUS_SCHEMA_VERSION,):
+                _validate_schema(
+                    connection,
+                    expected=_EXPECTED_SCHEMA_V2_SQL,
+                    version=PREVIOUS_SCHEMA_VERSION,
+                )
+                _execute_schema(connection, _TRACE_SCHEMA_SQL)
+                connection.execute(
+                    "UPDATE schema_metadata SET schema_version = ? "
+                    "WHERE singleton_key = 1",
+                    (SCHEMA_VERSION,),
+                )
+            elif row == (SCHEMA_VERSION,):
+                _validate_schema(
+                    connection,
+                    expected=_EXPECTED_SCHEMA_SQL,
+                    version=SCHEMA_VERSION,
+                )
+            else:
                 raise ReviewSchemaError("unsupported review schema version")
-            _validate_schema_v2(connection)
         else:
-            for statement in _SCHEMA_SQL.split(";"):
-                if statement.strip():
-                    connection.execute(statement)
+            _execute_schema(connection, _SCHEMA_SQL)
             connection.execute(
                 "INSERT INTO schema_metadata(singleton_key, schema_version) VALUES (1, ?)",
                 (SCHEMA_VERSION,),

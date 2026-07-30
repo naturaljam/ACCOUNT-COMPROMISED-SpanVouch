@@ -7,6 +7,10 @@ class TraceConflictError(ValueError):
     """Raised when a trace ID is reused for different trace content."""
 
 
+class TracePersistenceError(RuntimeError):
+    """Raised when durable trace storage cannot complete safely."""
+
+
 class TraceRepository(Protocol):
     async def save(self, trace: TraceIR) -> TraceIR: ...
     async def get(self, trace_id: str) -> TraceIR: ...

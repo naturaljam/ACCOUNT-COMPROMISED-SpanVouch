@@ -66,7 +66,7 @@ SpanVouch 通过版本化、可独立测试的层次实现完整诊断生命周�
 | 诊断 | 规则优先引擎、可选 provider adapter、有限因果链 | 输出不受支持、证据缺失或来源无效时关闭流程 |
 | 确定性验证 | 身份、哈希、时序、结构、作用域、冲突和覆盖检查 | 无论模型置信度多高，都阻止无资格报告自动通过 |
 | 分离式语义验证 | 具有受控上下文、provider、prompt 和可见理由的可选验证器 | 产生类型化发现，请求一次修订，或转交人工 |
-| 复核与恢复 | SQLite、不可变事件、租约、幂等键和乐观并发控制 | 恢复中断流程，同时避免制造或重复决定 |
+| 复核与恢复 | 持久化 SQLite 轨迹与复核状态、不可变事件、租约、幂等键和乐观并发控制 | 恢复中断流程，同时避免丢失证据或重复决定 |
 | 评估制品 | 冻结语料、manifest、来源账本、确定性报告和 claim gate | 代码、数据、授权、预算或输出身份不一致时停止 |
 | 风险感知接受 | 冻结有限候选、同时精确二项界、最小接受组和一次未触碰测试评估 | 不放宽目标；无可行候选时明确不返回运行点 |
 
@@ -117,14 +117,14 @@ SpanVouch 为必须解释 Agent 失败、又不能直接信任自由文本模型
 
 ## 集成界面
 
-当前版本包含 Python package、命令行界面（CLI）、FastAPI 应用、六个 JSON Schema 契约根、SQLite 恢复存储、Docker Compose 交付、框架 adapter、provider adapter 和冻结评估资产。核心路径保持确定性且不绑定 provider。
+当前版本包含 Python package、命令行界面（CLI）、FastAPI 应用、六个 JSON Schema 契约根、持久化 SQLite 轨迹与复核存储、Docker Compose 交付、框架 adapter、provider adapter 和冻结评估资产。核心路径保持确定性且不绑定 provider。
 
 | 界面 | 已包含能力 |
 | --- | --- |
 | Python 与 CLI | 数据集生成、诊断评估、复核评估和复核操作 |
 | HTTP API | 轨迹接收、诊断、复核创建、恢复、查看和人工决定 |
 | 契约 | 覆盖全部公开决策对象的版本化 JSON Schema |
-| 运行时 | SQLite 状态、租约、幂等、不可变事件和重启恢复 |
+| 运行时 | 持久化轨迹与复核状态、租约、幂等、不可变事件和重启恢复 |
 | 评估 | 冻结数据集、多框架 adapter、manifest、报告和 claim gate |
 | 部署 | 锁定 Python 环境、非特权容器和持久化 Compose volume |
 
@@ -179,7 +179,7 @@ uv run spanvouch review decide --case-id "$case_id" --action confirm --expected-
 
 ## 使用 Docker 运行
 
-Docker Compose 构建锁定镜像，以非特权用户启动 API，并将复核状态保存到持久化 SQLite volume。
+Docker Compose 构建锁定镜像，以非特权用户启动 API，并将轨迹与复核状态保存到持久化 SQLite volume。
 
 ```bash
 docker compose up --build --detach --wait api

@@ -66,7 +66,7 @@ SpanVouch implements the full diagnosis lifecycle through versioned, independent
 | Diagnosis | Rules-first engine with optional provider adapters and bounded causal chains | Fail closed on unsupported output, missing evidence, or invalid provenance |
 | Deterministic verification | Identity, hash, temporal, structural, scope, conflict, and coverage checks | Block automatic acceptance regardless of model confidence |
 | Separated semantic verification | Optional verifier with controlled context, provider, prompt, and visible rationale | Produce typed findings, request one revision, or defer to a human |
-| Review and recovery | SQLite persistence, immutable events, leases, idempotency keys, and optimistic concurrency | Resume interrupted work without manufacturing or duplicating decisions |
+| Review and recovery | Durable SQLite traces and review state, immutable events, leases, idempotency keys, and optimistic concurrency | Resume interrupted work without losing evidence or duplicating decisions |
 | Evaluation artifacts | Frozen corpora, manifests, provenance ledgers, deterministic reports, and claim gates | Stop when code, data, authorization, budget, or output identity disagrees |
 | Risk-aware acceptance | Frozen finite candidates, simultaneous exact-binomial bounds, minimum accepted groups, and one untouched test evaluation | Return no feasible operating point instead of relaxing the target |
 
@@ -117,14 +117,14 @@ SpanVouch supplies the decision and evidence layer for systems that must explain
 
 ## Integration surfaces
 
-The release exposes a Python package, command-line interface (CLI), FastAPI application, six JSON Schema contract roots, SQLite recovery storage, Docker Compose delivery, framework adapters, provider adapters, and frozen evaluation assets. The core path stays deterministic and provider-neutral.
+The release exposes a Python package, command-line interface (CLI), FastAPI application, six JSON Schema contract roots, durable SQLite trace and review storage, Docker Compose delivery, framework adapters, provider adapters, and frozen evaluation assets. The core path stays deterministic and provider-neutral.
 
 | Surface | Included capability |
 | --- | --- |
 | Python and CLI | Dataset generation, diagnosis evaluation, review evaluation, and review operations |
 | HTTP API | Trace ingestion, diagnosis, review creation, recovery, inspection, and human decisions |
 | Contracts | Versioned JSON Schema for every public decision object |
-| Runtime | SQLite state, leases, idempotency, immutable events, and restart recovery |
+| Runtime | Durable traces and review state, leases, idempotency, immutable events, and restart recovery |
 | Evaluation | Frozen datasets, multi-framework adapters, manifests, reports, and claim gates |
 | Deployment | Locked Python environment, unprivileged container, and persistent Compose volume |
 
@@ -179,7 +179,7 @@ uv run spanvouch review decide --case-id "$case_id" --action confirm --expected-
 
 ## Run with Docker
 
-Docker Compose builds the locked image, starts the API as an unprivileged user, and stores review state in a persistent SQLite volume.
+Docker Compose builds the locked image, starts the API as an unprivileged user, and stores traces and review state in a persistent SQLite volume.
 
 ```bash
 docker compose up --build --detach --wait api
