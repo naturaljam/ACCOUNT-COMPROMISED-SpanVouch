@@ -228,6 +228,7 @@ async def run_offline_acceptance(
     *,
     asset_emitter: OfflineAssetEmitter | None = None,
     code_provenance: CodeProvenance | None = None,
+    dependency_lock_sha256: str | None = None,
 ) -> OfflineSmokeManifest:
     """Run the complete small offline pipeline and publish one reference bundle."""
     code = _accepted_code_provenance(code_provenance)
@@ -237,7 +238,8 @@ async def run_offline_acceptance(
     root.mkdir(parents=True)
     config = load_experiment_config(_CONFIG)
     config_sha256 = canonical_sha256(cast(JsonValue, config.model_dump(mode="json")))
-    provenance = _provenance(code)
+    lock_sha256 = dependency_lock_sha256 or sha256(Path("uv.lock").read_bytes()).hexdigest()
+    provenance = _provenance(code, dependency_lock_sha256=lock_sha256)
     scenarios = _smoke_scenarios()
     records, parity_match_count = await _execute_adapters(scenarios, provenance)
     corpus = _freeze_corpus(root, records, config_sha256)
@@ -376,11 +378,13 @@ def _discover_code_provenance(repository_root: Path | None = None) -> CodeProven
     )
 
 
-def _provenance(code: CodeProvenance) -> ExecutionProvenance:
+def _provenance(
+    code: CodeProvenance, *, dependency_lock_sha256: str
+) -> ExecutionProvenance:
     return ExecutionProvenance(
         git_commit=code.git_commit,
         package_version="0.2.0",
-        dependency_lock_sha256=sha256(Path("uv.lock").read_bytes()).hexdigest(),
+        dependency_lock_sha256=dependency_lock_sha256,
         dataset_manifest_sha256=canonical_sha256(
             cast(JsonValue, [item.model_dump(mode="json") for item in _smoke_scenarios()])
         ),

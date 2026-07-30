@@ -11,7 +11,7 @@
   <a href="https://www.python.org/">Python 3.12</a> &middot;
   <a href="LICENSE">MIT 许可证</a> &middot;
   <a href="paper/IVAD.pdf">IVAD 论文</a> &middot;
-  <a href="https://github.com/naturaljam/SpanVouch/releases/tag/v0.2.0">v0.2.0</a>
+  <a href="https://github.com/naturaljam/SpanVouch/releases/tag/v0.3.0">v0.3.0</a>
 </p>
 
 <p align="center">
@@ -28,7 +28,7 @@ SpanVouch 将 Agent 执行轨迹转化为携带证据的诊断决策。它把因
            -> 持久状态 + 可复制制品
 ```
 
-[阅读 IVAD 预印本](paper/IVAD.pdf) | [查看 LaTeX 源码](paper/source/) | [下载 v0.2.0 版本](https://github.com/naturaljam/SpanVouch/releases/tag/v0.2.0)
+[阅读 IVAD 预印本](paper/IVAD.pdf) | [查看 LaTeX 源码](paper/source/) | [下载 v0.3.0 版本](https://github.com/naturaljam/SpanVouch/releases/tag/v0.3.0)
 
 ## Agent 诊断为什么需要证据层
 
@@ -87,7 +87,7 @@ SpanVouch 通过版本化、可独立测试的层次实现完整诊断生命周�
 - [阅读 8 页预印本](paper/IVAD.pdf)
 - [从可复现 LaTeX 源码构建论文](paper/source/)
 - [查看论文构建方式和 CC BY 4.0 许可](paper/README.md)
-- [下载带版本的 PDF 和源码归档](https://github.com/naturaljam/SpanVouch/releases/tag/v0.2.0)
+- [下载带版本的 PDF 和源码归档](https://github.com/naturaljam/SpanVouch/releases/tag/v0.3.0)
 
 ## 已验证工程证据
 

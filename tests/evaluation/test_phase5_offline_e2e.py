@@ -86,6 +86,7 @@ async def test_committed_reference_bundle_reproduces_byte_for_byte(
     generated = await run_offline_acceptance(
         tmp_path / "generated",
         code_provenance=CodeProvenance.model_validate(manifest["code"]),
+        dependency_lock_sha256=manifest["runtime"]["dependency_lock_sha256"],
     )
     reproduced = read_verified_directory_tree(tmp_path / "generated" / "bundle")
 
