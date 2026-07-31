@@ -24,7 +24,10 @@ from spanvouch.diagnosis.protocols import (
     ModelProvider,
     ProviderResponse,
 )
-from spanvouch.evaluation.artifacts import require_safe_artifact_content
+from spanvouch.diagnosis.response_content import (
+    ProviderContentDisposition,
+    ProviderResponseContentPolicy,
+)
 from spanvouch.evaluation.experiments.budget import (
     BudgetLedger,
     BudgetOverrunError,
@@ -144,6 +147,7 @@ class ProviderRequestAudit(BaseModel):
     completed_at_utc: datetime
     status: Literal["completed", "cache_hit", "failed"]
     leakage_scan_passed: bool
+    content_disposition: ProviderContentDisposition | None = None
 
     @model_validator(mode="after")
     def validate_times(self) -> Self:
@@ -171,6 +175,13 @@ class _CachedResult(BaseModel):
     response: ProviderResponse
     original_usage: ProviderUsage
     cost_cny: Decimal = Field(ge=0)
+
+
+class _CachedEntry(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    result: _CachedResult
+    content_disposition: ProviderContentDisposition
 
 
 def _cached_result_bytes(result: _CachedResult) -> bytes:
@@ -204,6 +215,9 @@ class ProviderResultCache:
                     request_sha256 TEXT NOT NULL UNIQUE,
                     payload_json BLOB NOT NULL,
                     payload_sha256 TEXT NOT NULL,
+                    content_disposition TEXT NOT NULL DEFAULT 'accepted'
+                        CHECK(content_disposition IN
+                            ('accepted','normalized_invalid')),
                     created_at_utc TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS provider_inflight (
@@ -219,16 +233,32 @@ class ProviderResultCache:
                 );
                 """
             )
+            self._migrate_provider_results(connection)
+
+    @staticmethod
+    def _migrate_provider_results(connection: sqlite3.Connection) -> None:
+        columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(provider_results)")
+        }
+        if "content_disposition" in columns:
+            return
+        connection.execute(
+            """ALTER TABLE provider_results ADD COLUMN content_disposition TEXT
+               NOT NULL DEFAULT 'accepted' CHECK(content_disposition IN
+                   ('accepted','normalized_invalid'))"""
+        )
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.path, timeout=1.0, isolation_level=None)
 
-    def get(self, identity: RequestIdentity) -> _CachedResult | None:
+    def get(self, identity: RequestIdentity) -> _CachedEntry | None:
         validated = RequestIdentity.model_validate(identity.model_dump(mode="python"))
         with self._connect() as connection:
             row = connection.execute(
                 """SELECT r.identity_json, r.identity_sha256,
-                          p.payload_json, p.payload_sha256
+                          p.payload_json, p.payload_sha256,
+                          p.content_disposition
                    FROM provider_requests r
                    JOIN provider_results p USING (request_sha256)
                    WHERE r.request_sha256 = ?""",
@@ -236,7 +266,7 @@ class ProviderResultCache:
             ).fetchone()
         if row is None:
             return None
-        identity_bytes, identity_sha, payload_bytes, payload_sha = row
+        identity_bytes, identity_sha, payload_bytes, payload_sha, disposition = row
         if sha256(identity_bytes).hexdigest() != identity_sha or (
             identity_bytes != canonical_bytes(validated)
         ):
@@ -249,7 +279,16 @@ class ProviderResultCache:
             raise CacheIntegrityError("cached provider result is contract-invalid") from error
         if _cached_result_bytes(result) != payload_bytes:
             raise CacheIntegrityError("cached provider result is not canonical JSON")
-        return result
+        try:
+            validated_disposition = ProviderContentDisposition(disposition)
+        except ValueError as error:
+            raise CacheIntegrityError(
+                "cached provider content disposition is invalid"
+            ) from error
+        return _CachedEntry(
+            result=result,
+            content_disposition=validated_disposition,
+        )
 
     def claim(self, identity: RequestIdentity, at_utc: datetime) -> None:
         identity_bytes = canonical_bytes(identity)
@@ -292,19 +331,27 @@ class ProviderResultCache:
             )
             connection.commit()
 
-    def put(self, identity: RequestIdentity, result: _CachedResult, at_utc: datetime) -> None:
+    def put(
+        self,
+        identity: RequestIdentity,
+        result: _CachedResult,
+        content_disposition: ProviderContentDisposition,
+        at_utc: datetime,
+    ) -> None:
         validated = _CachedResult.model_validate(result.model_dump(mode="python"))
         payload = _cached_result_bytes(validated)
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             connection.execute(
                 """INSERT INTO provider_results
-                   (request_sha256, payload_json, payload_sha256, created_at_utc)
-                   VALUES (?, ?, ?, ?)""",
+                   (request_sha256, payload_json, payload_sha256,
+                    content_disposition, created_at_utc)
+                   VALUES (?, ?, ?, ?, ?)""",
                 (
                     identity.sha256,
                     payload,
                     sha256(payload).hexdigest(),
+                    content_disposition.value,
                     at_utc.isoformat(),
                 ),
             )
@@ -361,6 +408,7 @@ class GuardedProvider:
         authorization: PaidRunAuthorization,
         mode: ExperimentMode,
         identity: RequestIdentity,
+        content_policy: ProviderResponseContentPolicy,
         at_utc: Callable[[], datetime] | None = None,
     ) -> None:
         self.delegate = delegate
@@ -370,6 +418,7 @@ class GuardedProvider:
         self.authorization = authorization
         self.mode = mode
         self.identity = RequestIdentity.model_validate(identity.model_dump(mode="python"))
+        self.content_policy = content_policy
         self._at_utc = at_utc or (lambda: datetime.now(UTC))
 
     def _audit(
@@ -379,6 +428,7 @@ class GuardedProvider:
         completed: datetime,
         status: Literal["completed", "cache_hit", "failed"],
         leakage_scan_passed: bool,
+        content_disposition: ProviderContentDisposition | None = None,
     ) -> ProviderRequestAudit:
         return ProviderRequestAudit(
             request_sha256=self.identity.sha256,
@@ -389,6 +439,7 @@ class GuardedProvider:
             completed_at_utc=completed,
             status=status,
             leakage_scan_passed=leakage_scan_passed,
+            content_disposition=content_disposition,
         )
 
     def _validate_call(
@@ -413,10 +464,6 @@ class GuardedProvider:
 
     @staticmethod
     def _sanitize_response(response: ProviderResponse) -> ProviderResponse:
-        try:
-            require_safe_artifact_content("provider_cache_content", response.content)
-        except ValueError as error:
-            raise ValueError("unsafe provider response content") from error
         request_id = response.usage.request_id
         sanitized_usage = response.usage.model_copy(
             update={
@@ -443,18 +490,20 @@ class GuardedProvider:
         self._validate_call(messages, generation)
         cached = self.cache.get(self.identity)
         if cached is not None:
+            cached_result = cached.result
             audit = self._audit(
                 started=started,
                 completed=self._at_utc(),
                 status="cache_hit",
                 leakage_scan_passed=True,
+                content_disposition=cached.content_disposition,
             )
             self.cache.record_audit(audit)
             return GuardedProviderResult(
-                response=cached.response,
+                response=cached_result.response,
                 cache_hit=True,
-                original_usage=cached.original_usage,
-                cost_cny=cached.cost_cny,
+                original_usage=cached_result.original_usage,
+                cost_cny=cached_result.cost_cny,
                 audit=audit,
             )
 
@@ -467,6 +516,7 @@ class GuardedProvider:
         self.pricing.require_endpoint(self.identity.provider, self.identity.model)
         self.cache.claim(self.identity, started)
         reservation: BudgetReservation | None = None
+        actual: Decimal | None = None
         try:
             estimated_input_tokens = sum(len(item.content.encode("utf-8")) for item in messages)
             maximum = self.pricing.provider_cost(
@@ -480,13 +530,18 @@ class GuardedProvider:
                 mode=self.mode,
                 at_utc=started,
             )
-            raw_response = await self.delegate.complete(messages, generation)
-            response = self._sanitize_response(
-                ProviderResponse.model_validate(raw_response.model_dump(mode="python"))
+            raw_response = ProviderResponse.model_validate(
+                (
+                    await self.delegate.complete(messages, generation)
+                ).model_dump(mode="python")
             )
             actual = self.pricing.provider_cost(
-                input_tokens=response.usage.input_tokens,
-                output_tokens=response.usage.output_tokens,
+                input_tokens=raw_response.usage.input_tokens,
+                output_tokens=raw_response.usage.output_tokens,
+            )
+            normalized = self.content_policy.normalize(raw_response.content)
+            response = self._sanitize_response(
+                raw_response.model_copy(update={"content": normalized.content})
             )
             cached_result = _CachedResult(
                 response=response,
@@ -501,12 +556,18 @@ class GuardedProvider:
                 reservation = None
                 raise
             reservation = None
-            self.cache.put(self.identity, cached_result, self._at_utc())
+            self.cache.put(
+                self.identity,
+                cached_result,
+                normalized.disposition,
+                self._at_utc(),
+            )
             audit = self._audit(
                 started=started,
                 completed=self._at_utc(),
                 status="completed",
                 leakage_scan_passed=True,
+                content_disposition=normalized.disposition,
             )
             self.cache.record_audit(audit)
             return GuardedProviderResult(
@@ -516,9 +577,21 @@ class GuardedProvider:
                 cost_cny=actual,
                 audit=audit,
             )
-        except BaseException:
+        except BaseException as error:
+            settlement_error: BaseException | None = None
             if reservation is not None:
-                self.ledger.release(reservation, at_utc=self._at_utc())
+                try:
+                    if actual is None:
+                        self.ledger.release(reservation, at_utc=self._at_utc())
+                    else:
+                        self.ledger.commit_rejected(
+                            reservation,
+                            actual_amount=actual,
+                            at_utc=self._at_utc(),
+                        )
+                except BaseException as caught:
+                    settlement_error = caught
+                reservation = None
             failed_at = self._at_utc()
             self.cache.record_audit(
                 self._audit(
@@ -528,6 +601,8 @@ class GuardedProvider:
                     leakage_scan_passed=False,
                 )
             )
+            if settlement_error is not None:
+                raise settlement_error from error
             raise
         finally:
             self.cache.release_claim(self.identity)

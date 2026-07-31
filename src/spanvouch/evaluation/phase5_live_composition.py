@@ -56,6 +56,7 @@ from spanvouch.labs.opslab.invariants import opslab_rules
 from spanvouch.labs.supportlab.invariants import supportlab_rules
 from spanvouch.verification.deterministic import DeterministicVerifier
 from spanvouch.verification.invariant_engine import InvariantEngine
+from spanvouch.verification.semantic import semantic_response_content_policy
 
 _VERIFIER_INSTRUCTION = "Critique evidence sufficiency only."
 _POLICY_VERSION = "phase5-deterministic-v1"
@@ -381,6 +382,7 @@ class _LiveConditionExecutor:
             authorization=self._authorization,
             mode=self._config.mode,
             identity=identity,
+            content_policy=semantic_response_content_policy(),
         )
 
     async def execute(self, plan: ConditionPlan) -> ConditionResult:

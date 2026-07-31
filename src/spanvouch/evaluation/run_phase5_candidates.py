@@ -14,6 +14,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, JsonValue
 
 from spanvouch.contracts.versioning import canonical_sha256
+from spanvouch.diagnosis.llm_diagnoser import diagnosis_response_content_policy
 from spanvouch.diagnosis.prompting import DiagnosisPromptBuilder
 from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig, ProviderResponse
 from spanvouch.evaluation.corpus import CorpusEntry, TraceReplayRepository
@@ -164,6 +165,7 @@ def _guard_for_entry(
                 authorization=dependencies.authorization,
                 mode=prepared.config.mode,
                 identity=identity,
+                content_policy=diagnosis_response_content_policy(),
             )
         ),
         generation,

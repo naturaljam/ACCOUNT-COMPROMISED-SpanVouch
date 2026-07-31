@@ -5,14 +5,21 @@ import sqlite3
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
+from typing import Literal
 
 import pytest
+from pydantic import BaseModel, ConfigDict
 
 from spanvouch.contracts.diagnosis import ProviderUsage
 from spanvouch.diagnosis.protocols import (
     ChatMessage,
     GenerationConfig,
     ProviderResponse,
+)
+from spanvouch.diagnosis.response_content import (
+    JsonModelResponseContentPolicy,
+    NormalizedProviderContent,
+    ProviderResponseContentPolicy,
 )
 from spanvouch.evaluation.experiments.budget import (
     BudgetLedger,
@@ -37,6 +44,15 @@ MESSAGES = (
     ChatMessage(role="user", content="Inspect the frozen candidate."),
 )
 GENERATION = GenerationConfig(model="deepseek-chat", max_tokens=200, temperature=0.0)
+
+
+class _TestDraft(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    status: Literal["ok"]
+
+
+CONTENT_POLICY = JsonModelResponseContentPolicy(_TestDraft)
 
 
 class CountingProvider:
@@ -174,6 +190,7 @@ def guarded(
     delegate: CountingProvider,
     *,
     authorization: PaidRunAuthorization | None = None,
+    content_policy: ProviderResponseContentPolicy = CONTENT_POLICY,
 ) -> GuardedProvider:
     db = tmp_path / "phase5.sqlite3"
     return GuardedProvider(
@@ -194,6 +211,7 @@ def guarded(
         ),
         mode=ExperimentMode.PILOT,
         identity=base_identity(),
+        content_policy=content_policy,
         at_utc=lambda: datetime(2026, 7, 20, tzinfo=UTC),
     )
 
@@ -218,6 +236,7 @@ def test_guarded_provider_allows_matrix_cache_and_global_ledger_paths(
         ),
         mode=ExperimentMode.PILOT,
         identity=base_identity(),
+        content_policy=CONTENT_POLICY,
     )
 
     assert provider.cache.path != provider.ledger.path
@@ -247,6 +266,7 @@ async def test_global_ledger_allows_only_one_call_across_manifest_caches(
             ),
             mode=ExperimentMode.PILOT,
             identity=base_identity(),
+            content_policy=CONTENT_POLICY,
             at_utc=lambda: datetime(2026, 7, 20, tzinfo=UTC),
         )
 
@@ -293,6 +313,7 @@ async def test_released_global_request_claim_can_retry_from_another_cache(
             ),
             mode=ExperimentMode.PILOT,
             identity=base_identity(),
+            content_policy=CONTENT_POLICY,
             at_utc=lambda: datetime(2026, 7, 20, tzinfo=UTC),
         )
 
@@ -411,7 +432,9 @@ def test_cache_detects_payload_tampering(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_secret_provider_content_is_not_cached(tmp_path: Path) -> None:
+async def test_secret_provider_content_is_normalized_charged_and_cached(
+    tmp_path: Path,
+) -> None:
     class SecretProvider(CountingProvider):
         async def complete(
             self, messages: tuple[ChatMessage, ...], config: GenerationConfig
@@ -423,9 +446,74 @@ async def test_secret_provider_content_is_not_cached(tmp_path: Path) -> None:
 
     delegate = SecretProvider()
     provider = guarded(tmp_path, delegate)
-    with pytest.raises(ValueError, match="unsafe provider response content"):
-        await provider.complete(MESSAGES, GENERATION)
-    assert provider.cache.get(base_identity()) is None
+    first = await provider.complete(MESSAGES, GENERATION)
+    second = await provider.complete(MESSAGES, GENERATION)
+
+    assert first.response.content == "{}"
+    assert first.audit.content_disposition == "normalized_invalid"
+    assert first.cost_cny > 0
+    assert second.cache_hit is True
+    assert delegate.calls == 1
+    persisted = b"".join(
+        path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()
+    )
+    assert b"stolen-provider-secret" not in persisted
+
+
+@pytest.mark.asyncio
+async def test_policy_failure_charges_rejected_response_and_allows_retry(
+    tmp_path: Path,
+) -> None:
+    class RaisingPolicy:
+        def normalize(self, content: str) -> NormalizedProviderContent:
+            raise RuntimeError("offline policy failure")
+
+    failed_delegate = CountingProvider()
+    failed = guarded(
+        tmp_path,
+        failed_delegate,
+        content_policy=RaisingPolicy(),
+    )
+    at = datetime(2026, 7, 20, tzinfo=UTC)
+
+    with pytest.raises(RuntimeError, match="offline policy failure"):
+        await failed.complete(MESSAGES, GENERATION)
+
+    assert failed_delegate.calls == 1
+    assert failed.ledger.committed_total(at) == Decimal("0.000360")
+    assert failed.ledger.active_reserved_total(at) == Decimal("0")
+    assert failed.ledger.committed_request_cost(base_identity().sha256) is None
+    assert failed.cache.get(base_identity()) is None
+
+    retry_delegate = CountingProvider()
+    retry = guarded(tmp_path, retry_delegate)
+    await retry.complete(MESSAGES, GENERATION)
+    assert retry_delegate.calls == 1
+
+
+def test_legacy_provider_cache_gains_accepted_content_disposition(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "legacy-cache.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """CREATE TABLE provider_results (
+                   result_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   request_sha256 TEXT NOT NULL UNIQUE,
+                   payload_json BLOB NOT NULL,
+                   payload_sha256 TEXT NOT NULL,
+                   created_at_utc TEXT NOT NULL
+               )"""
+        )
+
+    ProviderResultCache(path)
+
+    with sqlite3.connect(path) as connection:
+        columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(provider_results)")
+        }
+    assert "content_disposition" in columns
 
 
 @pytest.mark.asyncio
@@ -465,6 +553,7 @@ async def test_different_identities_can_run_concurrently(tmp_path: Path) -> None
             experiment_id="phase5-pilot", allow_live_provider=True
         ),
         "mode": ExperimentMode.PILOT,
+        "content_policy": CONTENT_POLICY,
         "at_utc": lambda: datetime(2026, 7, 20, tzinfo=UTC),
     }
     first = GuardedProvider(
