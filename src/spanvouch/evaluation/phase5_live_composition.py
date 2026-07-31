@@ -28,7 +28,6 @@ from spanvouch.contracts.versioning import (
 from spanvouch.diagnosis.protocols import ChatMessage, ModelProvider
 from spanvouch.evaluation.experiments.budget import (
     BudgetLedger,
-    GpuLeaseRecord,
     Pricing,
 )
 from spanvouch.evaluation.experiments.conditions import (
@@ -102,34 +101,8 @@ def _required_absolute_path(environ: Mapping[str, str], name: str) -> Path:
     value = _required_environment(environ, name)
     path = Path(value)
     if value.startswith("file:") or value == ":memory:" or not path.is_absolute():
-        label = "budget ledger" if "BUDGET_LEDGER" in name else "GPU lease"
-        raise ProviderConfigurationError(f"Phase 5 {label} path must be absolute")
+        raise ProviderConfigurationError("Phase 5 budget ledger path must be absolute")
     return path.resolve()
-
-
-def _load_gpu_lease(path: Path, config: Phase5ExperimentConfig) -> GpuLeaseRecord:
-    approval = config.live_provenance.qwen.gpu_lease_approval
-    if approval is None:
-        raise ProviderConfigurationError("Phase 5 GPU lease approval is missing")
-    try:
-        content = path.read_bytes()
-        payload = json.loads(content)
-        if canonical_bytes(payload) != content:
-            raise ValueError
-        record = GpuLeaseRecord.model_validate(payload)
-        if (
-            record.cloud_provider,
-            record.region,
-            record.instance_type,
-        ) != (approval.cloud_provider, approval.region, approval.instance_type) or (
-            record.duration_hours > approval.maximum_hours
-        ):
-            raise ValueError
-    except (OSError, ValueError):
-        raise ProviderConfigurationError(
-            "Phase 5 GPU lease record is invalid"
-        ) from None
-    return record
 
 
 def _normalized_base_url(value: str) -> tuple[str, str]:
@@ -280,27 +253,13 @@ def _compose_live_providers(
         raise ProviderConfigurationError("experiment provider endpoints are unsupported")
     qwen_provenance = config.live_provenance.qwen
     qwen_base_url, qwen_base_url_sha256 = _normalized_base_url(
-        _required_environment(environ, "SPANVOUCH_VLLM_BASE_URL")
+        _required_environment(environ, "SPANVOUCH_QWEN_BASE_URL")
     )
-    qwen_repo_digest = _required_environment(
-        environ, "SPANVOUCH_VLLM_CONTAINER_REPO_DIGEST"
-    )
-    qwen_hf_revision = _required_environment(environ, "SPANVOUCH_VLLM_HF_REVISION")
-    try:
-        qwen_max_model_len = int(
-            _required_environment(environ, "SPANVOUCH_VLLM_MAX_MODEL_LEN")
-        )
-    except ValueError as error:
-        raise ProviderConfigurationError("provider provenance mismatch") from error
     if (
         qwen_base_url_sha256 != qwen_provenance.base_url_sha256
-        or qwen_repo_digest != qwen_provenance.container_repo_digest
-        or qwen_hf_revision != qwen_provenance.hf_revision
-        or _required_environment(environ, "SPANVOUCH_VLLM_CHAT_TEMPLATE_SHA256")
-        != qwen_provenance.chat_template_sha256
-        or _required_environment(environ, "SPANVOUCH_VLLM_DTYPE")
-        != qwen_provenance.dtype
-        or qwen_max_model_len != qwen_provenance.max_model_len
+        or qwen_provenance.service_operator != "alibaba-cloud-model-studio"
+        or qwen_provenance.deployment_type != "managed-api"
+        or qwen_provenance.api_compatibility != "openai-compatible"
     ):
         raise ProviderConfigurationError("provider provenance mismatch")
     deepseek_provider, deepseek_pricing = _compose_deepseek_endpoint(
@@ -310,15 +269,15 @@ def _compose_live_providers(
         _required_environment(environ, "SPANVOUCH_PHASE5_QWEN_PRICING_PATH"),
         qwen_provenance,
     )
-    qwen_key = _required_environment(environ, "SPANVOUCH_VLLM_API_KEY")
+    qwen_key = _required_environment(environ, "SPANVOUCH_QWEN_API_KEY")
     qwen_config = OpenAICompatibleConfig(
         api_key=SecretStr(qwen_key),
         base_url=qwen_base_url,
         expected_model=qwen_endpoint.model,
         endpoint_class=qwen_endpoint.endpoint_class,
+        service_operator=qwen_provenance.service_operator,
+        deployment_type=qwen_provenance.deployment_type,
         smoke_only=False,
-        container_repo_digest=qwen_repo_digest,
-        hf_revision=qwen_hf_revision,
     ).validate_for_experiment(config.mode.value)
     return _LiveProviderComposition(
         deepseek=deepseek_provider,
@@ -472,26 +431,6 @@ def compose_live_executor(
     runtime_environ = os.environ if environ is None else environ
     ledger_path = _required_absolute_path(
         runtime_environ, "SPANVOUCH_PHASE5_BUDGET_LEDGER_PATH"
-    )
-    gpu_lease_path = _required_absolute_path(
-        runtime_environ, "SPANVOUCH_PHASE5_GPU_LEASE_PATH"
-    )
-    gpu_lease = _load_gpu_lease(gpu_lease_path, config)
-    qwen_pricing = _load_pricing(
-        _required_environment(runtime_environ, "SPANVOUCH_PHASE5_QWEN_PRICING_PATH"),
-        config.live_provenance.qwen,
-    )
-    ledger = BudgetLedger(ledger_path, config.budget)
-    approval = config.live_provenance.qwen.gpu_lease_approval
-    if approval is None:
-        raise ProviderConfigurationError("Phase 5 GPU lease approval is missing")
-    ledger.record_gpu_lease_record(
-        record=gpu_lease,
-        approval=approval,
-        experiment_id=config.experiment_id,
-        matrix_manifest_sha256=matrix_manifest_sha256,
-        mode=config.mode,
-        pricing=qwen_pricing,
     )
     providers = _compose_live_providers(
         config,

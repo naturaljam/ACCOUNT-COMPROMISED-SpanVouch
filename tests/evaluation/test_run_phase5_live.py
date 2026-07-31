@@ -34,24 +34,10 @@ def _pricing(path: Path, provider: str, model: str) -> Path:
         source_url="https://pricing.example.invalid/source",
         input_per_million=Decimal("1"),
         output_per_million=Decimal("2"),
-        gpu_hourly=Decimal("5" if provider == "qwen" else "0"),
+        gpu_hourly=Decimal("0"),
         amounts="estimated",
     )
     path.write_bytes(canonical_bytes(json.loads(value.model_dump_json())))
-    return path
-
-
-def _gpu_lease(path: Path) -> Path:
-    payload = {
-        "lease_id": "lease-test-001",
-        "cloud_provider": "example-cloud",
-        "region": "test-region-1",
-        "instance_type": "gpu-48gb",
-        "started_at_utc": "2026-07-20T00:00:00Z",
-        "ended_at_utc": "2026-07-20T01:00:00Z",
-        "duration_hours": "1",
-    }
-    path.write_bytes(canonical_bytes(payload))
     return path
 
 
@@ -63,22 +49,14 @@ def _environment(tmp_path: Path) -> dict[str, str]:
         "SPANVOUCH_PHASE5_BUDGET_LEDGER_PATH": str(
             (tmp_path / "global-budget.sqlite3").resolve()
         ),
-        "SPANVOUCH_PHASE5_GPU_LEASE_PATH": str(
-            _gpu_lease(tmp_path / "gpu-lease.json").resolve()
-        ),
         "SPANVOUCH_DEEPSEEK_BASE_URL": "https://api.deepseek.com/",
-        "SPANVOUCH_VLLM_API_KEY": qwen_secret,
-        "SPANVOUCH_VLLM_BASE_URL": "https://qwen.example.invalid/v1/",
-        "SPANVOUCH_VLLM_CONTAINER_REPO_DIGEST": "vllm/vllm-openai@sha256:" + "a" * 64,
-        "SPANVOUCH_VLLM_HF_REVISION": "b" * 40,
-        "SPANVOUCH_VLLM_CHAT_TEMPLATE_SHA256": "c" * 64,
-        "SPANVOUCH_VLLM_DTYPE": "bfloat16",
-        "SPANVOUCH_VLLM_MAX_MODEL_LEN": "32768",
+        "SPANVOUCH_QWEN_API_KEY": qwen_secret,
+        "SPANVOUCH_QWEN_BASE_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1/",
         "SPANVOUCH_PHASE5_DEEPSEEK_PRICING_PATH": str(
             _pricing(tmp_path / "deepseek-price.json", "deepseek", "deepseek-v4-flash")
         ),
         "SPANVOUCH_PHASE5_QWEN_PRICING_PATH": str(
-            _pricing(tmp_path / "qwen-price.json", "qwen", "Qwen/Qwen3-14B")
+            _pricing(tmp_path / "qwen-price.json", "qwen", "qwen3-14b")
         ),
     }
 
@@ -128,9 +106,12 @@ def test_pilot_live_cli_routes_deepseek_and_qwen_without_persisting_secrets(
 ) -> None:
     asyncio.run(_candidate_pair(tmp_path / "fixture"))
     calls: list[str] = []
+    qwen_bodies: list[dict[str, object]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request.url.host)
+        if request.url.host == "dashscope.aliyuncs.com":
+            qwen_bodies.append(json.loads(request.content))
         return _completion(request)
 
     deepseek_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
@@ -151,10 +132,6 @@ def test_pilot_live_cli_routes_deepseek_and_qwen_without_persisting_secrets(
     monkeypatch.setenv(
         "SPANVOUCH_PHASE5_BUDGET_LEDGER_PATH",
         str((tmp_path / "global-budget.sqlite3").resolve()),
-    )
-    monkeypatch.setenv(
-        "SPANVOUCH_PHASE5_GPU_LEASE_PATH",
-        str(_gpu_lease(tmp_path / "gpu-lease.json").resolve()),
     )
     monkeypatch.setenv(
         "SPANVOUCH_PHASE5_QWEN_PRICING_PATH",
@@ -192,7 +169,9 @@ def test_pilot_live_cli_routes_deepseek_and_qwen_without_persisting_secrets(
     assert manifest.provider_phase_complete
     assert manifest.status_counts[OutcomeStatus.COMPLETED] == 12
     assert calls.count("api.deepseek.com") == 4
-    assert calls.count("qwen.example.invalid") == 4
+    assert calls.count("dashscope.aliyuncs.com") == 4
+    assert len(qwen_bodies) == 4
+    assert all(body["enable_thinking"] is False for body in qwen_bodies)
     all_bytes = b"".join(path.read_bytes() for path in tmp_path.rglob("*") if path.is_file())
     deepseek_secret, qwen_secret = _sentinel_credentials()
     assert deepseek_secret.encode() not in all_bytes
@@ -200,7 +179,7 @@ def test_pilot_live_cli_routes_deepseek_and_qwen_without_persisting_secrets(
     assert b"raw-provider-response-id" not in all_bytes
     assert phase5_live_composition.BudgetLedger(
         (tmp_path / "global-budget.sqlite3").resolve(), config.budget
-    ).committed_total(datetime(2026, 7, 20, 1, tzinfo=UTC)) >= Decimal("5.000000")
+    ).committed_total(datetime(2026, 7, 20, 1, tzinfo=UTC)) > Decimal("0")
     asyncio.run(deepseek_client.aclose())
     asyncio.run(qwen_client.aclose())
 
@@ -209,7 +188,7 @@ def test_pilot_live_cli_routes_deepseek_and_qwen_without_persisting_secrets(
     "change",
     [
         lambda env: env.pop("DEEPSEEK" + "_API_KEY"),
-        lambda env: env.update(SPANVOUCH_VLLM_BASE_URL="not-a-url"),
+        lambda env: env.update(SPANVOUCH_QWEN_BASE_URL="not-a-url"),
         lambda env: env.update(SPANVOUCH_PHASE5_QWEN_PRICING_PATH="missing.json"),
     ],
 )
@@ -241,15 +220,7 @@ def test_live_composition_rejects_missing_env_endpoint_or_price_before_call(
     ("name", "value"),
     [
         ("SPANVOUCH_DEEPSEEK_BASE_URL", "https://deepseek.example.invalid/v1"),
-        ("SPANVOUCH_VLLM_BASE_URL", "https://other.example.invalid/v1"),
-        (
-            "SPANVOUCH_VLLM_CONTAINER_REPO_DIGEST",
-            "vllm/vllm-openai@sha256:" + "d" * 64,
-        ),
-        ("SPANVOUCH_VLLM_HF_REVISION", "d" * 40),
-        ("SPANVOUCH_VLLM_CHAT_TEMPLATE_SHA256", "d" * 64),
-        ("SPANVOUCH_VLLM_DTYPE", "float16"),
-        ("SPANVOUCH_VLLM_MAX_MODEL_LEN", "16384"),
+        ("SPANVOUCH_QWEN_BASE_URL", "https://other.example.invalid/v1"),
     ],
 )
 def test_live_composition_rejects_deployment_provenance_drift(
@@ -292,7 +263,7 @@ def test_live_composition_rejects_pricing_identity_drift(
     ("name", "value"),
     [
         ("SPANVOUCH_DEEPSEEK_BASE_URL", "https://user:secret@api.deepseek.com"),
-        ("SPANVOUCH_VLLM_BASE_URL", "https://qwen.example.invalid/v1?token=secret"),
+        ("SPANVOUCH_QWEN_BASE_URL", "https://qwen.example.invalid/v1?token=secret"),
     ],
 )
 def test_live_composition_rejects_non_secret_free_base_url(
@@ -426,10 +397,10 @@ def test_live_composition_uses_one_absolute_ledger_across_manifests(
             gpu_hourly=Decimal("0"), amounts="estimated",
         ),
         "qwen": Pricing(
-            provider="qwen", model="Qwen/Qwen3-14B", currency="CNY",
+            provider="qwen", model="qwen3-14b", currency="CNY",
             effective_date=date(2026, 7, 20), source_url="https://example.invalid",
             input_per_million=Decimal("1"), output_per_million=Decimal("1"),
-            gpu_hourly=Decimal("1"), amounts="estimated",
+            gpu_hourly=Decimal("0"), amounts="estimated",
         ),
     }
     monkeypatch.setattr(
@@ -458,7 +429,7 @@ def test_live_composition_uses_one_absolute_ledger_across_manifests(
     assert executors[0]._cache.path != executors[1]._cache.path
     assert executors[0]._ledger.committed_total(
         datetime(2026, 7, 20, tzinfo=UTC)
-    ) == Decimal("5")
+    ) == Decimal("0")
 
 
 def test_live_composition_rejects_relative_ledger_before_provider_composition(
@@ -485,16 +456,14 @@ def test_live_composition_rejects_relative_ledger_before_provider_composition(
     assert calls == 0
 
 
-def test_live_composition_rejects_invalid_gpu_lease_before_credentials(
+def test_managed_live_composition_does_not_require_gpu_lease_before_credentials(
     tmp_path: Path,
 ) -> None:
     environ = _environment(tmp_path)
-    lease_path = Path(environ["SPANVOUCH_PHASE5_GPU_LEASE_PATH"])
-    lease_path.write_bytes(lease_path.read_bytes() + b"\n")
     environ.pop("DEEPSEEK_API_KEY")
     config = load_experiment_config(Path("evals/configs/phase5-pilot.json"))
     manifest = "a" * 64
-    with pytest.raises(ProviderConfigurationError, match="GPU lease"):
+    with pytest.raises(ProviderConfigurationError, match="DEEPSEEK_API_KEY") as raised:
         phase5_live_composition.compose_live_executor(
             candidates=(), config=config,
             authorization=PaidRunAuthorization(
@@ -504,4 +473,4 @@ def test_live_composition_rejects_invalid_gpu_lease_before_credentials(
             matrix_manifest_sha256=manifest,
             environ=environ,
         )
-    assert not Path(environ["SPANVOUCH_PHASE5_BUDGET_LEDGER_PATH"]).exists()
+    assert "GPU" not in str(raised.value)

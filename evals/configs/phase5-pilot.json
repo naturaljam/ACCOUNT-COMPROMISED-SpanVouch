@@ -78,7 +78,7 @@
       "api_compatibility": "openai-compatible",
       "base_url_sha256": "5891aed827c4e67b2d7c0c73ea819327ce3f2b6ef72213cd79669486a26b1ead",
       "pricing": {
-        "canonical_sha256": "a214f6d8b68dc52735f9acb08050c5aa311e53a919e99df67894a87f592c658d",
+        "canonical_sha256": "c791e46491354066269cd029ae4d67adc3897dc49ddf3f962e1d2f0b9add50a2",
         "source_url": "https://pricing.example.invalid/source",
         "effective_date": "2026-07-20",
         "currency": "CNY"
