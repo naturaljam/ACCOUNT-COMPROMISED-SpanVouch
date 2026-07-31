@@ -51,6 +51,7 @@ class CandidateGenerationRequest:
     allow_live_provider: bool
     formal_run: bool
     approved_manifest_sha256: str | None
+    resume: bool = False
 
 
 class CandidateGenerationManifest(BaseModel):
@@ -78,18 +79,13 @@ class _PreparedGeneration:
 
 def _prepare_generation(config_path: Path, corpus_dir: Path) -> _PreparedGeneration:
     config = load_experiment_config(config_path)
-    config_sha256 = canonical_sha256(
-        cast(JsonValue, config.model_dump(mode="json"))
-    )
+    config_sha256 = canonical_sha256(cast(JsonValue, config.model_dump(mode="json")))
     corpus = TraceReplayRepository(corpus_dir)
     manifest = corpus.verify()
     if manifest.metadata.experiment_config_sha256 != config_sha256:
         raise ValueError("corpus experiment configuration does not match config")
     if manifest.metadata.mode != config.mode.value:
         raise ValueError("corpus experiment mode does not match config")
-    for entry in manifest.entries:
-        if CorpusEntry.from_record(corpus.load(entry.cell)) != entry:
-            raise ValueError("corpus entry failed reconstructive verification")
     generation_manifest = CandidateGenerationManifest(
         experiment_id=config.experiment_id,
         mode=config.mode.value,
@@ -123,6 +119,15 @@ class _DiagnosisGuardAdapter:
         return (await self._guard.complete(messages, config)).response
 
 
+def _generation_config(config: Phase5ExperimentConfig) -> GenerationConfig:
+    return GenerationConfig(
+        model=config.generator.model,
+        max_tokens=config.generator.max_tokens,
+        temperature=config.generator.temperature,
+        extra_body=config.generator.extra_body,
+    )
+
+
 def _guard_for_entry(
     prepared: _PreparedGeneration,
     entry: CorpusEntry,
@@ -130,21 +135,14 @@ def _guard_for_entry(
 ) -> tuple[_DiagnosisGuardAdapter, GenerationConfig]:
     record = prepared.corpus.load(entry.cell)
     context = TraceProjector().project(record.trace)
-    generation = GenerationConfig(
-        model=prepared.config.generator.model,
-        max_tokens=prepared.config.generator.max_tokens,
-        temperature=prepared.config.generator.temperature,
-        extra_body=prepared.config.generator.extra_body,
-    )
+    generation = _generation_config(prepared.config)
     prompt = DiagnosisPromptBuilder().prepare(
         context, EvidenceCatalog.from_context(context), generation
     )
     identity = RequestIdentity.from_request(
         experiment_id=prepared.config.experiment_id,
         experiment_config_sha256=prepared.config_sha256,
-        deployment_provenance_sha256=(
-            prepared.config.live_provenance.deepseek.sha256
-        ),
+        deployment_provenance_sha256=(prepared.config.live_provenance.deepseek.sha256),
         trace_sha256=entry.trace_sha256,
         diagnosis_sha256=canonical_sha256(context),
         condition_id="diagnosis_generation",
@@ -180,10 +178,26 @@ async def run_candidate_generation(
 ) -> str:
     """Generate a matrix-consumable repository after exact manifest approval."""
     prepared = _prepare_generation(request.config, request.corpus_dir)
-    if request.output_dir.exists():
+    if request.output_dir.exists() and not request.resume:
         raise FileExistsError("candidate output must not already exist")
     if request.approved_manifest_sha256 != prepared.manifest_sha256:
         raise ProviderConfigurationError("approved candidate manifest does not match")
+    repository = DiagnosisCandidateRepository(request.output_dir)
+    generation = _generation_config(prepared.config)
+    existing = (
+        repository.verify_existing(
+            entries=prepared.entries,
+            expected_corpus_manifest_sha256=prepared.corpus.manifest_sha256,
+            expected_generation=generation,
+            expected_provider=prepared.config.generator.provider,
+            expected_model=prepared.config.generator.model,
+        )
+        if request.resume
+        else {}
+    )
+    if len(existing) == len(prepared.entries):
+        return prepared.manifest_sha256
+
     authorization = PaidRunAuthorization(
         experiment_id=prepared.config.experiment_id,
         allow_live_provider=request.allow_live_provider,
@@ -203,9 +217,10 @@ async def run_candidate_generation(
         environ=os.environ if environ is None else environ,
         deepseek_client=deepseek_client,
     )
-    repository = DiagnosisCandidateRepository(request.output_dir)
     for entry in prepared.entries:
-        provider, generation = _guard_for_entry(prepared, entry, dependencies)
+        if entry.cell in existing:
+            continue
+        provider, entry_generation = _guard_for_entry(prepared, entry, dependencies)
         await generate_and_freeze_diagnosis(
             corpus=prepared.corpus,
             cell=entry.cell,
@@ -213,7 +228,7 @@ async def run_candidate_generation(
             expected_record_sha256=entry.record_sha256,
             expected_trace_sha256=entry.trace_sha256,
             provider=provider,
-            generation=generation,
+            generation=entry_generation,
             repository=repository,
             verifier_instruction=_VERIFIER_INSTRUCTION,
         )
@@ -229,6 +244,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--formal-run", action="store_true")
     parser.add_argument("--approved-manifest-sha256")
     parser.add_argument("--manifest-only", action="store_true")
+    parser.add_argument("--resume", action="store_true")
     return parser
 
 
@@ -244,6 +260,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         allow_live_provider=arguments.allow_live_provider,
         formal_run=arguments.formal_run,
         approved_manifest_sha256=arguments.approved_manifest_sha256,
+        resume=arguments.resume,
     )
     print(asyncio.run(run_candidate_generation(request)))
     return 0

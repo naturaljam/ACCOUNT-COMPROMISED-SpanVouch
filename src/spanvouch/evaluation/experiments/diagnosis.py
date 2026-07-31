@@ -179,10 +179,89 @@ class DiagnosisCandidateRepository:
     def exists(self, cell: CorpusCell) -> bool:
         return os.path.lexists(self._destination(cell))
 
-    def publish(self, candidate: FrozenDiagnosisCandidate) -> str:
-        validated = FrozenDiagnosisCandidate.model_validate(
-            candidate.model_dump(mode="python")
+    def verify_existing(
+        self,
+        *,
+        entries: tuple[CorpusEntry, ...],
+        expected_corpus_manifest_sha256: str,
+        expected_generation: GenerationConfig,
+        expected_provider: str,
+        expected_model: str,
+    ) -> dict[CorpusCell, FrozenDiagnosisCandidate]:
+        """Verify every existing cell from one pinned repository snapshot."""
+        if not os.path.lexists(self._root):
+            return {}
+        if re.fullmatch(SHA256_PATTERN, expected_corpus_manifest_sha256) is None:
+            raise ValueError("expected_corpus_manifest_sha256 must be a SHA-256 digest")
+        generation = GenerationConfig.model_validate(expected_generation.model_dump(mode="python"))
+        if not expected_provider or not expected_model:
+            raise ValueError("expected provider and model must be non-empty")
+        if generation.model != expected_model:
+            raise ValueError("expected generation model does not match expected model")
+
+        validated_entries = tuple(
+            CorpusEntry.model_validate(entry.model_dump(mode="python")) for entry in entries
         )
+        entries_by_identity = {
+            self._cell_identity(entry.cell): entry for entry in validated_entries
+        }
+        if len(entries_by_identity) != len(validated_entries):
+            raise ValueError("candidate repository cell identity collision")
+
+        snapshot = read_verified_directory_tree(self._root)
+        if "cells" not in snapshot.directories:
+            raise ValueError("candidate repository has unexpected layout")
+
+        candidates: dict[CorpusCell, FrozenDiagnosisCandidate] = {}
+        populated_directories: set[str] = set()
+        for relative, content in snapshot.files.items():
+            parts = relative.split("/")
+            if len(parts) != 3 or parts[0] != "cells":
+                raise ValueError("candidate repository contains unknown layout")
+            cell_identity, filename = parts[1:]
+            try:
+                entry = entries_by_identity[cell_identity]
+            except KeyError as error:
+                raise ValueError("candidate repository contains unknown cell") from error
+            if (
+                not filename.endswith(".json")
+                or re.fullmatch(SHA256_PATTERN, filename.removesuffix(".json")) is None
+            ):
+                raise ValueError("candidate repository has invalid content address")
+            digest = sha256(content).hexdigest()
+            if filename != f"{digest}.json":
+                raise ValueError("candidate content address SHA-256 mismatch")
+            candidate = FrozenDiagnosisCandidate.model_validate_json(content)
+            if canonical_bytes(candidate) != content:
+                raise ValueError("candidate payload is not canonical JSON")
+            if candidate.cell != entry.cell:
+                raise ValueError("candidate cell does not match corpus entry")
+            if candidate.corpus_manifest_sha256 != expected_corpus_manifest_sha256:
+                raise ValueError("candidate corpus manifest SHA-256 mismatch")
+            if candidate.record_sha256 != entry.record_sha256:
+                raise ValueError("candidate record SHA-256 mismatch")
+            if candidate.trace_sha256 != entry.trace_sha256:
+                raise ValueError("candidate trace SHA-256 mismatch")
+            if candidate.generation != generation:
+                raise ValueError("candidate generation does not match expected generation")
+            if candidate.generator_provider != expected_provider:
+                raise ValueError("candidate provider does not match expected provider")
+            if candidate.generator_model != expected_model:
+                raise ValueError("candidate model does not match expected model")
+            if entry.cell in candidates:
+                raise ValueError("candidate repository contains duplicate cell")
+            candidates[entry.cell] = candidate
+            populated_directories.add(f"cells/{cell_identity}")
+
+        expected_directories = frozenset({"cells", *populated_directories})
+        if snapshot.directories != expected_directories:
+            raise ValueError("candidate repository contains unknown or empty layout")
+        if not candidates:
+            raise ValueError("candidate repository contains no candidates")
+        return candidates
+
+    def publish(self, candidate: FrozenDiagnosisCandidate) -> str:
+        validated = FrozenDiagnosisCandidate.model_validate(candidate.model_dump(mode="python"))
         destination = self._destination(validated.cell)
         destination.parent.mkdir(parents=True, exist_ok=True)
         candidate_bytes = canonical_bytes(validated)
@@ -230,9 +309,7 @@ class DiagnosisCandidateRepository:
         if re.fullmatch(SHA256_PATTERN, expected_candidate_sha256) is None:
             raise ValueError("expected_candidate_sha256 must be a SHA-256 digest")
         if re.fullmatch(SHA256_PATTERN, expected_corpus_manifest_sha256) is None:
-            raise ValueError(
-                "expected_corpus_manifest_sha256 must be a SHA-256 digest"
-            )
+            raise ValueError("expected_corpus_manifest_sha256 must be a SHA-256 digest")
         destination = self._destination(cell)
         snapshot = read_verified_directory_tree(destination)
         if snapshot.directories or len(snapshot.files) != 1:
@@ -258,17 +335,11 @@ def reconstruct_shared_verifier_messages(
     verifier_instruction: str,
 ) -> tuple[ChatMessage, ...]:
     """Rebuild B2 inputs and prove they equal the audited pre-call message hash."""
-    validated = FrozenDiagnosisCandidate.model_validate(
-        candidate.model_dump(mode="python")
-    )
+    validated = FrozenDiagnosisCandidate.model_validate(candidate.model_dump(mode="python"))
     catalog = EvidenceCatalog.from_context(validated.diagnostic_context)
     builder = DiagnosisPromptBuilder()
-    prepared = builder.prepare(
-        validated.diagnostic_context, catalog, validated.generation
-    )
-    messages = builder.shared_verifier_messages(
-        prepared, validated.report, verifier_instruction
-    )
+    prepared = builder.prepare(validated.diagnostic_context, catalog, validated.generation)
+    messages = builder.shared_verifier_messages(prepared, validated.report, verifier_instruction)
     messages_payload = cast(
         JsonValue,
         [message.model_dump(mode="json") for message in messages],
@@ -374,9 +445,7 @@ async def generate_and_freeze_diagnosis(
             DiagnosisExperimentFailureCode.CONTRACT_FAILURE,
             "model-derived diagnosis content is unsafe",
         ) from error
-    shared_messages = builder.shared_verifier_messages(
-        prepared, report, verifier_instruction
-    )
+    shared_messages = builder.shared_verifier_messages(prepared, report, verifier_instruction)
     frozen_evidence = _freeze_evidence(evidence)
     candidate = FrozenDiagnosisCandidate(
         cell=entry.cell,

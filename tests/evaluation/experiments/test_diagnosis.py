@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from spanvouch.contracts.diagnosis import ProviderUsage
-from spanvouch.contracts.versioning import canonical_json, canonical_sha256
+from spanvouch.contracts.versioning import canonical_bytes, canonical_json, canonical_sha256
 from spanvouch.diagnosis.protocols import (
     ChatMessage,
     GenerationConfig,
@@ -101,37 +101,32 @@ async def test_generation_freezes_hash_bound_sanitized_candidate(tmp_path: Path)
         expected_record_sha256=entry.record_sha256,
         expected_trace_sha256=entry.trace_sha256,
         provider=provider,
-        generation=GenerationConfig(
-            model="deepseek-v4-flash", max_tokens=777, temperature=0.2
-        ),
+        generation=GenerationConfig(model="deepseek-v4-flash", max_tokens=777, temperature=0.2),
         repository=repository,
         verifier_instruction="Critique evidence sufficiency only.",
     )
 
     assert provider.calls == 1
     candidate_sha256 = canonical_sha256(candidate)
-    assert repository.load(
-        entry.cell,
-        expected_candidate_sha256=candidate_sha256,
-        expected_corpus_manifest_sha256=corpus.manifest_sha256,
-    ) == candidate
+    assert (
+        repository.load(
+            entry.cell,
+            expected_candidate_sha256=candidate_sha256,
+            expected_corpus_manifest_sha256=corpus.manifest_sha256,
+        )
+        == candidate
+    )
     assert candidate.record_sha256 == entry.record_sha256
     assert candidate.trace_sha256 == entry.trace_sha256
-    assert canonical_sha256(candidate.diagnostic_context) == (
-        candidate.diagnostic_context_sha256
-    )
-    assert canonical_sha256(list(candidate.evidence_catalog)) == (
-        candidate.evidence_catalog_sha256
-    )
+    assert canonical_sha256(candidate.diagnostic_context) == (candidate.diagnostic_context_sha256)
+    assert canonical_sha256(list(candidate.evidence_catalog)) == (candidate.evidence_catalog_sha256)
     assert canonical_sha256(candidate.report) == candidate.report_sha256
     assert canonical_sha256(candidate.generation) == candidate.generation_sha256
     assert candidate.prompt_sha256 == candidate.report.provenance.prompt_sha256
     assert candidate.generator_provider == "deepseek"
     assert candidate.generator_model == "deepseek-v4-flash"
     assert candidate.usage.request_id is None
-    assert candidate.request_id_sha256 == sha256(
-        b"raw-provider-request-id"
-    ).hexdigest()
+    assert candidate.request_id_sha256 == sha256(b"raw-provider-request-id").hexdigest()
     serialized = canonical_json(candidate)
     for forbidden in (
         "raw-provider-request-id",
@@ -150,6 +145,138 @@ async def test_generation_freezes_hash_bound_sanitized_candidate(tmp_path: Path)
     assert canonical_sha256(list(messages)) == candidate.shared_verifier_messages_sha256
     assert messages[-2].role == "assistant"
     assert messages[-1].content == "Critique evidence sufficiency only."
+
+
+@pytest.mark.asyncio
+async def test_repository_verifies_existing_candidates_against_expected_inputs(
+    tmp_path: Path,
+) -> None:
+    corpus, entry = _corpus(tmp_path)
+    repository = DiagnosisCandidateRepository(tmp_path / "candidates")
+    generation = GenerationConfig(model="deepseek-v4-flash", max_tokens=777, temperature=0.2)
+    candidate = await generate_and_freeze_diagnosis(
+        corpus=corpus,
+        cell=entry.cell,
+        expected_corpus_manifest_sha256=corpus.manifest_sha256,
+        expected_record_sha256=entry.record_sha256,
+        expected_trace_sha256=entry.trace_sha256,
+        provider=OfflineProvider(),
+        generation=generation,
+        repository=repository,
+        verifier_instruction="Critique evidence sufficiency only.",
+    )
+
+    existing = repository.verify_existing(
+        entries=(entry,),
+        expected_corpus_manifest_sha256=corpus.manifest_sha256,
+        expected_generation=generation,
+        expected_provider="deepseek",
+        expected_model="deepseek-v4-flash",
+    )
+
+    assert existing == {entry.cell: candidate}
+
+
+@pytest.mark.asyncio
+async def test_repository_existing_verification_rejects_drift_and_extra_cells(
+    tmp_path: Path,
+) -> None:
+    corpus, entry = _corpus(tmp_path)
+    repository = DiagnosisCandidateRepository(tmp_path / "candidates")
+    generation = GenerationConfig()
+    await generate_and_freeze_diagnosis(
+        corpus=corpus,
+        cell=entry.cell,
+        expected_corpus_manifest_sha256=corpus.manifest_sha256,
+        expected_record_sha256=entry.record_sha256,
+        expected_trace_sha256=entry.trace_sha256,
+        provider=OfflineProvider(),
+        generation=generation,
+        repository=repository,
+        verifier_instruction="Critique evidence sufficiency only.",
+    )
+
+    with pytest.raises(ValueError, match="generation"):
+        repository.verify_existing(
+            entries=(entry,),
+            expected_corpus_manifest_sha256=corpus.manifest_sha256,
+            expected_generation=generation.model_copy(update={"max_tokens": 1}),
+            expected_provider="deepseek",
+            expected_model="deepseek-v4-flash",
+        )
+
+    (tmp_path / "candidates/cells/unknown-cell").mkdir()
+    with pytest.raises(ValueError, match="layout|unknown"):
+        repository.verify_existing(
+            entries=(entry,),
+            expected_corpus_manifest_sha256=corpus.manifest_sha256,
+            expected_generation=generation,
+            expected_provider="deepseek",
+            expected_model="deepseek-v4-flash",
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mutation", "expected_error"),
+    [
+        ("renamed_payload", "content address"),
+        ("changed_bytes", "SHA-256"),
+        ("corpus_manifest_sha256", "corpus manifest"),
+        ("record_sha256", "record"),
+        ("trace_sha256", "trace"),
+        ("raw_request_id", "raw request ID"),
+        ("unknown_cell", "cell"),
+    ],
+)
+async def test_repository_existing_verification_rejects_candidate_tampering(
+    tmp_path: Path,
+    mutation: str,
+    expected_error: str,
+) -> None:
+    corpus, entry = _corpus(tmp_path)
+    repository = DiagnosisCandidateRepository(tmp_path / "candidates")
+    generation = GenerationConfig()
+    candidate = await generate_and_freeze_diagnosis(
+        corpus=corpus,
+        cell=entry.cell,
+        expected_corpus_manifest_sha256=corpus.manifest_sha256,
+        expected_record_sha256=entry.record_sha256,
+        expected_trace_sha256=entry.trace_sha256,
+        provider=OfflineProvider(),
+        generation=generation,
+        repository=repository,
+        verifier_instruction="Critique evidence sufficiency only.",
+    )
+    payload = next((tmp_path / "candidates/cells").glob("*/*.json"))
+
+    if mutation == "renamed_payload":
+        payload.rename(payload.with_name(f"{'f' * 64}.json"))
+    elif mutation == "changed_bytes":
+        payload.write_bytes(payload.read_bytes() + b" ")
+    else:
+        value = candidate.model_dump(mode="json")
+        if mutation == "raw_request_id":
+            value["usage"]["request_id"] = "raw-provider-request-id"
+            value["report"]["usage"]["request_id"] = "raw-provider-request-id"
+            value["report_sha256"] = canonical_sha256(value["report"])
+        elif mutation == "unknown_cell":
+            value["cell"]["seed"] += 1
+        else:
+            value[mutation] = "f" * 64
+        tampered = canonical_bytes(value)
+        payload.unlink()
+        payload = payload.with_name(f"{sha256(tampered).hexdigest()}.json")
+        payload.write_bytes(tampered)
+
+    with pytest.raises(ValueError, match=expected_error):
+        repository.verify_existing(
+            entries=(entry,),
+            expected_corpus_manifest_sha256=corpus.manifest_sha256,
+            expected_generation=generation,
+            expected_provider="deepseek",
+            expected_model="deepseek-v4-flash",
+        )
 
 
 @pytest.mark.asyncio
@@ -177,11 +304,15 @@ async def test_repository_rejects_second_candidate_for_same_cell(tmp_path: Path)
     with pytest.raises(FileExistsError, match="candidate already exists for corpus cell"):
         await generate_and_freeze_diagnosis(provider=OfflineProvider(0.6), **common)
 
-    assert repository.load(
-        entry.cell,
-        expected_candidate_sha256=digest,
-        expected_corpus_manifest_sha256=corpus.manifest_sha256,
-    ) == before == first
+    assert (
+        repository.load(
+            entry.cell,
+            expected_candidate_sha256=digest,
+            expected_corpus_manifest_sha256=corpus.manifest_sha256,
+        )
+        == before
+        == first
+    )
 
 
 @pytest.mark.asyncio
@@ -296,18 +427,22 @@ async def test_model_derived_credential_text_is_rejected_before_freeze(
         ) -> ProviderResponse:
             self.calls += 1
             return ProviderResponse(
-                content=json.dumps({
-                    "status": "diagnosed",
-                    "failure_type": "invalid_argument",
-                    "critical_span_ids": ["span-root"],
-                    "causal_chain": [{
-                        "stage": "cause",
-                        "statement": "Authorization: Bearer stolen-provider-secret",
-                        "evidence_selectors": ["span-root::name"],
-                    }],
-                    "confidence": 0.9,
-                    "abstain_reason": None,
-                }),
+                content=json.dumps(
+                    {
+                        "status": "diagnosed",
+                        "failure_type": "invalid_argument",
+                        "critical_span_ids": ["span-root"],
+                        "causal_chain": [
+                            {
+                                "stage": "cause",
+                                "statement": "Authorization: Bearer stolen-provider-secret",
+                                "evidence_selectors": ["span-root::name"],
+                            }
+                        ],
+                        "confidence": 0.9,
+                        "abstain_reason": None,
+                    }
+                ),
                 model=config.model,
                 response_id="response-secret-case",
                 finish_reason="stop",
@@ -411,13 +546,9 @@ async def test_frozen_candidate_rejects_every_reconstructive_binding_drift(
         with pytest.raises(ValueError):
             FrozenDiagnosisCandidate.model_validate(changed)
 
-    altered = candidate.model_copy(
-        update={"shared_verifier_messages_sha256": "f" * 64}
-    )
+    altered = candidate.model_copy(update={"shared_verifier_messages_sha256": "f" * 64})
     with pytest.raises(ValueError, match="pre-call audit hash"):
-        reconstruct_shared_verifier_messages(
-            altered, "Critique evidence sufficiency only."
-        )
+        reconstruct_shared_verifier_messages(altered, "Critique evidence sufficiency only.")
 
 
 @pytest.mark.asyncio
@@ -484,9 +615,7 @@ async def test_generation_rejects_provider_provenance_or_usage_identity(
             response = await super().complete(messages, config)
             if missing_identity:
                 return response.model_copy(
-                    update={
-                        "usage": response.usage.model_copy(update={"request_id": None})
-                    }
+                    update={"usage": response.usage.model_copy(update={"request_id": None})}
                 )
             return response.model_copy(update={"model": "wrong-model"})
 
