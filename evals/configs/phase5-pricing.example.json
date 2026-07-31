@@ -1,9 +1,11 @@
 {
   "amounts": "estimated",
+  "conversion": null,
   "currency": "CNY",
   "effective_date": "2026-07-01",
   "gpu_hourly": "0.00",
   "input_per_million": "0.00",
+  "max_input_tokens": null,
   "model": "replace-with-priced-model",
   "output_per_million": "0.00",
   "provider": "replace-with-provider",

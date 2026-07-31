@@ -1,11 +1,15 @@
+import json
 from datetime import UTC, datetime
 from decimal import Decimal
+from hashlib import sha256
 from pathlib import Path
 from typing import cast
 
 import pytest
 from pydantic import JsonValue
 
+from spanvouch.contracts.versioning import canonical_bytes
+from spanvouch.evaluation.experiments.budget import Pricing
 from spanvouch.evaluation.experiments.config import (
     ConditionId,
     ExperimentMode,
@@ -83,6 +87,34 @@ def test_checked_in_pilot_configuration_is_complete() -> None:
     assert config.live_provenance.qwen.service_operator == "alibaba-cloud-model-studio"
     assert config.live_provenance.qwen.deployment_type == "managed-api"
     assert config.live_provenance.qwen.api_compatibility == "openai-compatible"
+    assert config.live_provenance.deepseek.pricing.currency == "USD"
+    assert config.live_provenance.qwen.pricing.currency == "CNY"
+
+
+def test_checked_in_pricing_files_match_pilot_provenance() -> None:
+    config = load_experiment_config(Path("evals/configs/phase5-pilot.json"))
+    checked_in = (
+        (
+            Path("evals/configs/phase5-deepseek-v4-flash-pricing.json"),
+            config.live_provenance.deepseek,
+        ),
+        (
+            Path("evals/configs/phase5-qwen3.7-plus-pricing.json"),
+            config.live_provenance.qwen,
+        ),
+    )
+
+    for path, provenance in checked_in:
+        content = path.read_bytes()
+        payload = json.loads(content)
+        assert content == canonical_bytes(payload)
+        pricing = Pricing.model_validate(payload)
+        assert sha256(content).hexdigest() == provenance.pricing.canonical_sha256
+        assert pricing.provider == provenance.provider
+        assert pricing.model == provenance.model
+        assert pricing.source_url == provenance.pricing.source_url
+        assert pricing.effective_date == provenance.pricing.effective_date
+        assert pricing.currency == provenance.pricing.currency
 
 
 def test_pilot_and_formal_configs_reject_missing_live_provenance() -> None:

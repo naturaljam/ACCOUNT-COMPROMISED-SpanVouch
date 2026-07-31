@@ -560,10 +560,12 @@ def test_pricing_example_and_ignore_rules_are_explicit() -> None:
     )
     assert set(payload) == {
         "amounts",
+        "conversion",
         "currency",
         "effective_date",
         "gpu_hourly",
         "input_per_million",
+        "max_input_tokens",
         "model",
         "output_per_million",
         "provider",

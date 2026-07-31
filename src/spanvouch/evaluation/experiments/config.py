@@ -169,7 +169,7 @@ class PricingFileProvenance(BaseModel):
     canonical_sha256: str = Field(pattern=SHA256_PATTERN)
     source_url: str = Field(min_length=1)
     effective_date: date
-    currency: Literal["CNY"]
+    currency: Literal["CNY", "USD"]
 
 
 class GpuLeaseApproval(BaseModel):

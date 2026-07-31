@@ -24,20 +24,16 @@ from spanvouch.evaluation.experiments.provider import (
 from spanvouch.evaluation.experiments.runner import OutcomeStatus, ProviderPhaseRepository
 from tests.evaluation.experiments.test_planner import _candidate_pair
 
+_ROOT = Path(__file__).parents[2]
+
 
 def _pricing(path: Path, provider: str, model: str) -> Path:
-    value = Pricing(
-        provider=provider,
-        model=model,
-        currency="CNY",
-        effective_date=date(2026, 7, 20),
-        source_url="https://pricing.example.invalid/source",
-        input_per_million=Decimal("1"),
-        output_per_million=Decimal("2"),
-        gpu_hourly=Decimal("0"),
-        amounts="estimated",
-    )
-    path.write_bytes(canonical_bytes(json.loads(value.model_dump_json())))
+    expected = {
+        "deepseek": ("deepseek-v4-flash", "phase5-deepseek-v4-flash-pricing.json"),
+        "qwen": ("qwen3.7-plus", "phase5-qwen3.7-plus-pricing.json"),
+    }[provider]
+    assert model == expected[0]
+    path.write_bytes((_ROOT / "evals/configs" / expected[1]).read_bytes())
     return path
 
 
@@ -239,17 +235,20 @@ def test_live_composition_rejects_deployment_provenance_drift(
 
 
 @pytest.mark.parametrize("provider", ["deepseek", "qwen"])
-@pytest.mark.parametrize("noncanonical", [False, True])
+@pytest.mark.parametrize("drift", ["source", "currency", "noncanonical"])
 def test_live_composition_rejects_pricing_identity_drift(
-    tmp_path: Path, provider: str, noncanonical: bool
+    tmp_path: Path, provider: str, drift: str
 ) -> None:
     environ = _environment(tmp_path)
     path = Path(environ[f"SPANVOUCH_PHASE5_{provider.upper()}_PRICING_PATH"])
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if noncanonical:
+    if drift == "noncanonical":
         path.write_bytes(canonical_bytes(payload) + b"\n")
     else:
-        payload["source_url"] = "https://drift.example.invalid/source"
+        if drift == "source":
+            payload["source_url"] = "https://drift.example.invalid/source"
+        else:
+            payload["currency"] = "CNY" if provider == "deepseek" else "USD"
         path.write_bytes(canonical_bytes(payload))
 
     with pytest.raises(ProviderConfigurationError, match="pricing provenance"):
