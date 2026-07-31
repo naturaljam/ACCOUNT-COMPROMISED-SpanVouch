@@ -3,9 +3,13 @@ from pathlib import Path
 
 from spanvouch.review.errors import ReviewSchemaError
 
-SCHEMA_VERSION = 3
-PREVIOUS_SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
+PREVIOUS_SCHEMA_VERSION = 3
+LEGACY_SCHEMA_VERSION = 2
 BUSY_TIMEOUT_MS = 5_000
+_DEFAULT_PROJECT_ID = "default"
+_DEFAULT_PROJECT_NAME = "Default project"
+_DEFAULT_PROJECT_TIMESTAMP = "1970-01-01T00:00:00Z"
 
 _SCHEMA_V2_SQL = """
 CREATE TABLE schema_metadata (
@@ -140,7 +144,101 @@ CREATE TABLE traces (
 );
 """
 
-_SCHEMA_SQL = _SCHEMA_V2_SQL + _TRACE_SCHEMA_SQL
+_SCHEMA_V3_SQL = _SCHEMA_V2_SQL + _TRACE_SCHEMA_SQL
+# Retained for v3 fixture construction and legacy migration tests.
+_SCHEMA_SQL = _SCHEMA_V3_SQL
+
+_V4_TABLES_SQL = """
+CREATE TABLE projects (
+    project_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE api_keys (
+    key_id TEXT PRIMARY KEY,
+    prefix TEXT NOT NULL UNIQUE,
+    project_id TEXT,
+    roles_json TEXT NOT NULL,
+    secret_salt BLOB NOT NULL CHECK (length(secret_salt) = 16),
+    secret_digest BLOB NOT NULL CHECK (length(secret_digest) = 32),
+    created_at TEXT NOT NULL,
+    expires_at TEXT,
+    revoked_at TEXT,
+    replaced_by_key_id TEXT,
+    FOREIGN KEY (project_id) REFERENCES projects(project_id),
+    FOREIGN KEY (replaced_by_key_id) REFERENCES api_keys(key_id)
+);
+
+CREATE TABLE audit_events (
+    event_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    event_sequence INTEGER NOT NULL CHECK (event_sequence >= 0),
+    previous_event_sha256 TEXT
+        CHECK (previous_event_sha256 IS NULL OR length(previous_event_sha256) = 64),
+    event_sha256 TEXT NOT NULL CHECK (length(event_sha256) = 64),
+    actor_key_id TEXT,
+    actor_roles_json TEXT NOT NULL,
+    action TEXT NOT NULL,
+    resource_type TEXT NOT NULL,
+    resource_id TEXT NOT NULL,
+    result TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    occurred_at TEXT NOT NULL,
+    UNIQUE (project_id, event_sequence),
+    FOREIGN KEY (project_id) REFERENCES projects(project_id),
+    FOREIGN KEY (actor_key_id) REFERENCES api_keys(key_id)
+);
+
+CREATE TABLE audit_checkpoints (
+    checkpoint_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    first_event_sequence INTEGER NOT NULL CHECK (first_event_sequence >= 0),
+    last_event_sequence INTEGER NOT NULL CHECK (last_event_sequence >= first_event_sequence),
+    terminal_event_sha256 TEXT NOT NULL CHECK (length(terminal_event_sha256) = 64),
+    manifest_sha256 TEXT NOT NULL CHECK (length(manifest_sha256) = 64),
+    public_key_pem BLOB NOT NULL,
+    signature BLOB NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(project_id)
+);
+
+CREATE TABLE audit_exports (
+    export_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    first_event_sequence INTEGER NOT NULL CHECK (first_event_sequence >= 0),
+    last_event_sequence INTEGER NOT NULL CHECK (last_event_sequence >= first_event_sequence),
+    manifest_sha256 TEXT NOT NULL CHECK (length(manifest_sha256) = 64),
+    bundle_path TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(project_id)
+);
+"""
+
+_PROJECT_SCOPED_TABLES = (
+    "review_cases",
+    "review_inputs",
+    "diagnosis_revisions",
+    "verifier_runs",
+    "human_decisions",
+    "workflow_events",
+    "idempotency_keys",
+    "traces",
+)
+
+_PROJECT_INDEXED_TABLES = _PROJECT_SCOPED_TABLES + (
+    "api_keys",
+    "audit_events",
+    "audit_checkpoints",
+    "audit_exports",
+)
+
+_PROJECT_INDEXES_SQL = "\n".join(
+    f"CREATE INDEX IF NOT EXISTS idx_{table}_project_id ON {table}(project_id);"
+    for table in _PROJECT_INDEXED_TABLES
+)
 
 
 def _normalize_schema_sql(value: str) -> str:
@@ -156,7 +254,7 @@ def _expected_schema(schema_sql: str) -> dict[str, str]:
 
 
 _EXPECTED_SCHEMA_V2_SQL = _expected_schema(_SCHEMA_V2_SQL)
-_EXPECTED_SCHEMA_SQL = _expected_schema(_SCHEMA_SQL)
+_EXPECTED_SCHEMA_V3_SQL = _expected_schema(_SCHEMA_V3_SQL)
 
 
 def _validate_schema(
@@ -186,6 +284,78 @@ def _execute_schema(connection: sqlite3.Connection, schema_sql: str) -> None:
             connection.execute(statement)
 
 
+def _add_project_columns(connection: sqlite3.Connection) -> None:
+    for table in _PROJECT_SCOPED_TABLES:
+        connection.execute(
+            f"ALTER TABLE {table} "
+            "ADD COLUMN project_id TEXT NOT NULL DEFAULT 'default'"
+        )
+
+
+def _actual_schema(connection: sqlite3.Connection) -> dict[str, str]:
+    rows = connection.execute(
+        "SELECT name, sql FROM sqlite_master "
+        "WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+    ).fetchall()
+    return {
+        str(name): _normalize_schema_sql(str(sql))
+        for name, sql in rows
+        if sql is not None
+    }
+
+
+def _expected_schema_v4() -> dict[str, str]:
+    connection = sqlite3.connect(":memory:")
+    try:
+        _execute_schema(connection, _SCHEMA_V3_SQL)
+        _execute_schema(connection, _V4_TABLES_SQL)
+        _add_project_columns(connection)
+        _execute_schema(connection, _PROJECT_INDEXES_SQL)
+        return _actual_schema(connection)
+    finally:
+        connection.close()
+
+
+_EXPECTED_SCHEMA_V4_SQL = _expected_schema_v4()
+
+
+def _seed_default_project(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        "INSERT OR IGNORE INTO projects(project_id, name, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?)",
+        (
+            _DEFAULT_PROJECT_ID,
+            _DEFAULT_PROJECT_NAME,
+            _DEFAULT_PROJECT_TIMESTAMP,
+            _DEFAULT_PROJECT_TIMESTAMP,
+        ),
+    )
+
+
+def _migrate_v3_to_v4(connection: sqlite3.Connection) -> None:
+    _validate_schema(connection, expected=_EXPECTED_SCHEMA_V3_SQL, version=3)
+    _execute_schema(connection, _V4_TABLES_SQL)
+    _add_project_columns(connection)
+    _seed_default_project(connection)
+    _execute_schema(connection, _PROJECT_INDEXES_SQL)
+    connection.execute(
+        "UPDATE schema_metadata SET schema_version = ? WHERE singleton_key = 1",
+        (SCHEMA_VERSION,),
+    )
+
+
+def _create_v4_schema(connection: sqlite3.Connection) -> None:
+    _execute_schema(connection, _SCHEMA_V3_SQL)
+    _execute_schema(connection, _V4_TABLES_SQL)
+    _add_project_columns(connection)
+    _seed_default_project(connection)
+    _execute_schema(connection, _PROJECT_INDEXES_SQL)
+    connection.execute(
+        "INSERT INTO schema_metadata(singleton_key, schema_version) VALUES (1, ?)",
+        (SCHEMA_VERSION,),
+    )
+
+
 def connect_database(database: str | Path) -> sqlite3.Connection:
     """Open one configured connection; callers own its transaction and lifetime."""
     connection = sqlite3.connect(database, timeout=BUSY_TIMEOUT_MS / 1_000)
@@ -200,7 +370,7 @@ def connect_database(database: str | Path) -> sqlite3.Connection:
 
 
 def initialize_database(database: str | Path) -> None:
-    """Create schema v3, migrate exact v2 databases, or verify exact v3 state."""
+    """Create schema v4, migrate exact v2/v3 databases, or verify exact v4 state."""
     connection = connect_database(database)
     try:
         connection.execute("BEGIN IMMEDIATE")
@@ -211,32 +381,31 @@ def initialize_database(database: str | Path) -> None:
             row = connection.execute(
                 "SELECT schema_version FROM schema_metadata WHERE singleton_key = 1"
             ).fetchone()
-            if row == (PREVIOUS_SCHEMA_VERSION,):
+            if row == (LEGACY_SCHEMA_VERSION,):
                 _validate_schema(
                     connection,
                     expected=_EXPECTED_SCHEMA_V2_SQL,
-                    version=PREVIOUS_SCHEMA_VERSION,
+                    version=LEGACY_SCHEMA_VERSION,
                 )
                 _execute_schema(connection, _TRACE_SCHEMA_SQL)
                 connection.execute(
                     "UPDATE schema_metadata SET schema_version = ? "
                     "WHERE singleton_key = 1",
-                    (SCHEMA_VERSION,),
+                    (PREVIOUS_SCHEMA_VERSION,),
                 )
+                _migrate_v3_to_v4(connection)
+            elif row == (PREVIOUS_SCHEMA_VERSION,):
+                _migrate_v3_to_v4(connection)
             elif row == (SCHEMA_VERSION,):
                 _validate_schema(
                     connection,
-                    expected=_EXPECTED_SCHEMA_SQL,
+                    expected=_EXPECTED_SCHEMA_V4_SQL,
                     version=SCHEMA_VERSION,
                 )
             else:
                 raise ReviewSchemaError("unsupported review schema version")
         else:
-            _execute_schema(connection, _SCHEMA_SQL)
-            connection.execute(
-                "INSERT INTO schema_metadata(singleton_key, schema_version) VALUES (1, ?)",
-                (SCHEMA_VERSION,),
-            )
+            _create_v4_schema(connection)
         connection.commit()
     except Exception:
         connection.rollback()

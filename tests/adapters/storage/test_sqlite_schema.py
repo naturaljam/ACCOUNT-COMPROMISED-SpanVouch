@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from spanvouch.adapters.storage.sqlite_schema import (
+    _SCHEMA_V2_SQL,
     SCHEMA_VERSION,
     connect_database,
     initialize_database,
@@ -20,6 +21,26 @@ REQUIRED_TABLES = {
     "workflow_events",
     "idempotency_keys",
     "traces",
+    "projects",
+    "api_keys",
+    "audit_events",
+    "audit_checkpoints",
+    "audit_exports",
+}
+
+REQUIRED_INDEXES = {
+    "idx_review_cases_project_id",
+    "idx_review_inputs_project_id",
+    "idx_diagnosis_revisions_project_id",
+    "idx_verifier_runs_project_id",
+    "idx_human_decisions_project_id",
+    "idx_workflow_events_project_id",
+    "idx_idempotency_keys_project_id",
+    "idx_traces_project_id",
+    "idx_api_keys_project_id",
+    "idx_audit_events_project_id",
+    "idx_audit_checkpoints_project_id",
+    "idx_audit_exports_project_id",
 }
 
 
@@ -30,7 +51,15 @@ def _table_names(connection: sqlite3.Connection) -> set[str]:
     return {str(row[0]) for row in rows}
 
 
-def test_initialize_creates_exact_schema_v3_and_is_repeatable(tmp_path: Path) -> None:
+def _index_names(connection: sqlite3.Connection) -> set[str]:
+    rows = connection.execute(
+        "SELECT name FROM sqlite_master "
+        "WHERE type = 'index' AND name NOT LIKE 'sqlite_autoindex_%'"
+    ).fetchall()
+    return {str(row[0]) for row in rows}
+
+
+def test_initialize_creates_exact_schema_v4_and_is_repeatable(tmp_path: Path) -> None:
     database = tmp_path / "reviews.sqlite3"
 
     initialize_database(database)
@@ -38,10 +67,11 @@ def test_initialize_creates_exact_schema_v3_and_is_repeatable(tmp_path: Path) ->
 
     with connect_database(database) as connection:
         assert _table_names(connection) == REQUIRED_TABLES
+        assert _index_names(connection) == REQUIRED_INDEXES
         assert connection.execute(
             "SELECT schema_version FROM schema_metadata WHERE singleton_key = 1"
-        ).fetchone() == (3,)
-    assert SCHEMA_VERSION == 3
+        ).fetchone() == (4,)
+    assert SCHEMA_VERSION == 4
 
 
 def test_connections_apply_required_pragmas(tmp_path: Path) -> None:
@@ -55,9 +85,7 @@ def test_connections_apply_required_pragmas(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("schema_version", [0, 1, 99])
-def test_initialize_refuses_unknown_schema_versions(
-    tmp_path: Path, schema_version: int
-) -> None:
+def test_initialize_refuses_unknown_schema_versions(tmp_path: Path, schema_version: int) -> None:
     database = tmp_path / "reviews.sqlite3"
     with sqlite3.connect(database) as connection:
         connection.execute(
@@ -95,12 +123,10 @@ def test_schema_constraints_reject_invalid_audit_rows(tmp_path: Path) -> None:
 
     with connect_database(database) as connection:
         columns = {
-            table: tuple(
-                row[1] for row in connection.execute(f"PRAGMA table_info({table})")
-            )
+            table: tuple(row[1] for row in connection.execute(f"PRAGMA table_info({table})"))
             for table in REQUIRED_TABLES
         }
-        assert columns == {
+        expected_columns = {
             "schema_metadata": ("singleton_key", "schema_version"),
             "review_cases": (
                 "case_id",
@@ -186,6 +212,71 @@ def test_schema_constraints_reject_invalid_audit_rows(tmp_path: Path) -> None:
             ),
             "traces": ("trace_id", "run_id", "trace_json", "trace_sha256"),
         }
+        for table in (
+            "review_cases",
+            "review_inputs",
+            "diagnosis_revisions",
+            "verifier_runs",
+            "human_decisions",
+            "workflow_events",
+            "idempotency_keys",
+            "traces",
+        ):
+            expected_columns[table] += ("project_id",)
+        expected_columns.update(
+            {
+                "projects": ("project_id", "name", "created_at", "updated_at"),
+                "api_keys": (
+                    "key_id",
+                    "prefix",
+                    "project_id",
+                    "roles_json",
+                    "secret_salt",
+                    "secret_digest",
+                    "created_at",
+                    "expires_at",
+                    "revoked_at",
+                    "replaced_by_key_id",
+                ),
+                "audit_events": (
+                    "event_id",
+                    "project_id",
+                    "event_sequence",
+                    "previous_event_sha256",
+                    "event_sha256",
+                    "actor_key_id",
+                    "actor_roles_json",
+                    "action",
+                    "resource_type",
+                    "resource_id",
+                    "result",
+                    "payload_json",
+                    "request_id",
+                    "occurred_at",
+                ),
+                "audit_checkpoints": (
+                    "checkpoint_id",
+                    "project_id",
+                    "first_event_sequence",
+                    "last_event_sequence",
+                    "terminal_event_sha256",
+                    "manifest_sha256",
+                    "public_key_pem",
+                    "signature",
+                    "created_at",
+                ),
+                "audit_exports": (
+                    "export_id",
+                    "project_id",
+                    "first_event_sequence",
+                    "last_event_sequence",
+                    "manifest_sha256",
+                    "bundle_path",
+                    "created_at",
+                ),
+            }
+        )
+        assert columns == expected_columns
 
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute(
@@ -301,11 +392,12 @@ def test_schema_enforces_required_uniqueness_and_sha256_lengths(tmp_path: Path) 
 
 def test_initialize_migrates_v2_without_losing_review_state(tmp_path: Path) -> None:
     database = tmp_path / "reviews.sqlite3"
-    initialize_database(database)
-    with connect_database(database) as connection:
-        connection.execute("DROP TABLE IF EXISTS traces")
+    with sqlite3.connect(database) as connection:
+        for statement in _SCHEMA_V2_SQL.split(";"):
+            if statement.strip():
+                connection.execute(statement)
         connection.execute(
-            "UPDATE schema_metadata SET schema_version = 2 WHERE singleton_key = 1"
+            "INSERT INTO schema_metadata(singleton_key, schema_version) VALUES (1, 2)"
         )
         connection.execute(
             "INSERT INTO review_cases("
@@ -321,8 +413,8 @@ def test_initialize_migrates_v2_without_losing_review_state(tmp_path: Path) -> N
     with connect_database(database) as connection:
         assert connection.execute(
             "SELECT schema_version FROM schema_metadata WHERE singleton_key = 1"
-        ).fetchone() == (3,)
+        ).fetchone() == (4,)
         assert connection.execute(
-            "SELECT case_id FROM review_cases WHERE case_id = 'case-before-migration'"
-        ).fetchone() == ("case-before-migration",)
+            "SELECT case_id, project_id FROM review_cases WHERE case_id = 'case-before-migration'"
+        ).fetchone() == ("case-before-migration", "default")
         assert "traces" in _table_names(connection)
