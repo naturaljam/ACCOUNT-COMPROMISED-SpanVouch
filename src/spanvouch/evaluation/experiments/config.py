@@ -185,46 +185,28 @@ class GpuLeaseApproval(BaseModel):
 
 
 class EndpointDeploymentProvenance(BaseModel):
-    """Sanitized endpoint, deployment and pricing identity frozen before a run."""
+    """Sanitized managed-service and pricing identity frozen before a run."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     provider: Literal["deepseek", "qwen"]
+    service_operator: Literal["deepseek", "alibaba-cloud-model-studio"]
     model: str = Field(min_length=1)
     endpoint_class: str = Field(min_length=1)
+    deployment_type: Literal["managed-api"]
+    api_compatibility: Literal["native", "openai-compatible"]
     base_url_sha256: str = Field(pattern=SHA256_PATTERN)
     pricing: PricingFileProvenance
-    container_repo_digest: str | None = None
-    hf_revision: str | None = None
-    chat_template_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
-    dtype: str | None = Field(default=None, min_length=1)
-    max_model_len: int | None = Field(default=None, ge=1)
-    gpu_lease_approval: GpuLeaseApproval | None = None
 
     @model_validator(mode="after")
-    def require_provider_specific_pins(self) -> Self:
-        """Require the full self-hosted serving identity for Qwen experiments."""
-        if self.provider == "qwen":
-            required = {
-                "container_repo_digest": self.container_repo_digest,
-                "hf_revision": self.hf_revision,
-                "chat_template_sha256": self.chat_template_sha256,
-                "dtype": self.dtype,
-                "max_model_len": self.max_model_len,
-                "gpu_lease_approval": self.gpu_lease_approval,
-            }
-            missing = next((name for name, value in required.items() if value is None), None)
-            if missing is not None:
-                raise ValueError(f"qwen live provenance requires {missing}")
-            container_repo_digest = self.container_repo_digest
-            hf_revision = self.hf_revision
-            assert container_repo_digest is not None and hf_revision is not None
-            if not container_repo_digest.startswith("vllm/vllm-openai@sha256:") or (
-                len(container_repo_digest) != len("vllm/vllm-openai@sha256:") + 64
-            ):
-                raise ValueError("container_repo_digest must be a full vLLM RepoDigest")
-            if len(hf_revision) != 40:
-                raise ValueError("hf_revision must be an exact 40-character revision")
+    def require_provider_specific_identity(self) -> Self:
+        """Bind each logical provider to its approved managed service."""
+        expected = {
+            "deepseek": ("deepseek", "native"),
+            "qwen": ("alibaba-cloud-model-studio", "openai-compatible"),
+        }[self.provider]
+        if (self.service_operator, self.api_compatibility) != expected:
+            raise ValueError("managed provider operator or compatibility is invalid")
         return self
 
     @property
@@ -242,7 +224,12 @@ class LiveDeploymentProvenance(BaseModel):
 
     @model_validator(mode="after")
     def validate_roles(self) -> Self:
-        if self.deepseek.provider != "deepseek" or self.qwen.provider != "qwen":
+        if (
+            (self.deepseek.provider, self.deepseek.service_operator)
+            != ("deepseek", "deepseek")
+            or (self.qwen.provider, self.qwen.service_operator)
+            != ("qwen", "alibaba-cloud-model-studio")
+        ):
             raise ValueError("live provenance provider roles are invalid")
         return self
 

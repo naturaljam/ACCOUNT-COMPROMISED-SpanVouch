@@ -41,16 +41,12 @@
   },
   "cross_model_verifier": {
     "provider": "qwen",
-    "model": "Qwen/Qwen3-14B",
+    "model": "qwen3-14b",
     "endpoint_class": "chat-completions",
     "prompt_version": "phase5-cross-model-verifier-v1",
     "max_tokens": 2048,
     "temperature": 0.0,
-    "extra_body": {
-      "chat_template_kwargs": {
-        "enable_thinking": false
-      }
-    }
+    "extra_body": {"enable_thinking": false}
   },
   "budget": {
     "monthly_cap_cny": "1000",
@@ -60,8 +56,11 @@
   "live_provenance": {
     "deepseek": {
       "provider": "deepseek",
+      "service_operator": "deepseek",
       "model": "deepseek-v4-flash",
       "endpoint_class": "chat-completions",
+      "deployment_type": "managed-api",
+      "api_compatibility": "native",
       "base_url_sha256": "a34e2a4708ed1c61008a151688838dcf1c44d4e7f08054633e72ba7c0b16cfc1",
       "pricing": {
         "canonical_sha256": "daee0780aa41958fe7daed76038ddd1f2e7d15e3e0a24db102c5432734810606",
@@ -72,26 +71,17 @@
     },
     "qwen": {
       "provider": "qwen",
-      "model": "Qwen/Qwen3-14B",
+      "service_operator": "alibaba-cloud-model-studio",
+      "model": "qwen3-14b",
       "endpoint_class": "chat-completions",
-      "base_url_sha256": "2131c8ae0a1637006924ec5766c3487ee9cf0b0485d0eb5e6246eac3a348b84d",
+      "deployment_type": "managed-api",
+      "api_compatibility": "openai-compatible",
+      "base_url_sha256": "5891aed827c4e67b2d7c0c73ea819327ce3f2b6ef72213cd79669486a26b1ead",
       "pricing": {
         "canonical_sha256": "a214f6d8b68dc52735f9acb08050c5aa311e53a919e99df67894a87f592c658d",
         "source_url": "https://pricing.example.invalid/source",
         "effective_date": "2026-07-20",
         "currency": "CNY"
-      },
-      "container_repo_digest": "vllm/vllm-openai@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "hf_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "chat_template_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-      "dtype": "bfloat16",
-      "max_model_len": 32768,
-      "gpu_lease_approval": {
-        "cloud_provider": "example-cloud",
-        "region": "test-region-1",
-        "instance_type": "gpu-48gb",
-        "maximum_hours": "2",
-        "maximum_cost_cny": "10"
       }
     }
   }

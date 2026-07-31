@@ -72,15 +72,17 @@ def test_checked_in_pilot_configuration_is_complete() -> None:
     assert config.repetitions == 3
     assert config.conditions == tuple(ConditionId)
     assert config.generator.provider == "deepseek"
-    assert config.cross_model_verifier.model == "Qwen/Qwen3-14B"
+    assert config.cross_model_verifier.model == "qwen3-14b"
+    assert config.cross_model_verifier.extra_body == {"enable_thinking": False}
     assert config.budget.monthly_cap_cny == Decimal("1000")
     assert config.budget.pilot_fraction == Decimal("0.10")
     assert config.budget.stop_fraction == Decimal("0.80")
     assert config.live_provenance.deepseek.provider == "deepseek"
-    assert config.live_provenance.qwen.container_repo_digest.startswith(
-        "vllm/vllm-openai@sha256:"
-    )
-    assert config.live_provenance.qwen.gpu_lease_approval.maximum_hours == Decimal("2")
+    assert config.live_provenance.deepseek.service_operator == "deepseek"
+    assert config.live_provenance.qwen.provider == "qwen"
+    assert config.live_provenance.qwen.service_operator == "alibaba-cloud-model-studio"
+    assert config.live_provenance.qwen.deployment_type == "managed-api"
+    assert config.live_provenance.qwen.api_compatibility == "openai-compatible"
 
 
 def test_pilot_and_formal_configs_reject_missing_live_provenance() -> None:
@@ -92,23 +94,43 @@ def test_pilot_and_formal_configs_reject_missing_live_provenance() -> None:
         Phase5ExperimentConfig.model_validate(payload)
 
 
-def test_qwen_live_provenance_rejects_any_missing_immutable_pin() -> None:
+def test_managed_live_provenance_rejects_missing_or_legacy_identity() -> None:
     payload = load_experiment_config(
         Path("evals/configs/phase5-pilot.json")
     ).model_dump(mode="json")
     qwen = payload["live_provenance"]["qwen"]
-    for field in (
-        "container_repo_digest",
-        "hf_revision",
-        "chat_template_sha256",
-        "dtype",
-        "max_model_len",
-        "gpu_lease_approval",
-    ):
+    for field in ("service_operator", "deployment_type", "api_compatibility"):
         changed = {**payload, "live_provenance": {**payload["live_provenance"]}}
-        changed["live_provenance"]["qwen"] = {**qwen, field: None}
+        changed["live_provenance"]["qwen"] = {
+            key: value for key, value in qwen.items() if key != field
+        }
         with pytest.raises(ValueError, match=field):
             Phase5ExperimentConfig.model_validate(changed)
+
+    for legacy_field in ("container_repo_digest", "hf_revision", "gpu_lease_approval"):
+        changed = {**payload, "live_provenance": {**payload["live_provenance"]}}
+        changed["live_provenance"]["qwen"] = {**qwen, legacy_field: "legacy"}
+        with pytest.raises(ValueError, match="extra"):
+            Phase5ExperimentConfig.model_validate(changed)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("service_operator", "deepseek"),
+        ("deployment_type", "self-hosted-vllm"),
+        ("api_compatibility", "native"),
+    ],
+)
+def test_qwen_live_provenance_rejects_wrong_managed_role(field: str, value: str) -> None:
+    payload = load_experiment_config(
+        Path("evals/configs/phase5-pilot.json")
+    ).model_dump(mode="json")
+    qwen = payload["live_provenance"]["qwen"]
+    changed = {**payload, "live_provenance": {**payload["live_provenance"]}}
+    changed["live_provenance"]["qwen"] = {**qwen, field: value}
+    with pytest.raises(ValueError, match="managed|operator|compatibility|extra"):
+        Phase5ExperimentConfig.model_validate(changed)
 
 
 def test_formal_config_rejects_unfrozen_primary_fields() -> None:
@@ -153,10 +175,7 @@ def test_frozen_formal_endpoint_options_cannot_be_mutated() -> None:
         frozen_at_utc=datetime(2026, 7, 19, tzinfo=UTC),
     )
 
-    thinking_options = cast(
-        dict[str, JsonValue],
-        formal.cross_model_verifier.extra_body["chat_template_kwargs"],
-    )
+    thinking_options = cast(dict[str, JsonValue], formal.cross_model_verifier.extra_body)
     with pytest.raises(TypeError, match="immutable"):
         thinking_options["enable_thinking"] = True
 
