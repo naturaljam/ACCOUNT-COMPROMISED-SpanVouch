@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import cast
@@ -14,8 +16,14 @@ from uuid import uuid4
 from pydantic import JsonValue
 
 from spanvouch.adapters.storage.sqlite_schema import connect_database, initialize_database
-from spanvouch.audit.chain import AuditChain, AuditEventInput
+from spanvouch.audit.chain import AuditChain, AuditCheckpoint, AuditEvent, AuditEventInput
 from spanvouch.audit.context import current_audit_context
+from spanvouch.audit.export import (
+    create_audit_export as write_audit_export,
+)
+from spanvouch.audit.export import (
+    verify_audit_export,
+)
 from spanvouch.projects.models import Project
 from spanvouch.security.identity import (
     ApiKeyMaterial,
@@ -44,6 +52,25 @@ class ApiKeyNotFoundError(KeyError):
 
 class ApiKeyConflictError(ValueError):
     """Raised when an API key lifecycle operation cannot be applied."""
+
+
+class AuditExportNotFoundError(KeyError):
+    """Raised when a requested audit export does not exist."""
+
+
+class AuditExportConflictError(ValueError):
+    """Raised when an audit export cannot be created safely."""
+
+
+@dataclass(frozen=True)
+class AuditExportRecord:
+    export_id: str
+    project_id: str
+    first_event_sequence: int
+    last_event_sequence: int
+    manifest_sha256: str
+    bundle_path: Path
+    created_at: datetime
 
 
 class ProjectRepository:
@@ -222,6 +249,80 @@ class ProjectRepository:
                 occurred_at=now,
             )
 
+    def create_audit_export(
+        self,
+        project_id: str,
+        output_root: Path,
+        *,
+        signing_key_path: Path,
+        now: datetime,
+    ) -> AuditExportRecord:
+        export_id = uuid4().hex
+        bundle_path = output_root / export_id
+        try:
+            with self._transaction(write=True) as connection:
+                _require_project(connection, project_id)
+                events = _audit_events_for_project(connection, project_id)
+                if not events:
+                    raise AuditExportConflictError("audit export requires events")
+                write_audit_export(
+                    project_id,
+                    bundle_path,
+                    events=events,
+                    checkpoints=(),
+                    signing_key_path=signing_key_path,
+                )
+                verified = verify_audit_export(bundle_path)
+                for checkpoint in verified.checkpoints:
+                    _insert_audit_checkpoint(connection, checkpoint)
+                record = AuditExportRecord(
+                    export_id=export_id,
+                    project_id=project_id,
+                    first_event_sequence=verified.first_event_sequence,
+                    last_event_sequence=verified.last_event_sequence,
+                    manifest_sha256=verified.manifest_sha256,
+                    bundle_path=bundle_path,
+                    created_at=now,
+                )
+                _insert_audit_export(connection, record)
+                self._record_audit(
+                    connection,
+                    project_id=project_id,
+                    action="audit_export.create",
+                    resource_type="audit_export",
+                    resource_id=export_id,
+                    result="created",
+                    payload={
+                        "export_id": export_id,
+                        "first_event_sequence": record.first_event_sequence,
+                        "last_event_sequence": record.last_event_sequence,
+                        "manifest_sha256": record.manifest_sha256,
+                    },
+                    occurred_at=now,
+                )
+                return record
+        except Exception:
+            if bundle_path.exists():
+                shutil.rmtree(bundle_path)
+            raise
+
+    def list_audit_exports(self) -> tuple[AuditExportRecord, ...]:
+        with self._transaction(write=False) as connection:
+            rows = connection.execute(
+                "SELECT * FROM audit_exports ORDER BY created_at, export_id"
+            ).fetchall()
+        return tuple(_audit_export_from_row(row) for row in rows)
+
+    def get_audit_export(self, export_id: str) -> AuditExportRecord:
+        with self._transaction(write=False) as connection:
+            row = connection.execute(
+                "SELECT * FROM audit_exports WHERE export_id = ?",
+                (export_id,),
+            ).fetchone()
+        if row is None:
+            raise AuditExportNotFoundError(export_id)
+        return _audit_export_from_row(row)
+
     @contextmanager
     def _transaction(self, *, write: bool) -> Iterator[sqlite3.Connection]:
         try:
@@ -318,6 +419,70 @@ def _require_key(connection: sqlite3.Connection, key_id: str) -> ApiKeyRecord:
     if row is None:
         raise ApiKeyNotFoundError(key_id)
     return _key_record_from_row(row)
+
+
+def _audit_events_for_project(
+    connection: sqlite3.Connection, project_id: str
+) -> tuple[AuditEvent, ...]:
+    rows = connection.execute(
+        "SELECT * FROM audit_events WHERE project_id = ? ORDER BY event_sequence",
+        (project_id,),
+    ).fetchall()
+    return tuple(AuditEvent.from_row(row) for row in rows)
+
+
+def _insert_audit_checkpoint(
+    connection: sqlite3.Connection, checkpoint: AuditCheckpoint
+) -> None:
+    connection.execute(
+        "INSERT OR IGNORE INTO audit_checkpoints("
+        "checkpoint_id, project_id, first_event_sequence, last_event_sequence, "
+        "terminal_event_sha256, manifest_sha256, public_key_pem, signature, created_at"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            checkpoint.checkpoint_id,
+            checkpoint.project_id,
+            checkpoint.first_event_sequence,
+            checkpoint.last_event_sequence,
+            checkpoint.terminal_event_sha256,
+            checkpoint.manifest_sha256,
+            checkpoint.public_key_pem,
+            checkpoint.signature,
+            _timestamp(checkpoint.created_at),
+        ),
+    )
+
+
+def _insert_audit_export(
+    connection: sqlite3.Connection, record: AuditExportRecord
+) -> None:
+    connection.execute(
+        "INSERT INTO audit_exports("
+        "export_id, project_id, first_event_sequence, last_event_sequence, "
+        "manifest_sha256, bundle_path, created_at"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            record.export_id,
+            record.project_id,
+            record.first_event_sequence,
+            record.last_event_sequence,
+            record.manifest_sha256,
+            os.fspath(record.bundle_path),
+            _timestamp(record.created_at),
+        ),
+    )
+
+
+def _audit_export_from_row(row: sqlite3.Row) -> AuditExportRecord:
+    return AuditExportRecord(
+        export_id=str(row["export_id"]),
+        project_id=str(row["project_id"]),
+        first_event_sequence=int(row["first_event_sequence"]),
+        last_event_sequence=int(row["last_event_sequence"]),
+        manifest_sha256=str(row["manifest_sha256"]),
+        bundle_path=Path(str(row["bundle_path"])),
+        created_at=_parse_timestamp(str(row["created_at"])),
+    )
 
 
 def _require_active_key(record: ApiKeyRecord, now: datetime) -> None:
