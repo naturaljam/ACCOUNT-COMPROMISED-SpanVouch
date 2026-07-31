@@ -18,11 +18,13 @@ from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, field_validator
 
 from spanvouch.contracts.artifacts import ArtifactManifest, CodeProvenance
+from spanvouch.contracts.credentials import (
+    contains_credential_signature as _contains_credential_signature,
+)
 from spanvouch.contracts.versioning import SHA256_PATTERN, canonical_bytes, canonical_sha256
 
 
@@ -90,19 +92,6 @@ _ENVIRONMENT_VALUE = re.compile(r"^[A-Za-z0-9._+:/ -]+$")
 _AT_FDCWD = -100
 _RENAME_NOREPLACE = 1
 _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
-_CREDENTIAL_ASSIGNMENT = re.compile(
-    r"(?:api[_\s-]?key|access[_\s-]?key|authorization|authentication|"
-    r"password|client[_\s-]?secret|session[_\s-]?token|credential)\s*(?:=|:)",
-    re.IGNORECASE,
-)
-_AUTH_SCHEME = re.compile(r"\b(?:basic|bearer|token)\s+\S+", re.IGNORECASE)
-_TOKEN_PREFIX = re.compile(
-    r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|"
-    r"glpat-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,}|"
-    r"sk-(?:proj-)?[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16})\b"
-)
-_JWT = re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b")
-_PEM_PRIVATE_KEY = re.compile(r"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----")
 _LEXICAL_ATOM = re.compile(r"[A-Za-z0-9_-]+")
 _GIT_COMMIT = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -1142,19 +1131,7 @@ class ArtifactSecretClassifier:
 
     @staticmethod
     def _has_credential_signature(value: str) -> bool:
-        try:
-            parsed = urlsplit(value)
-        except ValueError:
-            parsed = None
-        if parsed is not None and (parsed.username is not None or parsed.password is not None):
-            return True
-        return bool(
-            _CREDENTIAL_ASSIGNMENT.search(value)
-            or _AUTH_SCHEME.search(value)
-            or _TOKEN_PREFIX.search(value)
-            or _JWT.search(value)
-            or _PEM_PRIVATE_KEY.search(value)
-        )
+        return _contains_credential_signature(value)
 
     @staticmethod
     def _key_tokens(key: str) -> tuple[str, ...]:

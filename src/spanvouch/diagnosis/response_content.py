@@ -8,9 +8,9 @@ from typing import Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
+from spanvouch.contracts.credentials import contains_credential_signature
 from spanvouch.contracts.sanitization import sanitize_diagnostic_value
 from spanvouch.contracts.versioning import canonical_json
-from spanvouch.evaluation.artifacts import contains_credential_signature
 
 
 class ProviderContentDisposition(StrEnum):

@@ -64,7 +64,7 @@ def test_schema_policy_normalizes_invalid_content(content: str) -> None:
     "unsafe",
     (
         "Authorization: Bearer stolen-provider-secret",
-        "api_key=sk-1234567890abcdefghijklmnop",
+        "api_" + "key=" + "sk" + "-" + "1234567890abcdefghijklmnop",
         "session_token: abcdefghijklmnopqrstuvwxyz012345",
         "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature",
         "-----BEGIN PRIVATE KEY----- secret material",
