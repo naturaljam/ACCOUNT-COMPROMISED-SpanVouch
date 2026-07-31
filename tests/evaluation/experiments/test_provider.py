@@ -19,6 +19,7 @@ from spanvouch.evaluation.experiments.budget import (
     BudgetOverrunError,
     Pricing,
     ProviderRequestClaimError,
+    UnknownPriceError,
 )
 from spanvouch.evaluation.experiments.config import BudgetPolicy, ExperimentMode
 from spanvouch.evaluation.experiments.provider import (
@@ -328,6 +329,24 @@ async def test_cache_miss_without_authorization_makes_zero_calls(tmp_path: Path)
     with pytest.raises(ProviderConfigurationError):
         await provider.complete(MESSAGES, GENERATION)
     assert delegate.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_price_tier_rejects_before_delegate_cache_or_charge(
+    tmp_path: Path,
+) -> None:
+    delegate = CountingProvider()
+    provider = guarded(tmp_path, delegate)
+    provider.pricing = pricing().model_copy(update={"max_input_tokens": 1})
+    at = datetime(2026, 7, 20, tzinfo=UTC)
+
+    with pytest.raises(UnknownPriceError, match="pricing tier"):
+        await provider.complete(MESSAGES, GENERATION)
+
+    assert delegate.calls == 0
+    assert provider.cache.get(base_identity()) is None
+    assert provider.ledger.committed_total(at) == Decimal("0")
+    assert provider.ledger.active_reserved_total(at) == Decimal("0")
 
 
 @pytest.mark.asyncio
