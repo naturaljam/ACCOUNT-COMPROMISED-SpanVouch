@@ -38,6 +38,7 @@ ROOT = Path(__file__).resolve().parents[2]
             ("--output-dir", "x"),
         ),
         (("review", "show", "--case-id", "c1"), "review", ("show", "--case-id", "c1")),
+        (("admin", "project", "list"), "admin", ("project", "list")),
     ],
 )
 def test_main_routes_to_one_public_command_tree(
@@ -157,7 +158,7 @@ def test_handler_import_failure_is_a_concise_nonzero_error(
 
 
 @pytest.mark.parametrize(
-    "argv", [("dataset",), ("evaluate",), ("labs",), ("experiments",)]
+    "argv", [("admin",), ("dataset",), ("evaluate",), ("labs",), ("experiments",)]
 )
 def test_main_rejects_a_missing_subcommand(argv: tuple[str, ...]) -> None:
     with pytest.raises(SystemExit, match="2"):
@@ -167,6 +168,7 @@ def test_main_rejects_a_missing_subcommand(argv: tuple[str, ...]) -> None:
 @pytest.mark.parametrize(
     "argv",
     [
+        ("admin", "unknown"),
         ("dataset", "unknown"),
         ("evaluate", "unknown"),
         ("labs", "unknown"),

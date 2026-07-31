@@ -149,6 +149,35 @@ uv run uvicorn spanvouch.api.app:app --host 127.0.0.1 --port 8000
 
 OpenAPI is available at `http://127.0.0.1:8000/docs` while the service runs.
 
+## Production security workflow
+
+SpanVouch v0.4 adds the operating boundary expected from a self-hosted production service: mandatory API-key authentication, project-scoped data access, fixed role-based authorization, append-only audit chains, and signed offline audit exports.
+
+All routes except `/health` and `/ready` require `Authorization: Bearer <api-key>`. API keys are shown once, stored only as salted `scrypt` digests, and can be rotated or revoked without changing project data. System administrators use the management API or CLI to create isolated projects and project-bound operator, reviewer, or viewer keys.
+
+```bash
+export SPANVOUCH_API_KEY="svk_admin_key_shown_once"
+
+uv run spanvouch admin project create --name production-agents
+uv run spanvouch admin project list
+
+uv run spanvouch admin key create \
+  --project-id "$PROJECT_ID" \
+  --roles operator,reviewer
+
+uv run spanvouch admin key rotate --key-id "$KEY_ID"
+uv run spanvouch admin key revoke --key-id "$KEY_ID"
+```
+
+Set `SPANVOUCH_AUDIT_SIGNING_KEY_PATH` to an Ed25519 private-key PEM and optionally set `SPANVOUCH_AUDIT_EXPORT_DIR` before creating signed audit bundles. The private key is read from disk for signing only; it is never returned by the API or written into an export.
+
+```bash
+uv run spanvouch admin audit export --project-id "$PROJECT_ID"
+uv run spanvouch admin audit verify --bundle .data/audit-exports/"$EXPORT_ID"
+```
+
+Each export contains `manifest.json`, `events.jsonl`, `checkpoints.json`, `public-key.pem`, and `README.md`. Offline verification checks file hashes, event-chain continuity, checkpoint signatures, the public-key binding, and the terminal event hash without database access or provider credentials.
+
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
 | GET | `/health` | Report service health |
@@ -158,6 +187,12 @@ OpenAPI is available at `http://127.0.0.1:8000/docs` while the service runs.
 | GET | `/v1/diagnosis-reviews/{case_id}` | Read the case timeline |
 | POST | `/v1/diagnosis-reviews/{case_id}/resume` | Resume recoverable work |
 | POST | `/v1/diagnosis-reviews/{case_id}/decisions` | Record a human decision |
+| POST | `/v1/admin/projects` | Create an isolated project |
+| POST | `/v1/admin/projects/{project_id}/api-keys` | Create a project API key |
+| POST | `/v1/admin/api-keys/{key_id}/rotate` | Rotate an API key |
+| POST | `/v1/admin/api-keys/{key_id}/revoke` | Revoke an API key |
+| POST | `/v1/admin/projects/{project_id}/audit-exports` | Create a signed audit export |
+| GET | `/v1/admin/audit-exports/{export_id}` | Inspect an audit export record |
 
 The diagnosis endpoint is `POST /v1/traces/{trace_id}/diagnoses`. Rules-based diagnosis needs no provider key. Provider-backed diagnosis also requires `DEEPSEEK_API_KEY` and `--allow-live-api`.
 

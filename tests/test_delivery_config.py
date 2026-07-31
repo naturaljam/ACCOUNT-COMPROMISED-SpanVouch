@@ -375,6 +375,7 @@ def test_phase_4_release_candidate_documents_delivery_and_six_contract_roots() -
     dockerignore = (ROOT / ".dockerignore").read_text(encoding="utf-8")
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    readme_zh = (ROOT / "README.zh-CN.md").read_text(encoding="utf-8")
     legacy_environment = "AF" + "C_DB_PATH"
 
     assert project["project"]["name"] == "spanvouch"
@@ -390,6 +391,13 @@ def test_phase_4_release_candidate_documents_delivery_and_six_contract_roots() -
     assert "git diff --exit-code -- evals/datasets" in workflow
     assert 'actual["candidates_sha256"] == expected["candidates_sha256"]' not in workflow
     assert "IVAD" in readme
+    assert "spanvouch admin project create" in readme
+    assert "SPANVOUCH_API_KEY" in readme
+    assert "spanvouch admin audit verify" in readme
+    assert "简体中文" in readme_zh
+    assert "项目隔离" in readme_zh
+    assert "SPANVOUCH_API_KEY" in readme_zh
+    assert "spanvouch admin audit verify" in readme_zh
     assert not (ROOT / "docs").exists()
 
     expected_roots = {

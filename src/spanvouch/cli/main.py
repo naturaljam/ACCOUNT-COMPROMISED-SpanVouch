@@ -7,6 +7,7 @@ from importlib import import_module
 
 Handler = Callable[[Sequence[str] | None], int]
 _HANDLER_IMPORTS = {
+    ("admin", ""): ("spanvouch.cli.admin", "main"),
     ("dataset", "generate"): ("spanvouch.evaluation.generate_dataset", "main"),
     ("dataset", "generate-review"): (
         "spanvouch.evaluation.generate_review_dataset",
@@ -39,7 +40,8 @@ _HANDLER_IMPORTS = {
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="spanvouch")
     parser.add_argument(
-        "command", choices=("dataset", "evaluate", "experiments", "labs", "review")
+        "command",
+        choices=("admin", "dataset", "evaluate", "experiments", "labs", "review"),
     )
     parser.add_argument("rest", nargs=argparse.REMAINDER)
     return parser
@@ -54,7 +56,7 @@ def _load_handler(command: str, subcommand: str) -> Handler:
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
     rest = tuple(arguments.rest)
-    if arguments.command == "review":
+    if arguments.command in {"admin", "review"}:
         subcommand = ""
         forwarded = rest
     else:
