@@ -2,9 +2,14 @@ name: spanvouch
 
 services:
   api:
-    build: .
+    build:
+      context: .
+      args:
+        SPANVOUCH_BUILD_GIT_COMMIT: ${SPANVOUCH_BUILD_GIT_COMMIT:-}
     environment:
       SPANVOUCH_DB_PATH: /data/spanvouch.db
+      SPANVOUCH_AUDIT_SIGNING_KEY_PATH: /data/audit-signing-key.pem
+      SPANVOUCH_AUDIT_EXPORT_DIR: /data/audit-exports
     ports:
       - "8000:8000"
     volumes:

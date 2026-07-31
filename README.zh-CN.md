@@ -11,7 +11,7 @@
   <a href="https://www.python.org/">Python 3.12</a> &middot;
   <a href="LICENSE">MIT License</a> &middot;
   <a href="paper/IVAD.pdf">IVAD 论文</a> &middot;
-  <a href="https://github.com/naturaljam/SpanVouch/releases/tag/v0.3.0">v0.3.0</a>
+  <a href="https://github.com/naturaljam/SpanVouch/releases/tag/v0.4.0">v0.4.0</a>
 </p>
 
 <p align="center">
@@ -28,7 +28,7 @@ SpanVouch 将 Agent 执行轨迹转换为可审计、可恢复、可复现的诊
            -> 持久状态 + 签名审计导出
 ```
 
-[阅读 IVAD 预印本](paper/IVAD.pdf) | [查看 LaTeX 源码](paper/source/) | [下载 v0.3.0](https://github.com/naturaljam/SpanVouch/releases/tag/v0.3.0)
+[阅读 IVAD 预印本](paper/IVAD.pdf) | [查看 LaTeX 源码](paper/source/) | [下载 v0.4.0](https://github.com/naturaljam/SpanVouch/releases/tag/v0.4.0)
 
 ## 为什么需要证据层
 
@@ -96,7 +96,8 @@ Authorization: Bearer <api-key>
 API key 只显示一次，落库时仅保存加盐 `scrypt` 摘要、非秘密前缀、项目、角色、状态和时间戳。管理员可以创建项目、创建项目 key、轮换 key、吊销 key，并生成签名审计导出。
 
 ```bash
-export SPANVOUCH_API_KEY="svk_admin_key_shown_once"
+bootstrap="$(uv run spanvouch admin bootstrap --database .data/spanvouch.db)"
+export SPANVOUCH_API_KEY="$(python -c 'import json,sys; print(json.loads(sys.argv[1])["api_key"])' "$bootstrap")"
 
 uv run spanvouch admin project create --name production-agents
 uv run spanvouch admin project list
@@ -144,6 +145,8 @@ uv run spanvouch admin audit verify --bundle .data/audit-exports/"$EXPORT_ID"
 ```bash
 docker compose up --build --detach --wait api
 curl --fail http://127.0.0.1:8000/health
+bootstrap="$(docker compose exec -T api spanvouch admin bootstrap --database /data/spanvouch.db)"
+export SPANVOUCH_API_KEY="$(python -c 'import json,sys; print(json.loads(sys.argv[1])["api_key"])' "$bootstrap")"
 docker compose down
 ```
 

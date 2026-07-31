@@ -264,11 +264,14 @@ def main(
     except ValueError:
         print("spanvouch review: invalid API URL", file=errors)
         return 2
+    api_key = environment.get("SPANVOUCH_API_KEY", "").strip()
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     try:
         with httpx.Client(
             base_url=f"{base_url}/",
             timeout=_TIMEOUT,
             transport=transport,
+            headers=headers,
         ) as client:
             if args.command == "resume" and not _allows_live(args):
                 show_path = f"v1/diagnosis-reviews/{quote(args.case_id, safe='')}"

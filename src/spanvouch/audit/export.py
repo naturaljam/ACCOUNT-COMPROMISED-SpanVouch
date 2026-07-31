@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import platform
 import shutil
 import sys
@@ -360,9 +361,19 @@ def _manifest(
 
 
 def _code_provenance() -> CodeProvenance:
+    build_commit = os.environ.get("SPANVOUCH_BUILD_GIT_COMMIT", "").strip()
+    build_identity = os.environ.get(
+        "SPANVOUCH_BUILD_REPOSITORY_IDENTITY", ""
+    ).strip()
     try:
+        if build_commit and build_identity:
+            return CodeProvenance(
+                git_commit=build_commit,
+                repository_identity=build_identity,
+                dirty_worktree=False,
+            )
         return collect_git_provenance(Path.cwd())
-    except ValueError:
+    except (OSError, ValueError):
         return CodeProvenance(
             git_commit="0" * 40,
             repository_identity="local:unknown",

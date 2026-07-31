@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI
 
+from spanvouch import __version__
 from spanvouch.adapters.frameworks.langgraph_review import LangGraphReviewWorkflow
 from spanvouch.adapters.storage.sqlite import SQLiteReviewRepository
 from spanvouch.adapters.storage.sqlite_trace import SQLiteTraceRepository
@@ -138,7 +139,7 @@ def create_app(
 
     application = FastAPI(
         title="SpanVouch",
-        version="0.3.0",
+        version=__version__,
         lifespan=lifespan,
     )
     application.state.project_repository = project_store

@@ -98,6 +98,69 @@ def test_create_audit_export_writes_offline_verifiable_bundle(tmp_path: Path) ->
     assert verified.checkpoint_count == 1
 
 
+def test_audit_export_falls_back_when_git_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "audit.db"
+    project_id, events = _bootstrap_audit_events(database)
+    signing_key_path = tmp_path / "audit-signing-key.pem"
+    _write_signing_key(signing_key_path)
+    monkeypatch.delenv("SPANVOUCH_BUILD_GIT_COMMIT", raising=False)
+    monkeypatch.delenv("SPANVOUCH_BUILD_REPOSITORY_IDENTITY", raising=False)
+
+    def missing_git(_: Path) -> object:
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr("spanvouch.audit.export.collect_git_provenance", missing_git)
+
+    bundle = create_audit_export(
+        project_id,
+        tmp_path / "bundle",
+        events=events,
+        checkpoints=(),
+        signing_key_path=signing_key_path,
+    )
+
+    code = verify_audit_export(bundle).manifest.code
+    assert code.git_commit == "0" * 40
+    assert code.repository_identity == "local:unknown"
+    assert code.dirty_worktree is True
+
+
+def test_audit_export_uses_embedded_build_provenance_without_git(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "audit.db"
+    project_id, events = _bootstrap_audit_events(database)
+    signing_key_path = tmp_path / "audit-signing-key.pem"
+    _write_signing_key(signing_key_path)
+    monkeypatch.setenv("SPANVOUCH_BUILD_GIT_COMMIT", "a" * 40)
+    monkeypatch.setenv(
+        "SPANVOUCH_BUILD_REPOSITORY_IDENTITY",
+        "github:naturaljam/SpanVouch",
+    )
+
+    def forbid_git(_: Path) -> object:
+        raise AssertionError("embedded build provenance must not call git")
+
+    monkeypatch.setattr("spanvouch.audit.export.collect_git_provenance", forbid_git)
+
+    bundle = create_audit_export(
+        project_id,
+        tmp_path / "bundle",
+        events=events,
+        checkpoints=(),
+        signing_key_path=signing_key_path,
+    )
+
+    code = verify_audit_export(bundle).manifest.code
+    assert code.git_commit == "a" * 40
+    assert code.repository_identity == "github:naturaljam/SpanVouch"
+    assert code.dirty_worktree is False
+
+
 def test_admin_can_create_list_and_get_audit_export(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

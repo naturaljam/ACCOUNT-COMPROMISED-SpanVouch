@@ -64,6 +64,15 @@ def test_phase_2_delivery_is_safe_and_reproducible() -> None:
     environment = (ROOT / ".env.example").read_text(encoding="utf-8")
     assert re.search(r"(?m)^DEEPSEEK_API_KEY=$", environment)
     assert re.search(r"(?m)^DEEPSEEK_MODEL=deepseek-v4-flash$", environment)
+    assert re.search(r"(?m)^SPANVOUCH_API_KEY=$", environment)
+    assert re.search(
+        r"(?m)^SPANVOUCH_AUDIT_SIGNING_KEY_PATH=.data/audit-signing-key.pem$",
+        environment,
+    )
+    assert re.search(
+        r"(?m)^SPANVOUCH_AUDIT_EXPORT_DIR=.data/audit-exports$",
+        environment,
+    )
 
     gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
     assert "evals/reports/generated/" in gitignore
@@ -202,6 +211,7 @@ def test_readme_offline_review_walkthrough_uses_a_frozen_trace_end_to_end() -> N
     required_fragments = (
         "evals/datasets/supportlab-v1/traces.jsonl",
         "POST /v1/traces",
+        "Authorization: Bearer $SPANVOUCH_API_KEY",
         'trace_id="$(',
         "--data-binary @.cache/spanvouch-demo-trace.json",
         'created="$(uv run spanvouch review create',
@@ -379,16 +389,26 @@ def test_phase_4_release_candidate_documents_delivery_and_six_contract_roots() -
     legacy_environment = "AF" + "C_DB_PATH"
 
     assert project["project"]["name"] == "spanvouch"
-    assert project["project"]["version"] == "0.3.0"
+    assert project["project"]["version"] == "0.4.0"
     assert project["project"]["scripts"] == {"spanvouch": "spanvouch.cli.main:main"}
     assert "SPANVOUCH_DB_PATH" in compose
+    assert "SPANVOUCH_AUDIT_SIGNING_KEY_PATH" in compose
+    assert "SPANVOUCH_AUDIT_EXPORT_DIR" in compose
     assert legacy_environment not in compose
     assert "name: spanvouch" in compose
     assert "10001:10001" in docker_runtime
     assert 'org.opencontainers.image.title="SpanVouch"' in dockerfile
+    assert "SPANVOUCH_BUILD_GIT_COMMIT" in dockerfile
+    assert "/app/uv.lock" in docker_runtime
     assert "evals/reports/reference/" in dockerignore
     assert "tests/contracts tests/architecture tests/test_delivery_config.py -v" in workflow
     assert "git diff --exit-code -- evals/datasets" in workflow
+    assert "spanvouch admin bootstrap --database /data/spanvouch.db" in workflow
+    assert "Authorization: Bearer $SPANVOUCH_API_KEY" in workflow
+    assert "source_connection.backup(destination_connection)" in workflow
+    assert "spanvouch admin audit export" in workflow
+    assert "spanvouch admin audit verify" in workflow
+    assert "SPANVOUCH_BUILD_GIT_COMMIT: ${{ github.sha }}" in workflow
     assert 'actual["candidates_sha256"] == expected["candidates_sha256"]' not in workflow
     assert "IVAD" in readme
     assert "spanvouch admin project create" in readme

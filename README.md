@@ -11,7 +11,7 @@
   <a href="https://www.python.org/">Python 3.12</a> &middot;
   <a href="LICENSE">MIT License</a> &middot;
   <a href="paper/IVAD.pdf">IVAD paper</a> &middot;
-  <a href="https://github.com/naturaljam/SpanVouch/releases/tag/v0.3.0">v0.3.0</a>
+  <a href="https://github.com/naturaljam/SpanVouch/releases/tag/v0.4.0">v0.4.0</a>
 </p>
 
 <p align="center">
@@ -28,7 +28,7 @@ immutable trace -> sanitized evidence -> structured diagnosis
                 -> durable state + reproducible artifact
 ```
 
-[Read the IVAD preprint](paper/IVAD.pdf) | [Browse the LaTeX source](paper/source/) | [Download release v0.3.0](https://github.com/naturaljam/SpanVouch/releases/tag/v0.3.0)
+[Read the IVAD preprint](paper/IVAD.pdf) | [Browse the LaTeX source](paper/source/) | [Download release v0.4.0](https://github.com/naturaljam/SpanVouch/releases/tag/v0.4.0)
 
 ## Why agent diagnosis needs an evidence layer
 
@@ -87,7 +87,7 @@ The formal statement assumes a frozen loss and pipeline, independently sampled p
 - [Read the 8-page preprint](paper/IVAD.pdf)
 - [Build from the reproducible LaTeX source](paper/source/)
 - [Review paper construction and CC BY 4.0 licensing](paper/README.md)
-- [Download the versioned PDF and source archive](https://github.com/naturaljam/SpanVouch/releases/tag/v0.3.0)
+- [Download the versioned PDF and source archive](https://github.com/naturaljam/SpanVouch/releases/tag/v0.4.0)
 
 ## Validated engineering evidence
 
@@ -156,7 +156,8 @@ SpanVouch v0.4 adds the operating boundary expected from a self-hosted productio
 All routes except `/health` and `/ready` require `Authorization: Bearer <api-key>`. API keys are shown once, stored only as salted `scrypt` digests, and can be rotated or revoked without changing project data. System administrators use the management API or CLI to create isolated projects and project-bound operator, reviewer, or viewer keys.
 
 ```bash
-export SPANVOUCH_API_KEY="svk_admin_key_shown_once"
+bootstrap="$(uv run spanvouch admin bootstrap --database .data/spanvouch.db)"
+export SPANVOUCH_API_KEY="$(python -c 'import json,sys; print(json.loads(sys.argv[1])["api_key"])' "$bootstrap")"
 
 uv run spanvouch admin project create --name production-agents
 uv run spanvouch admin project list
@@ -202,6 +203,7 @@ Use the frozen SupportLab trace at `evals/datasets/supportlab-v1/traces.jsonl`. 
 
 ```bash
 trace_id="$(curl --fail --silent --show-error -H 'content-type: application/json' \
+  -H "Authorization: Bearer $SPANVOUCH_API_KEY" \
   --data-binary @.cache/spanvouch-demo-trace.json http://127.0.0.1:8000/v1/traces \
   | python -c 'import json,sys; print(json.load(sys.stdin)["trace_id"])')"
 created="$(uv run spanvouch review create --trace-id "$trace_id" --idempotency-key demo-create-001)"
@@ -219,6 +221,8 @@ Docker Compose builds the locked image, starts the API as an unprivileged user, 
 ```bash
 docker compose up --build --detach --wait api
 curl --fail http://127.0.0.1:8000/health
+bootstrap="$(docker compose exec -T api spanvouch admin bootstrap --database /data/spanvouch.db)"
+export SPANVOUCH_API_KEY="$(python -c 'import json,sys; print(json.loads(sys.argv[1])["api_key"])' "$bootstrap")"
 docker compose down
 ```
 

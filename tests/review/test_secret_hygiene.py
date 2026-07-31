@@ -33,9 +33,11 @@ from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.diagnosis.errors import ProviderProtocolError
 from spanvouch.diagnosis.rule_diagnoser import RuleDiagnoser
 from spanvouch.labs.supportlab.invariants import supportlab_rules
+from spanvouch.projects.repository import ProjectRepository
 from spanvouch.review.application import ReviewApplication
 from spanvouch.review.errors import ReviewWorkflowProviderError
 from spanvouch.review.reviser import DiagnosisReviser
+from spanvouch.security.identity import Role
 from spanvouch.trace.diagnostic_view import TraceProjector
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
 from spanvouch.trace.repository import InMemoryTraceRepository
@@ -320,13 +322,24 @@ def test_provider_failure_is_sanitized_across_error_sqlite_api_cli_and_report(
     _assert_sanitized(sqlite_text)
 
     trace_repository = InMemoryTraceRepository()
+    project_repository = ProjectRepository(database)
+    _, api_key = project_repository.create_key(
+        "default",
+        (Role.VIEWER,),
+        now=datetime.now(UTC),
+        expires_at=None,
+    )
     application = create_app(
         trace_repository=trace_repository,
         review_repository=repository,
         review_service=service,
+        project_repository=project_repository,
     )
     with TestClient(application) as client:
-        response = client.get(f"/v1/diagnosis-reviews/{case_id}")
+        response = client.get(
+            f"/v1/diagnosis-reviews/{case_id}",
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
     assert response.status_code == 200
     _assert_sanitized(response.text)
 

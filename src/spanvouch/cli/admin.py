@@ -3,18 +3,24 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import sys
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TextIO
 from urllib.parse import quote
 
 import httpx
 
+from spanvouch.adapters.storage.sqlite_schema import initialize_database
 from spanvouch.audit.export import verify_audit_export
+from spanvouch.projects.repository import ProjectPersistenceError, ProjectRepository
+from spanvouch.security.identity import Role
 
 _DEFAULT_API_URL = "http://127.0.0.1:8000"
 _DEFAULT_API_KEY_ENV = "SPANVOUCH_API_KEY"
+_DEFAULT_DATABASE = Path(".data/spanvouch.db")
 _TIMEOUT = httpx.Timeout(timeout=10.0, connect=5.0)
 _NO_BODY = object()
 _PUBLIC_ERROR_CODES = frozenset(
@@ -69,6 +75,12 @@ def _parser() -> argparse.ArgumentParser:
         help="file descriptor containing the API key",
     )
     resources = parser.add_subparsers(dest="resource", required=True)
+
+    bootstrap = resources.add_parser(
+        "bootstrap", help="create a local system administrator API key"
+    )
+    bootstrap.add_argument("--database", type=Path)
+    bootstrap.add_argument("--expires-at")
 
     project = resources.add_parser("project", help="manage projects")
     project_commands = project.add_subparsers(dest="action", required=True)
@@ -214,6 +226,48 @@ def _verify_payload(bundle: Path) -> dict[str, object]:
     }
 
 
+def _parse_expiry(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as error:
+        raise ValueError from error
+    offset = parsed.utcoffset()
+    if parsed.tzinfo is None or offset is None or offset.total_seconds() != 0:
+        raise ValueError
+    return parsed
+
+
+def _bootstrap(
+    args: argparse.Namespace,
+    environ: Mapping[str, str],
+) -> dict[str, object]:
+    configured = environ.get("SPANVOUCH_DB_PATH", "").strip()
+    database = args.database
+    if database is None:
+        database = Path(configured) if configured else _DEFAULT_DATABASE
+    database = database.expanduser()
+    database.parent.mkdir(parents=True, exist_ok=True)
+    initialize_database(database)
+    now = datetime.now(UTC)
+    record, plaintext = ProjectRepository(database).create_key(
+        None,
+        (Role.ADMIN,),
+        now=now,
+        expires_at=_parse_expiry(args.expires_at),
+    )
+    return {
+        "key_id": record.key_id,
+        "prefix": record.prefix,
+        "project_id": record.project_id,
+        "roles": [role.value for role in record.roles],
+        "created_at": record.created_at.isoformat(),
+        "expires_at": record.expires_at.isoformat() if record.expires_at else None,
+        "api_key": plaintext,
+    }
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -226,6 +280,14 @@ def main(
     environment = os.environ if environ is None else environ
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
+
+    if args.resource == "bootstrap":
+        try:
+            print(_canonical_json(_bootstrap(args, environment)), file=output)
+            return 0
+        except (OSError, sqlite3.Error, ValueError, ProjectPersistenceError):
+            print("spanvouch admin: bootstrap failed", file=errors)
+            return 4
 
     if args.resource == "audit" and args.action == "verify":
         try:

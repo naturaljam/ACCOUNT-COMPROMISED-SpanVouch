@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -9,6 +10,8 @@ import pytest
 
 from spanvouch.audit.export import create_audit_export
 from spanvouch.cli.admin import main
+from spanvouch.projects.repository import ProjectRepository
+from spanvouch.security.identity import Role
 from tests.audit.test_export import _bootstrap_audit_events, _write_signing_key
 
 
@@ -118,6 +121,26 @@ def test_missing_api_key_stops_before_http(capsys: pytest.CaptureFixture[str]) -
     assert calls == 0
     assert captured.out == ""
     assert captured.err == "spanvouch admin: API key required in SPANVOUCH_API_KEY\n"
+
+
+def test_bootstrap_creates_initial_system_admin_key_without_existing_api_key(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    database = tmp_path / "spanvouch.db"
+
+    assert main(["bootstrap", "--database", str(database)], environ={}) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["project_id"] is None
+    assert payload["roles"] == ["admin"]
+    assert payload["api_key"].startswith(f"{payload['prefix']}_")
+    principal = ProjectRepository(database).authenticate(
+        payload["api_key"],
+        now=datetime.now(UTC),
+    )
+    assert principal.project_id is None
+    assert principal.roles == (Role.ADMIN,)
 
 
 def test_api_error_is_redacted(capsys: pytest.CaptureFixture[str]) -> None:

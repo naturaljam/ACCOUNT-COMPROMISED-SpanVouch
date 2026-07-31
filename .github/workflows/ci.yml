@@ -62,6 +62,8 @@ jobs:
         run: cmp --silent .cache/ci-review-a.json .cache/ci-review-b.json
       - run: docker compose config --quiet
       - name: Build API image
+        env:
+          SPANVOUCH_BUILD_GIT_COMMIT: ${{ github.sha }}
         run: docker compose build api
       - name: Smoke-test containerized API
         shell: bash
@@ -86,9 +88,38 @@ jobs:
           docker compose exec -T api sh -c 'test "$(id -u):$(id -g)" = "10001:10001"'
           docker compose exec -T api sh -c 'test -w /data && test "$(stat -c %u:%g /data)" = "10001:10001"'
 
+          docker compose exec -T api python - <<'PY'
+          from pathlib import Path
+
+          from cryptography.hazmat.primitives import serialization
+          from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+          path = Path("/data/audit-signing-key.pem")
+          path.write_bytes(
+              Ed25519PrivateKey.generate().private_bytes(
+                  encoding=serialization.Encoding.PEM,
+                  format=serialization.PrivateFormat.PKCS8,
+                  encryption_algorithm=serialization.NoEncryption(),
+              )
+          )
+          path.chmod(0o600)
+          PY
+
+          bootstrap="$(docker compose exec -T api spanvouch admin bootstrap --database /data/spanvouch.db)"
+          admin_key="$(python -c 'import json,sys; print(json.loads(sys.argv[1])["api_key"])' "$bootstrap")"
+          export SPANVOUCH_API_KEY="$admin_key"
+          project="$(uv run --no-sync spanvouch admin project create --name ci-persistence)"
+          project_id="$(python -c 'import json,sys; print(json.loads(sys.argv[1])["project_id"])' "$project")"
+          project_key_response="$(uv run --no-sync spanvouch admin key create \
+            --project-id "$project_id" \
+            --roles operator,reviewer)"
+          project_key="$(python -c 'import json,sys; print(json.loads(sys.argv[1])["api_key"])' "$project_key_response")"
+          export SPANVOUCH_API_KEY="$project_key"
+
           trace_payload="$(head -n 1 evals/datasets/supportlab-v1/traces.jsonl)"
           trace_id="$(curl --fail --show-error --silent \
             -H 'content-type: application/json' \
+            -H "Authorization: Bearer $SPANVOUCH_API_KEY" \
             --data "$trace_payload" \
             http://127.0.0.1:8000/v1/traces \
             | python -c 'import json,sys; print(json.load(sys.stdin)["trace_id"])')"
@@ -134,5 +165,35 @@ jobs:
           assert payload["events"][-1]["event_type"] == "human_confirmed"
           assert [event["event_sequence"] for event in payload["events"]] == list(range(len(payload["events"])))
           PY
+
+          export SPANVOUCH_API_KEY="$admin_key"
+          audit_export="$(uv run --no-sync spanvouch admin audit export --project-id "$project_id")"
+          bundle_path="$(python -c 'import json,sys; print(json.loads(sys.argv[1])["bundle_path"])' "$audit_export")"
+          docker compose exec -T api spanvouch admin audit verify --bundle "$bundle_path"
+
+          docker compose exec -T api python - <<'PY'
+          import sqlite3
+
+          with sqlite3.connect("/data/spanvouch.db") as source_connection:
+              with sqlite3.connect("/data/spanvouch.backup.db") as destination_connection:
+                  source_connection.backup(destination_connection)
+          PY
+
+          docker compose stop api
+          docker compose run --rm --no-deps --entrypoint python api - <<'PY'
+          import shutil
+          from pathlib import Path
+
+          for suffix in ("-wal", "-shm"):
+              Path(f"/data/spanvouch.db{suffix}").unlink(missing_ok=True)
+          shutil.copy2("/data/spanvouch.backup.db", "/data/spanvouch.db")
+          PY
+          docker compose up --detach --wait --wait-timeout 90 api
+
+          export SPANVOUCH_API_KEY="$project_key"
+          uv run --no-sync spanvouch review show --case-id "$case_id" > .cache/ci-review-after-restore.json
+          cmp --silent .cache/ci-review-before-restart.json .cache/ci-review-after-restore.json
+          export SPANVOUCH_API_KEY="$admin_key"
+          docker compose exec -T api spanvouch admin audit verify --bundle "$bundle_path"
           trap - EXIT
           docker compose down --volumes --remove-orphans

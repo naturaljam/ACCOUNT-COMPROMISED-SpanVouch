@@ -107,6 +107,28 @@ def test_commands_send_exact_http_request_and_canonical_json(
     assert captured.err == ""
 
 
+def test_review_commands_send_authorization_header_when_api_key_is_configured(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"ok": True}, request=request)
+
+    assert (
+        main(
+            ["show", "--case-id", "case-1"],
+            transport=_transport(handler),
+            environ={"SPANVOUCH_API_KEY": "svk_project_secret"},
+        )
+        == 0
+    )
+
+    assert seen[0].headers["authorization"] == "Bearer svk_project_secret"
+    assert capsys.readouterr().err == ""
+
+
 def test_offline_resume_preflights_case_then_posts_explicit_false_consent(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

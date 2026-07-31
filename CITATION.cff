@@ -9,8 +9,8 @@ authors:
 repository-code: "https://github.com/naturaljam/SpanVouch"
 url: "https://github.com/naturaljam/SpanVouch"
 license: MIT
-version: 0.3.0
-date-released: 2026-07-30
+version: 0.4.0
+date-released: 2026-07-31
 keywords:
   - AI agents
   - failure diagnosis
