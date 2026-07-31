@@ -40,6 +40,34 @@ def pricing() -> Pricing:
     )
 
 
+def usd_pricing() -> Pricing:
+    return Pricing(
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        currency="USD",
+        effective_date="2026-07-31",
+        source_url="https://api-docs.deepseek.com/quick_start/pricing/",
+        input_per_million=Decimal("0.14"),
+        output_per_million=Decimal("0.28"),
+        gpu_hourly=Decimal("0"),
+        amounts="estimated",
+        conversion={
+            "budget_currency": "CNY",
+            "reference_cny_per_native_unit": (
+                "6.7550540257929592192401533635"
+            ),
+            "reserve_cny_per_native_unit": "7.10",
+            "buffer_fraction": "0.05",
+            "rounding_increment": "0.10",
+            "effective_date": "2026-07-30",
+            "source_urls": [
+                "https://data-api.ecb.europa.eu/service/data/EXR/D.CNY.EUR.SP00.A",
+                "https://data-api.ecb.europa.eu/service/data/EXR/D.USD.EUR.SP00.A",
+            ],
+        },
+    )
+
+
 def policy() -> BudgetPolicy:
     return BudgetPolicy(
         monthly_cap_cny=Decimal("100.00"),
@@ -54,6 +82,46 @@ def test_decimal_pricing_and_unknown_price() -> None:
     assert pricing().gpu_cost(Decimal("1.5")) == Decimal("7.500000")
     with pytest.raises(UnknownPriceError):
         pricing().require_endpoint("qwen", "other")
+
+
+def test_usd_pricing_converts_with_validated_conservative_rate() -> None:
+    assert usd_pricing().provider_cost(
+        input_tokens=1_000_000,
+        output_tokens=1_000_000,
+    ) == Decimal("2.982000")
+
+
+def test_pricing_rejects_missing_or_inconsistent_conversion() -> None:
+    payload = usd_pricing().model_dump(mode="python")
+    with pytest.raises(ValueError, match="USD pricing requires"):
+        Pricing.model_validate({**payload, "conversion": None})
+
+    conversion = dict(payload["conversion"])
+    with pytest.raises(ValueError, match="reserve rate"):
+        Pricing.model_validate(
+            {
+                **payload,
+                "conversion": {
+                    **conversion,
+                    "reserve_cny_per_native_unit": "7.09",
+                },
+            }
+        )
+    with pytest.raises(ValueError, match="source URLs"):
+        Pricing.model_validate(
+            {
+                **payload,
+                "conversion": {**conversion, "source_urls": [""]},
+            }
+        )
+    with pytest.raises(ValueError, match="CNY pricing must not"):
+        Pricing.model_validate({**payload, "currency": "CNY"})
+
+
+def test_pricing_rejects_input_above_frozen_tier() -> None:
+    limited = pricing().model_copy(update={"max_input_tokens": 256_000})
+    with pytest.raises(UnknownPriceError, match="pricing tier"):
+        limited.provider_cost(input_tokens=256_001, output_tokens=1)
 
 
 def test_rejects_nonpersistent_sqlite_paths() -> None:

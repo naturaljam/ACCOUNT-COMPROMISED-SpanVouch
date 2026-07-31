@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 import uuid
 from datetime import UTC, date, datetime
-from decimal import Decimal
+from decimal import ROUND_CEILING, Decimal
 from hashlib import sha256
 from pathlib import Path
 from typing import Literal, Self, cast
@@ -63,6 +63,34 @@ class GpuLeaseConflictError(ValueError):
     """Raised when a lease ID is reused with different immutable provenance."""
 
 
+class CurrencyConversion(BaseModel):
+    """Frozen native-currency conversion used for conservative CNY accounting."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    budget_currency: Literal["CNY"]
+    reference_cny_per_native_unit: Decimal = Field(gt=0)
+    reserve_cny_per_native_unit: Decimal = Field(gt=0)
+    buffer_fraction: Decimal = Field(ge=0, le=Decimal("1"))
+    rounding_increment: Decimal = Field(gt=0)
+    effective_date: date
+    source_urls: tuple[str, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_reserve_rate(self) -> Self:
+        if any(not item.strip() for item in self.source_urls):
+            raise ValueError("currency conversion source URLs must be non-empty")
+        buffered = self.reference_cny_per_native_unit * (
+            Decimal("1") + self.buffer_fraction
+        )
+        units = (buffered / self.rounding_increment).to_integral_value(
+            rounding=ROUND_CEILING
+        )
+        if units * self.rounding_increment != self.reserve_cny_per_native_unit:
+            raise ValueError("currency conversion reserve rate is inconsistent")
+        return self
+
+
 class Pricing(BaseModel):
     """User-supplied pricing metadata; no instance is claimed to be current."""
 
@@ -70,13 +98,29 @@ class Pricing(BaseModel):
 
     provider: str = Field(min_length=1)
     model: str = Field(min_length=1)
-    currency: Literal["CNY"]
+    currency: Literal["CNY", "USD"]
     effective_date: date
     source_url: str = Field(min_length=1)
     input_per_million: Decimal = Field(ge=0)
     output_per_million: Decimal = Field(ge=0)
     gpu_hourly: Decimal = Field(ge=0)
     amounts: Literal["billed", "estimated"]
+    conversion: CurrencyConversion | None = None
+    max_input_tokens: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def validate_currency_conversion(self) -> Self:
+        if self.currency == "USD" and self.conversion is None:
+            raise ValueError("USD pricing requires currency conversion provenance")
+        if self.currency == "CNY" and self.conversion is not None:
+            raise ValueError("CNY pricing must not contain currency conversion")
+        return self
+
+    @property
+    def _cny_per_native_unit(self) -> Decimal:
+        if self.conversion is None:
+            return Decimal("1")
+        return self.conversion.reserve_cny_per_native_unit
 
     def require_endpoint(self, provider: str, model: str) -> None:
         if (provider, model) != (self.provider, self.model):
@@ -85,16 +129,25 @@ class Pricing(BaseModel):
     def provider_cost(self, *, input_tokens: int, output_tokens: int) -> Decimal:
         if input_tokens < 0 or output_tokens < 0:
             raise ValueError("token counts must be non-negative")
+        if (
+            self.max_input_tokens is not None
+            and input_tokens > self.max_input_tokens
+        ):
+            raise UnknownPriceError("input token count exceeds frozen pricing tier")
         raw = (
             Decimal(input_tokens) * self.input_per_million
             + Decimal(output_tokens) * self.output_per_million
         )
-        return (raw / _MILLION).quantize(Decimal("0.000001"))
+        return (raw * self._cny_per_native_unit / _MILLION).quantize(
+            Decimal("0.000001")
+        )
 
     def gpu_cost(self, hours: Decimal) -> Decimal:
         if hours < 0:
             raise ValueError("GPU lease hours must be non-negative")
-        return (hours * self.gpu_hourly).quantize(Decimal("0.000001"))
+        return (hours * self.gpu_hourly * self._cny_per_native_unit).quantize(
+            Decimal("0.000001")
+        )
 
 
 class BudgetReservation(BaseModel):
