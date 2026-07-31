@@ -12,20 +12,21 @@ class TracePersistenceError(RuntimeError):
 
 
 class TraceRepository(Protocol):
-    async def save(self, trace: TraceIR) -> TraceIR: ...
-    async def get(self, trace_id: str) -> TraceIR: ...
+    async def save(self, trace: TraceIR, *, project_id: str = "default") -> TraceIR: ...
+    async def get(self, trace_id: str, *, project_id: str = "default") -> TraceIR: ...
 
 
 class InMemoryTraceRepository:
     def __init__(self) -> None:
-        self._traces: dict[str, TraceIR] = {}
+        self._traces: dict[tuple[str, str], TraceIR] = {}
 
-    async def save(self, trace: TraceIR) -> TraceIR:
-        existing = self._traces.get(trace.trace_id)
+    async def save(self, trace: TraceIR, *, project_id: str = "default") -> TraceIR:
+        key = (project_id, trace.trace_id)
+        existing = self._traces.get(key)
         if existing is not None and existing != trace:
             raise TraceConflictError(f"trace_id conflict: {trace.trace_id}")
-        self._traces[trace.trace_id] = trace
+        self._traces[key] = trace
         return trace
 
-    async def get(self, trace_id: str) -> TraceIR:
-        return self._traces[trace_id]
+    async def get(self, trace_id: str, *, project_id: str = "default") -> TraceIR:
+        return self._traces[(project_id, trace_id)]

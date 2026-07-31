@@ -1,6 +1,9 @@
-from fastapi import APIRouter, HTTPException, status
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 
+from spanvouch.api.auth import require_project_capability
 from spanvouch.contracts.diagnosis import DiagnoserKind, DiagnosisReport
 from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.diagnosis.errors import (
@@ -10,7 +13,11 @@ from spanvouch.diagnosis.errors import (
     ProviderProtocolError,
     ProviderRequestError,
 )
+from spanvouch.projects.models import ProjectContext
+from spanvouch.security.policy import Capability
 from spanvouch.trace.repository import TraceRepository
+
+_REQUIRE_RUN_DIAGNOSIS = require_project_capability(Capability.RUN_DIAGNOSIS)
 
 
 class DiagnosisRequest(BaseModel):
@@ -27,10 +34,12 @@ def build_diagnosis_router(
 
     @router.post("/{trace_id}/diagnoses", response_model=DiagnosisReport)
     async def create_diagnosis(
-        trace_id: str, request: DiagnosisRequest
+        trace_id: str,
+        request: DiagnosisRequest,
+        context: Annotated[ProjectContext, Depends(_REQUIRE_RUN_DIAGNOSIS)],
     ) -> DiagnosisReport:
         try:
-            trace = await repository.get(trace_id)
+            trace = await repository.get(trace_id, project_id=context.project_id)
         except KeyError as exc:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="trace_not_found"

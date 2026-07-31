@@ -14,3 +14,8 @@ class HealthResponse(BaseModel):
 @router.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     return HealthResponse(status="ok", service="spanvouch")
+
+
+@router.get("/ready", response_model=HealthResponse)
+def ready() -> HealthResponse:
+    return HealthResponse(status="ok", service="spanvouch")

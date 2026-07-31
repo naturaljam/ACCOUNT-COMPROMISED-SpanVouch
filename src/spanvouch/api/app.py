@@ -13,12 +13,14 @@ from spanvouch.adapters.frameworks.langgraph_review import LangGraphReviewWorkfl
 from spanvouch.adapters.storage.sqlite import SQLiteReviewRepository
 from spanvouch.adapters.storage.sqlite_trace import SQLiteTraceRepository
 from spanvouch.api.composition import default_runtime, deterministic_runtime
+from spanvouch.api.routes.admin import build_admin_router
 from spanvouch.api.routes.diagnoses import build_diagnosis_router
 from spanvouch.api.routes.diagnosis_reviews import build_diagnosis_review_router
 from spanvouch.api.routes.health import router as health_router
 from spanvouch.api.routes.traces import build_trace_router
 from spanvouch.diagnosis.engine import DiagnosisEngine
 from spanvouch.diagnosis.protocols import Diagnoser
+from spanvouch.projects.repository import ProjectRepository
 from spanvouch.review.application import ReviewApplication
 from spanvouch.review.protocols import ReviewRepository
 from spanvouch.review.reviser import DiagnosisReviser
@@ -81,6 +83,7 @@ def create_app(
     review_repository: ReviewRepository | None = None,
     review_service: ReviewApplication | None = None,
     review_database: str | Path | None = None,
+    project_repository: ProjectRepository | None = None,
 ) -> FastAPI:
     database = review_database or os.environ.get("SPANVOUCH_DB_PATH") or DEFAULT_REVIEW_DATABASE
     managed_trace_store: SQLiteTraceRepository | None = None
@@ -119,11 +122,14 @@ def create_app(
             deterministic_verifier=deterministic_verifier,
             semantic_verifier=semantic_verifier,
         )
+    project_store = project_repository or ProjectRepository(database)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         if managed_database is not None or managed_trace_store is not None:
             _ensure_database_parent(database)
+        if project_repository is None:
+            await project_store.initialize()
         if managed_trace_store is not None:
             await managed_trace_store.initialize()
         if review_store is not None:
@@ -135,7 +141,10 @@ def create_app(
         version="0.3.0",
         lifespan=lifespan,
     )
+    application.state.project_repository = project_store
+    application.state.clock = _utc_now
     application.include_router(health_router)
+    application.include_router(build_admin_router(project_store))
     application.include_router(build_trace_router(trace_store))
     application.include_router(build_diagnosis_router(trace_store, diagnosis))
     application.include_router(build_diagnosis_review_router(trace_store, review))

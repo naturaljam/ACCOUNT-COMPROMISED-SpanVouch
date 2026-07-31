@@ -33,11 +33,11 @@ class SQLiteTraceRepository:
     async def initialize(self) -> None:
         await asyncio.to_thread(self._initialize)
 
-    async def save(self, trace: TraceIR) -> TraceIR:
-        return await asyncio.to_thread(self._save, trace)
+    async def save(self, trace: TraceIR, *, project_id: str = "default") -> TraceIR:
+        return await asyncio.to_thread(self._save, trace, project_id)
 
-    async def get(self, trace_id: str) -> TraceIR:
-        return await asyncio.to_thread(self._get, trace_id)
+    async def get(self, trace_id: str, *, project_id: str = "default") -> TraceIR:
+        return await asyncio.to_thread(self._get, trace_id, project_id)
 
     def _initialize(self) -> None:
         try:
@@ -67,20 +67,26 @@ class SQLiteTraceRepository:
         finally:
             connection.close()
 
-    def _save(self, trace: TraceIR) -> TraceIR:
+    def _save(self, trace: TraceIR, project_id: str) -> TraceIR:
         trace_json = canonical_json(trace)
         trace_sha256 = sha256(trace_json.encode("utf-8")).hexdigest()
         with self._transaction(write=True) as connection:
             row = connection.execute(
                 "SELECT trace_id, run_id, trace_json, trace_sha256 "
-                "FROM traces WHERE trace_id = ?",
-                (trace.trace_id,),
+                "FROM traces WHERE trace_id = ? AND project_id = ?",
+                (trace.trace_id, project_id),
             ).fetchone()
             if row is None:
                 connection.execute(
-                    "INSERT INTO traces(trace_id, run_id, trace_json, trace_sha256) "
-                    "VALUES (?, ?, ?, ?)",
-                    (trace.trace_id, trace.run_id, trace_json, trace_sha256),
+                    "INSERT INTO traces(project_id, trace_id, run_id, trace_json, trace_sha256) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (
+                        project_id,
+                        trace.trace_id,
+                        trace.run_id,
+                        trace_json,
+                        trace_sha256,
+                    ),
                 )
                 return trace
 
@@ -89,12 +95,12 @@ class SQLiteTraceRepository:
                 raise TraceConflictError(f"trace_id conflict: {trace.trace_id}")
             return trace
 
-    def _get(self, trace_id: str) -> TraceIR:
+    def _get(self, trace_id: str, project_id: str) -> TraceIR:
         with self._transaction(write=False) as connection:
             row = connection.execute(
                 "SELECT trace_id, run_id, trace_json, trace_sha256 "
-                "FROM traces WHERE trace_id = ?",
-                (trace_id,),
+                "FROM traces WHERE trace_id = ? AND project_id = ?",
+                (trace_id, project_id),
             ).fetchone()
             if row is None:
                 raise KeyError(trace_id)

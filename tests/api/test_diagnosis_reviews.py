@@ -40,6 +40,7 @@ from tests.adapters.frameworks.test_langgraph_review import (
     _report,
     _workflow,
 )
+from tests.api.helpers import make_project_client
 from tests.review.factories import NOW, make_review_snapshot, make_revision
 from tests.trace.test_diagnostic_view import load_trace
 
@@ -61,6 +62,24 @@ def _create(client: TestClient, trace_id: str, *, key: str = "review-create-1"):
         f"/v1/traces/{trace_id}/diagnosis-reviews",
         json={"idempotency_key": key},
     )
+
+
+def _review_client(
+    database: Path,
+    *,
+    trace_repository: object | None = None,
+    diagnosis_service: object | None = None,
+    review_repository: object | None = None,
+    review_service: object | None = None,
+) -> object:
+    context = make_project_client(
+        database=database,
+        trace_repository=trace_repository or InMemoryTraceRepository(),
+        diagnosis_service=diagnosis_service,
+        review_repository=review_repository,
+        review_service=review_service,
+    )
+    return context.client
 
 
 class MutableClock:
@@ -112,6 +131,7 @@ def _real_workflow_app(
     RecordingVerifier,
     RecordingVerifier | None,
     MutableClock,
+    ReviewApplication,
 ]:
     engine = InvariantEngine(supportlab_rules())
     rule_diagnoser = RuleDiagnoser(engine)
@@ -153,7 +173,7 @@ def _real_workflow_app(
         review_repository=repository,
         review_service=review_service,
     )
-    return application, repository, deterministic, semantic, clock
+    return application, repository, deterministic, semantic, clock, review_service
 
 
 def _seed_active_case(
@@ -205,7 +225,7 @@ def test_default_review_is_offline_deterministic_and_persists_across_restart(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "review.db"
-    with TestClient(create_app(review_database=database)) as first_client:
+    with _review_client(database) as first_client:
         trace_id = _ingest(first_client)
         created = _create(first_client, trace_id)
 
@@ -235,7 +255,7 @@ def test_default_review_is_offline_deterministic_and_persists_across_restart(
     ):
         assert forbidden not in serialized
 
-    with TestClient(create_app(review_database=database)) as second_client:
+    with _review_client(database) as second_client:
         restored = second_client.get(
             f"/v1/diagnosis-reviews/{payload['case']['case_id']}"
         )
@@ -267,7 +287,7 @@ def test_app_rejects_unsupported_sqlite_memory_and_uri_paths(database: str) -> N
 
 
 def test_create_and_decision_replay_the_original_result(tmp_path: Path) -> None:
-    with TestClient(create_app(review_database=tmp_path / "review.db")) as client:
+    with _review_client(tmp_path / "review.db") as client:
         trace_id = _ingest(client)
         first = _create(client, trace_id)
         replay = _create(client, trace_id)
@@ -295,7 +315,7 @@ def test_create_and_decision_replay_the_original_result(tmp_path: Path) -> None:
 
 
 def test_resume_awaiting_human_is_conflict_and_does_not_mutate(tmp_path: Path) -> None:
-    with TestClient(create_app(review_database=tmp_path / "review.db")) as client:
+    with _review_client(tmp_path / "review.db") as client:
         trace_id = _ingest(client)
         created = _create(client, trace_id).json()
         case_id = created["case"]["case_id"]
@@ -309,7 +329,7 @@ def test_resume_awaiting_human_is_conflict_and_does_not_mutate(tmp_path: Path) -
 
 
 def test_create_idempotency_conflict_is_409(tmp_path: Path) -> None:
-    with TestClient(create_app(review_database=tmp_path / "review.db")) as client:
+    with _review_client(tmp_path / "review.db") as client:
         trace_id = _ingest(client)
         assert _create(client, trace_id, key="shared-key").status_code == 201
         conflict = client.post(
@@ -322,7 +342,7 @@ def test_create_idempotency_conflict_is_409(tmp_path: Path) -> None:
 
 
 def test_missing_semantic_provider_routes_durably_before_503(tmp_path: Path) -> None:
-    with TestClient(create_app(review_database=tmp_path / "review.db")) as client:
+    with _review_client(tmp_path / "review.db") as client:
         trace_id = _ingest(client, "clean-01")
         failed = client.post(
             f"/v1/traces/{trace_id}/diagnosis-reviews",
@@ -393,7 +413,7 @@ def test_restart_without_revision_provider_routes_durably_before_sanitized_503(
     persisted = asyncio.run(repository.get_detail("case-review-1"))
     assert persisted.case.status is ReviewStatus.REVISION_REQUESTED
 
-    with TestClient(create_app(review_database=database)) as client:
+    with _review_client(database) as client:
         failed = client.post(
             "/v1/diagnosis-reviews/case-review-1/resume",
             json={"allow_live_api": True},
@@ -438,7 +458,7 @@ def test_restart_without_revision_provider_routes_durably_before_sanitized_503(
 
 
 def test_invalid_correction_is_review_422_without_mutation(tmp_path: Path) -> None:
-    with TestClient(create_app(review_database=tmp_path / "review.db")) as client:
+    with _review_client(tmp_path / "review.db") as client:
         trace_id = _ingest(client)
         before = _create(client, trace_id).json()
         case = before["case"]
@@ -477,7 +497,7 @@ def test_invalid_correction_is_review_422_without_mutation(tmp_path: Path) -> No
 
 
 def test_review_request_validation_remains_fastapi_422(tmp_path: Path) -> None:
-    with TestClient(create_app(review_database=tmp_path / "review.db")) as client:
+    with _review_client(tmp_path / "review.db") as client:
         response = client.post(
             "/v1/traces/missing/diagnosis-reviews",
             json={"idempotency_key": "", "verifier": "unknown"},
@@ -490,10 +510,10 @@ def test_review_request_validation_remains_fastapi_422(tmp_path: Path) -> None:
 def test_real_endpoint_rejects_active_lease_then_resumes_expired_work(
     tmp_path: Path,
 ) -> None:
-    application, repository, deterministic, _, clock = _real_workflow_app(
+    _, repository, deterministic, _, clock, review_service = _real_workflow_app(
         tmp_path / "review.db"
     )
-    with TestClient(application) as client:
+    with _review_client(tmp_path / "review.db", review_service=review_service) as client:
         _seed_active_case(repository, case_id="case-expired-resume")
 
         active = client.post("/v1/diagnosis-reviews/case-expired-resume/resume")
@@ -512,12 +532,12 @@ def test_real_endpoint_rejects_active_lease_then_resumes_expired_work(
 def test_real_endpoint_human_and_terminal_resume_invoke_no_verifier(
     tmp_path: Path,
 ) -> None:
-    application, _, deterministic, semantic, _ = _real_workflow_app(
+    _, _, deterministic, semantic, _, review_service = _real_workflow_app(
         tmp_path / "review.db",
         semantic_error=ProviderProtocolError("must not be called"),
     )
     assert semantic is not None
-    with TestClient(application) as client:
+    with _review_client(tmp_path / "review.db", review_service=review_service) as client:
         trace_id = _ingest(client)
         created = _create(client, trace_id).json()
         case = created["case"]
@@ -546,8 +566,8 @@ def test_real_endpoint_human_and_terminal_resume_invoke_no_verifier(
 
 
 def test_real_endpoint_stale_human_version_is_409(tmp_path: Path) -> None:
-    application, _, _, _, _ = _real_workflow_app(tmp_path / "review.db")
-    with TestClient(application) as client:
+    _, _, _, _, _, review_service = _real_workflow_app(tmp_path / "review.db")
+    with _review_client(tmp_path / "review.db", review_service=review_service) as client:
         trace_id = _ingest(client)
         created = _create(client, trace_id).json()
         case = created["case"]
@@ -595,11 +615,11 @@ def test_real_provider_failure_is_durable_before_api_error(
     expected_retryable: bool,
     tmp_path: Path,
 ) -> None:
-    application, _, _, semantic, _ = _real_workflow_app(
+    _, _, _, semantic, _, review_service = _real_workflow_app(
         tmp_path / "review.db", semantic_error=provider_error
     )
     assert semantic is not None
-    with TestClient(application) as client:
+    with _review_client(tmp_path / "review.db", review_service=review_service) as client:
         trace_id = _ingest(client, "clean-01")
         failed = client.post(
             f"/v1/traces/{trace_id}/diagnosis-reviews",

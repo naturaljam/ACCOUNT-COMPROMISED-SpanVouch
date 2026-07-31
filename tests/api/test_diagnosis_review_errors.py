@@ -3,12 +3,14 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from spanvouch.adapters.storage.sqlite_schema import initialize_database
 from spanvouch.api.app import create_app
 from spanvouch.diagnosis.errors import (
     DiagnosisUnavailableError,
     ProviderProtocolError,
     ProviderRequestError,
 )
+from spanvouch.projects.repository import ProjectRepository
 from spanvouch.review.errors import (
     ReviewConflictError,
     ReviewNotFoundError,
@@ -16,7 +18,9 @@ from spanvouch.review.errors import (
     ReviewValidationError,
     ReviewWorkflowProviderError,
 )
+from spanvouch.security.identity import Role
 from spanvouch.trace.repository import InMemoryTraceRepository
+from tests.api.helpers import NOW, AuthenticatedClient, make_project_client
 from tests.trace.test_diagnostic_view import load_trace
 
 
@@ -55,14 +59,12 @@ class RecordingResumeService(FailingReviewService):
 
 
 def _client(error: Exception, tmp_path: Path) -> TestClient:
-    return TestClient(
-        create_app(
-            trace_repository=InMemoryTraceRepository(),
-            review_service=FailingReviewService(error),  # type: ignore[arg-type]
-            review_database=tmp_path / "review.db",
-        ),
-        raise_server_exceptions=False,
+    context = make_project_client(
+        database=tmp_path / "review.db",
+        trace_repository=InMemoryTraceRepository(),
+        review_service=FailingReviewService(error),  # type: ignore[arg-type]
     )
+    return context.client
 
 
 @pytest.mark.parametrize(
@@ -164,12 +166,12 @@ def test_resume_consent_is_explicit_at_the_http_application_boundary(
     tmp_path: Path,
 ) -> None:
     service = RecordingResumeService()
-    application = create_app(
+    context = make_project_client(
+        database=tmp_path / "review.db",
         trace_repository=InMemoryTraceRepository(),
         review_service=service,  # type: ignore[arg-type]
-        review_database=tmp_path / "review.db",
     )
-    with TestClient(application) as client:
+    with context.client as client:
         if body is None:
             response = client.post("/v1/diagnosis-reviews/case-1/resume")
         else:
@@ -252,13 +254,27 @@ def test_injected_review_service_does_not_initialize_an_unrelated_database(
     tmp_path: Path,
 ) -> None:
     unreachable = tmp_path / "missing-parent" / "review.db"
+    auth_database = tmp_path / "auth.db"
+    initialize_database(auth_database)
+    project_repository = ProjectRepository(auth_database)
+    project = project_repository.create_project("Alpha", now=NOW)
+    _, plaintext = project_repository.create_key(
+        project.project_id,
+        (Role.OPERATOR,),
+        now=NOW,
+        expires_at=None,
+    )
     app = create_app(
         trace_repository=InMemoryTraceRepository(),
         review_service=FailingReviewService(ReviewNotFoundError("missing")),  # type: ignore[arg-type]
         review_database=unreachable,
+        project_repository=project_repository,
     )
 
-    with TestClient(app, raise_server_exceptions=False) as client:
+    with AuthenticatedClient(
+        TestClient(app, raise_server_exceptions=False),
+        {"Authorization": f"Bearer {plaintext}"},
+    ) as client:
         response = client.get("/v1/diagnosis-reviews/case-1")
 
     assert response.status_code == 404

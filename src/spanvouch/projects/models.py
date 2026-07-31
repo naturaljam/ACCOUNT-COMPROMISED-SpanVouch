@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+from spanvouch.security.identity import Principal
+
 
 @dataclass(frozen=True)
 class Project:
@@ -30,3 +32,13 @@ class ProjectScopedResourceId:
             raise ValueError("project_id is required")
         if not self.resource_id:
             raise ValueError("resource_id is required")
+
+
+@dataclass(frozen=True)
+class ProjectContext:
+    project_id: str
+    principal: Principal
+
+    def __post_init__(self) -> None:
+        if not self.project_id:
+            raise ValueError("project_id is required")

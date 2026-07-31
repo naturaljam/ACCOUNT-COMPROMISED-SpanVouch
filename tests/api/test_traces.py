@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from spanvouch.api.app import create_app
 from spanvouch.contracts.trace import TraceIR
 from spanvouch.trace.repository import InMemoryTraceRepository
+from tests.api.helpers import make_project_client
 
 
 class ValueErrorTraceRepository:
@@ -57,10 +58,14 @@ def valid_trace_payload() -> dict[str, object]:
 
 
 def test_trace_ingestion_returns_created_summary() -> None:
-    app = create_app(trace_repository=InMemoryTraceRepository())
-    client = TestClient(app)
+    context = make_project_client(trace_repository=InMemoryTraceRepository())
+    client = context.client
 
-    response = client.post("/v1/traces", json=valid_trace_payload())
+    response = client.post(
+        "/v1/traces",
+        json=valid_trace_payload(),
+        headers=context.headers,
+    )
 
     assert response.status_code == 201
     assert response.json() == {
@@ -71,11 +76,12 @@ def test_trace_ingestion_returns_created_summary() -> None:
 
 
 def test_trace_ingestion_allows_idempotent_retry() -> None:
-    client = TestClient(create_app(trace_repository=InMemoryTraceRepository()))
+    context = make_project_client(trace_repository=InMemoryTraceRepository())
+    client = context.client
     payload = valid_trace_payload()
 
-    first_response = client.post("/v1/traces", json=payload)
-    retry_response = client.post("/v1/traces", json=payload)
+    first_response = client.post("/v1/traces", json=payload, headers=context.headers)
+    retry_response = client.post("/v1/traces", json=payload, headers=context.headers)
 
     assert first_response.status_code == 201
     assert retry_response.status_code == 201
@@ -88,18 +94,36 @@ def test_default_trace_repository_persists_across_api_restart(
 ) -> None:
     database = tmp_path / "spanvouch.db"
     monkeypatch.setenv("SPANVOUCH_DB_PATH", str(database))
+    context = make_project_client(database=database)
     payload = valid_trace_payload()
 
-    with TestClient(create_app()) as first_client:
-        assert first_client.post("/v1/traces", json=payload).status_code == 201
+    with TestClient(
+        create_app(
+            project_repository=context.repository,
+            review_database=database,
+        )
+    ) as first_client:
+        assert (
+            first_client.post("/v1/traces", json=payload, headers=context.headers).status_code
+            == 201
+        )
 
-    with TestClient(create_app()) as restarted_client:
+    with TestClient(
+        create_app(
+            project_repository=context.repository,
+            review_database=database,
+        )
+    ) as restarted_client:
         diagnosis = restarted_client.post(
-            "/v1/traces/trace-api-1/diagnoses", json={}
+            "/v1/traces/trace-api-1/diagnoses",
+            json={},
+            headers=context.headers,
         )
         conflicting = dict(payload)
         conflicting["run_id"] = "run-api-2"
-        conflict = restarted_client.post("/v1/traces", json=conflicting)
+        conflict = restarted_client.post(
+            "/v1/traces", json=conflicting, headers=context.headers
+        )
 
     assert diagnosis.status_code == 200
     assert conflict.status_code == 409
@@ -107,13 +131,18 @@ def test_default_trace_repository_persists_across_api_restart(
 
 
 def test_trace_ingestion_returns_conflict_for_different_content_with_same_id() -> None:
-    client = TestClient(create_app(trace_repository=InMemoryTraceRepository()))
+    context = make_project_client(trace_repository=InMemoryTraceRepository())
+    client = context.client
     first_payload = valid_trace_payload()
     conflicting_payload = valid_trace_payload()
     conflicting_payload["run_id"] = "run-api-2"
 
-    first_response = client.post("/v1/traces", json=first_payload)
-    conflict_response = client.post("/v1/traces", json=conflicting_payload)
+    first_response = client.post(
+        "/v1/traces", json=first_payload, headers=context.headers
+    )
+    conflict_response = client.post(
+        "/v1/traces", json=conflicting_payload, headers=context.headers
+    )
 
     assert first_response.status_code == 201
     assert conflict_response.status_code == 409
@@ -121,12 +150,10 @@ def test_trace_ingestion_returns_conflict_for_different_content_with_same_id() -
 
 
 def test_trace_ingestion_does_not_map_unrelated_value_error_to_conflict() -> None:
-    client = TestClient(
-        create_app(trace_repository=ValueErrorTraceRepository()),
-        raise_server_exceptions=False,
-    )
+    context = make_project_client(trace_repository=ValueErrorTraceRepository())
+    client = TestClient(context.client.app, raise_server_exceptions=False)
 
-    response = client.post("/v1/traces", json=valid_trace_payload())
+    response = client.post("/v1/traces", json=valid_trace_payload(), headers=context.headers)
 
     assert response.status_code == 500
 
@@ -137,9 +164,10 @@ def test_trace_ingestion_rejects_orphan_span() -> None:
     assert isinstance(spans, list)
     assert isinstance(spans[0], dict)
     spans[0]["parent_span_id"] = "missing"
-    client = TestClient(create_app(trace_repository=InMemoryTraceRepository()))
+    context = make_project_client(trace_repository=InMemoryTraceRepository())
+    client = context.client
 
-    response = client.post("/v1/traces", json=payload)
+    response = client.post("/v1/traces", json=payload, headers=context.headers)
 
     assert response.status_code == 422
 
@@ -163,9 +191,10 @@ def test_trace_ingestion_rejects_malformed_span_graph_without_saving(
     payload = valid_trace_payload()
     payload["spans"] = spans
     repository = RecordingTraceRepository()
-    client = TestClient(create_app(trace_repository=repository))
+    context = make_project_client(trace_repository=repository)
+    client = context.client
 
-    response = client.post("/v1/traces", json=payload)
+    response = client.post("/v1/traces", json=payload, headers=context.headers)
 
     assert response.status_code == 422
     assert repository.saved == []

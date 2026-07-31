@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sqlite3
@@ -9,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
-from spanvouch.adapters.storage.sqlite_schema import connect_database
+from spanvouch.adapters.storage.sqlite_schema import connect_database, initialize_database
 from spanvouch.projects.models import Project
 from spanvouch.security.identity import (
     ApiKeyMaterial,
@@ -49,6 +50,9 @@ class ProjectRepository:
                 "SQLite memory databases and file: URIs are unsupported"
             )
         self._database = Path(value)
+
+    async def initialize(self) -> None:
+        await asyncio.to_thread(initialize_database, self._database)
 
     def create_project(self, name: str, *, now: datetime) -> Project:
         if not name.strip():
