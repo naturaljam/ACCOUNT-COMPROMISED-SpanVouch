@@ -10,7 +10,15 @@ from typing import Literal, Self
 from urllib.parse import urlsplit
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from spanvouch.contracts.diagnosis import ProviderUsage
 from spanvouch.diagnosis.errors import (
@@ -34,6 +42,8 @@ class OpenAICompatibleConfig(BaseModel):
     base_url: str
     expected_model: str = Field(min_length=1)
     endpoint_class: str = Field(min_length=1)
+    service_operator: str = Field(min_length=1)
+    deployment_type: Literal["managed-api", "self-hosted-vllm"]
     connect_timeout_seconds: float = Field(default=5.0, gt=0)
     read_timeout_seconds: float = Field(default=60.0, gt=0)
     max_retries: int = Field(default=1, ge=0, le=1)
@@ -51,8 +61,14 @@ class OpenAICompatibleConfig(BaseModel):
             raise ValueError("base_url must be an HTTP(S) URL")
         if parsed.username is not None or parsed.password is not None:
             raise ValueError("base_url must not contain userinfo")
-        if parsed.query or parsed.fragment or parsed.path != "/v1":
-            raise ValueError("base_url must be the API root ending in exactly /v1")
+        path = parsed.path.rstrip("/")
+        if (
+            parsed.query
+            or parsed.fragment
+            or not path.endswith("/v1")
+            or path.count("/v1") != 1
+        ):
+            raise ValueError("base_url must be an API root ending in exactly one /v1")
         return normalized
 
     @field_validator("container_repo_digest")
@@ -72,13 +88,23 @@ class OpenAICompatibleConfig(BaseModel):
             raise ValueError("hf_revision must be an immutable 40-character commit revision")
         return value
 
+    @model_validator(mode="after")
+    def validate_deployment_identity(self) -> Self:
+        """Keep legacy self-hosted smoke identity distinct from managed APIs."""
+        pins = (self.container_repo_digest, self.hf_revision)
+        if self.deployment_type == "self-hosted-vllm" and any(pin is None for pin in pins):
+            raise ValueError("self-hosted-vllm deployment requires immutable pins")
+        if self.deployment_type == "managed-api" and any(pin is not None for pin in pins):
+            raise ValueError("managed-api deployment must not use self-hosted pins")
+        return self
+
     def validate_for_experiment(self, mode: Literal["pilot", "formal"]) -> Self:
         """Reject smoke or floating deployments before a paid experiment."""
         del mode  # both evidence-producing modes intentionally share this gate
         if self.smoke_only:
             raise ProviderConfigurationError("smoke-only endpoint cannot run an experiment")
-        if self.container_repo_digest is None or self.hf_revision is None:
-            raise ProviderConfigurationError("experiment endpoint is not immutably pinned")
+        if self.deployment_type != "managed-api":
+            raise ProviderConfigurationError("experiment endpoint must be a managed API")
         return self
 
 
@@ -87,11 +113,11 @@ class ServedModelProvenance(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    service_operator: str
+    deployment_type: Literal["managed-api", "self-hosted-vllm"]
     endpoint_class: str
     model: str
     server_version: str | None = None
-    container_repo_digest: str | None = None
-    hf_revision: str | None = None
 
 
 class _Usage(BaseModel):
@@ -231,18 +257,22 @@ class OpenAICompatibleProvider:
             raise ProviderProtocolError("provider returned invalid model list") from exc
         if self._config.expected_model not in {item.id for item in model_list.data}:
             raise ProviderProtocolError("configured model is not served")
-        raw_version = response.headers.get("x-vllm-version")
+        raw_version = (
+            response.headers.get("x-vllm-version")
+            if self._config.deployment_type == "self-hosted-vllm"
+            else None
+        )
         server_version = (
             raw_version
             if raw_version is not None and _VERSION_PATTERN.fullmatch(raw_version)
             else None
         )
         return ServedModelProvenance(
+            service_operator=self._config.service_operator,
+            deployment_type=self._config.deployment_type,
             endpoint_class=self._config.endpoint_class,
             model=self._config.expected_model,
             server_version=server_version,
-            container_repo_digest=self._config.container_repo_digest,
-            hf_revision=self._config.hf_revision,
         )
 
     async def _request(
