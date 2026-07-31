@@ -260,6 +260,18 @@ def test_ci_has_offline_phase5_gate_and_preserves_build_jobs() -> None:
         assert forbidden.lower() not in workflow.lower()
 
 
+def test_environment_template_exposes_only_managed_qwen_runtime() -> None:
+    environment = (ROOT / ".env.example").read_text(encoding="utf-8")
+    for required in (
+        "SPANVOUCH_QWEN_BASE_URL=",
+        "SPANVOUCH_QWEN_API_KEY=",
+        "SPANVOUCH_PHASE5_QWEN_PRICING_PATH=",
+    ):
+        assert required in environment
+    for forbidden in ("SPANVOUCH_VLLM_", "SPANVOUCH_PHASE5_GPU_LEASE_PATH"):
+        assert forbidden not in environment
+
+
 def test_phase5_public_snapshot_states_engineering_boundaries() -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8").lower()
     for required in (

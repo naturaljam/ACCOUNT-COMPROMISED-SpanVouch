@@ -382,6 +382,6 @@ def test_checked_in_smoke_config_and_environment_contain_no_credentials() -> Non
 
     assert config.smoke_only is True
     assert generation.extra_body == {"enable_thinking": False}
-    assert "SPANVOUCH_VLLM_BASE_URL=\n" in env
-    assert "SPANVOUCH_VLLM_API_KEY=\n" in env
+    assert "SPANVOUCH_QWEN_BASE_URL=\n" in env
+    assert "SPANVOUCH_QWEN_API_KEY=\n" in env
     assert "local-secret" not in path.read_text()
