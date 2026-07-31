@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from spanvouch.api.auth import require_capability, require_project_capability
+from spanvouch.api.auth import require_project_capability
 from spanvouch.contracts.diagnosis import DiagnoserKind
 from spanvouch.contracts.review import (
     DiagnosisReviewDetail,
@@ -31,14 +31,13 @@ from spanvouch.review.errors import (
     ReviewValidationError,
     ReviewWorkflowProviderError,
 )
-from spanvouch.security.identity import Principal
 from spanvouch.security.policy import Capability
 from spanvouch.trace.repository import TraceRepository
 
 _REQUIRE_CREATE_REVIEW = require_project_capability(Capability.CREATE_REVIEW)
-_REQUIRE_READ_PROJECT = require_capability(Capability.READ_PROJECT)
-_REQUIRE_RESUME_REVIEW = require_capability(Capability.RESUME_REVIEW)
-_REQUIRE_DECIDE_REVIEW = require_capability(Capability.DECIDE_REVIEW)
+_REQUIRE_READ_PROJECT = require_project_capability(Capability.READ_PROJECT)
+_REQUIRE_RESUME_REVIEW = require_project_capability(Capability.RESUME_REVIEW)
+_REQUIRE_DECIDE_REVIEW = require_project_capability(Capability.DECIDE_REVIEW)
 
 _REQUEST_ERROR_CODES = {
     "transport_error",
@@ -163,7 +162,7 @@ def build_diagnosis_review_router(
     )
     async def get_diagnosis_review(
         case_id: str,
-        _: Annotated[Principal, Depends(_REQUIRE_READ_PROJECT)],
+        _: Annotated[ProjectContext, Depends(_REQUIRE_READ_PROJECT)],
     ) -> DiagnosisReviewDetail | JSONResponse:
         try:
             return await review_service.get(case_id)
@@ -176,7 +175,7 @@ def build_diagnosis_review_router(
     )
     async def resume_diagnosis_review(
         case_id: str,
-        _: Annotated[Principal, Depends(_REQUIRE_RESUME_REVIEW)],
+        _: Annotated[ProjectContext, Depends(_REQUIRE_RESUME_REVIEW)],
         request: DiagnosisReviewResumeRequest | None = None,
     ) -> DiagnosisReviewDetail | JSONResponse:
         try:
@@ -194,7 +193,7 @@ def build_diagnosis_review_router(
     async def decide_diagnosis_review(
         case_id: str,
         request: DiagnosisReviewDecisionRequest,
-        _: Annotated[Principal, Depends(_REQUIRE_DECIDE_REVIEW)],
+        _: Annotated[ProjectContext, Depends(_REQUIRE_DECIDE_REVIEW)],
     ) -> DiagnosisReviewDetail | JSONResponse:
         try:
             return await review_service.decide(

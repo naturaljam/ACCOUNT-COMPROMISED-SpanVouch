@@ -8,12 +8,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import TypeVar, cast
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, JsonValue, ValidationError
 
 from spanvouch.adapters.storage.sqlite_schema import (
     connect_database,
     initialize_database,
 )
+from spanvouch.audit.chain import AuditChain, AuditEventInput
+from spanvouch.audit.context import current_audit_context
 from spanvouch.contracts.diagnosis import (
     DiagnosisProvenance,
     DiagnosisReport,
@@ -41,6 +43,7 @@ from spanvouch.contracts.verification import (
 )
 from spanvouch.contracts.versioning import canonical_json
 from spanvouch.failure_types import FailureType
+from spanvouch.projects.context import current_project_context
 from spanvouch.review.commands import (
     AppendDiagnosisRevision,
     AppendVerifierRun,
@@ -94,9 +97,10 @@ class SQLiteReviewRepository:
             raise ValueError(
                 "review database must be a filesystem path; "
                 "SQLite memory databases and file: URIs are unsupported"
-            )
+        )
         self._database = Path(value)
         self._failure_injector = failure_injector
+        self._audit_chain = AuditChain()
 
     async def initialize(self) -> None:
         await asyncio.to_thread(self._initialize)
@@ -272,6 +276,36 @@ class SQLiteReviewRepository:
         if self._failure_injector is not None:
             self._failure_injector(stage)
 
+    def _record_audit(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        project_id: str,
+        action: str,
+        resource_type: str,
+        resource_id: str,
+        result: str,
+        payload: dict[str, object],
+        occurred_at: datetime,
+    ) -> None:
+        context = current_audit_context()
+        if context is None:
+            return
+        self._audit_chain.append(
+            connection,
+            AuditEventInput(
+                project_id=project_id,
+                actor_key_id=context.actor_key_id,
+                action=action,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                result=result,
+                payload=cast(JsonValue, payload),
+                occurred_at=occurred_at,
+                request_id=context.request_id,
+            ),
+        )
+
     def _reserve_create(
         self,
         scope: str,
@@ -284,13 +318,14 @@ class SQLiteReviewRepository:
         if lease_expires_at <= now:
             raise ReviewConflictError("idempotency reservation lease must be positive")
         with self._transaction(write=True) as connection:
+            project_id = _current_project_id()
             row = self._idempotency_row(connection, scope, idempotency_key)
             if row is None:
                 connection.execute(
                     "INSERT INTO idempotency_keys("
                     "scope, idempotency_key, request_sha256, result_type, result_id, "
-                    "reservation_id, lease_expires_at, created_at, updated_at"
-                    ") VALUES (?, ?, ?, 'review_case', NULL, ?, ?, ?, ?)",
+                    "reservation_id, lease_expires_at, created_at, updated_at, project_id"
+                    ") VALUES (?, ?, ?, 'review_case', NULL, ?, ?, ?, ?, ?)",
                     (
                         scope,
                         idempotency_key,
@@ -299,6 +334,7 @@ class SQLiteReviewRepository:
                         _timestamp(lease_expires_at),
                         _timestamp(now),
                         _timestamp(now),
+                        project_id,
                     ),
                 )
                 return None
@@ -320,7 +356,7 @@ class SQLiteReviewRepository:
             cursor = connection.execute(
                 "UPDATE idempotency_keys SET reservation_id = ?, lease_expires_at = ?, "
                 "updated_at = ? WHERE scope = ? AND idempotency_key = ? "
-                "AND request_sha256 = ? AND result_id IS NULL",
+                "AND request_sha256 = ? AND result_id IS NULL AND project_id = ?",
                 (
                     reservation_id,
                     _timestamp(lease_expires_at),
@@ -328,6 +364,7 @@ class SQLiteReviewRepository:
                     scope,
                     idempotency_key,
                     request_sha256,
+                    project_id,
                 ),
             )
             self._require_updated(cursor)
@@ -345,6 +382,7 @@ class SQLiteReviewRepository:
         if lease_expires_at <= now:
             raise ReviewConflictError("idempotency reservation lease must be positive")
         with self._transaction(write=True) as connection:
+            project_id = _current_project_id()
             row = self._idempotency_row(connection, scope, idempotency_key)
             if row is None:
                 raise ReviewConflictError("idempotency reservation is missing")
@@ -360,7 +398,7 @@ class SQLiteReviewRepository:
                 "UPDATE idempotency_keys SET lease_expires_at = ?, updated_at = ? "
                 "WHERE scope = ? AND idempotency_key = ? AND request_sha256 = ? "
                 "AND result_type = 'review_case' AND result_id IS NULL "
-                "AND reservation_id = ?",
+                "AND reservation_id = ? AND project_id = ?",
                 (
                     _timestamp(lease_expires_at),
                     _timestamp(now),
@@ -368,6 +406,7 @@ class SQLiteReviewRepository:
                     idempotency_key,
                     request_sha256,
                     reservation_id,
+                    project_id,
                 ),
             )
             self._require_updated(cursor)
@@ -394,11 +433,13 @@ class SQLiteReviewRepository:
             elif command.idempotency_reservation_id is not None:
                 raise ReviewConflictError("idempotency reservation is missing")
 
+            project_id = _current_project_id()
             connection.execute(
                 "INSERT INTO review_cases("
                 "case_id, status, version, verification_mode, diagnoser, "
-                "current_revision_number, evidence_revision_count, created_at, updated_at"
-                ") VALUES (?, ?, 0, ?, ?, 0, 0, ?, ?)",
+                "current_revision_number, evidence_revision_count, created_at, "
+                "updated_at, project_id"
+                ") VALUES (?, ?, 0, ?, ?, 0, 0, ?, ?, ?)",
                 (
                     command.case_id,
                     command.target_status.value,
@@ -406,14 +447,16 @@ class SQLiteReviewRepository:
                     command.diagnoser,
                     _timestamp(command.created_at),
                     _timestamp(command.created_at),
+                    project_id,
                 ),
             )
             self._after_insert("review_case")
             snapshot = command.snapshot
             connection.execute(
                 "INSERT INTO review_inputs("
-                "case_id, trace_id, run_id, view_json, input_sha256, catalog_version, created_at"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "case_id, trace_id, run_id, view_json, input_sha256, catalog_version, "
+                "created_at, project_id"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     command.case_id,
                     snapshot.trace_id,
@@ -422,6 +465,7 @@ class SQLiteReviewRepository:
                     snapshot.input_sha256,
                     snapshot.catalog_version,
                     _timestamp(snapshot.created_at),
+                    project_id,
                 ),
             )
             self._after_insert("review_input")
@@ -454,7 +498,7 @@ class SQLiteReviewRepository:
                     "UPDATE idempotency_keys SET result_id = ?, reservation_id = NULL, "
                     "lease_expires_at = NULL, updated_at = ? "
                     "WHERE scope = ? AND idempotency_key = ? AND request_sha256 = ? "
-                    "AND reservation_id = ? AND result_id IS NULL",
+                    "AND reservation_id = ? AND result_id IS NULL AND project_id = ?",
                     (
                         command.case_id,
                         _timestamp(command.created_at),
@@ -462,10 +506,27 @@ class SQLiteReviewRepository:
                         command.idempotency_key,
                         command.request_sha256,
                         command.idempotency_reservation_id,
+                        project_id,
                     ),
                 )
                 self._require_updated(cursor)
             self._after_insert("idempotency_key")
+            self._record_audit(
+                connection,
+                project_id=_project_id_for_case(connection, command.case_id),
+                action="review.create",
+                resource_type="review_case",
+                resource_id=command.case_id,
+                result="created",
+                payload={
+                    "case_id": command.case_id,
+                    "trace_id": snapshot.trace_id,
+                    "run_id": snapshot.run_id,
+                    "diagnoser": command.diagnoser,
+                    "verification_mode": command.verification_mode.value,
+                },
+                occurred_at=command.created_at,
+            )
             return self._read_detail(connection, command.case_id)
 
     def _get_detail(self, case_id: str) -> DiagnosisReviewDetail:
@@ -560,6 +621,21 @@ class SQLiteReviewRepository:
             )
             self._require_updated(cursor)
             self._insert_transition_event(connection, command)
+            self._record_audit(
+                connection,
+                project_id=_project_id_for_case(connection, command.case_id),
+                action="review.claim_work",
+                resource_type="review_case",
+                resource_id=command.case_id,
+                result="claimed",
+                payload={
+                    "case_id": command.case_id,
+                    "prior_status": command.prior_status.value,
+                    "target_status": command.target_status.value,
+                    "lease_owner": command.lease_owner,
+                },
+                occurred_at=command.occurred_at,
+            )
             return self._read_case(connection, command.case_id)
 
     def _renew_review_lease(self, command: RenewReviewLease) -> None:
@@ -616,6 +692,20 @@ class SQLiteReviewRepository:
                 ),
             )
             self._require_updated(cursor)
+            self._record_audit(
+                connection,
+                project_id=_project_id_for_case(connection, command.case_id),
+                action="review.renew_lease",
+                resource_type="review_case",
+                resource_id=command.case_id,
+                result="renewed",
+                payload={
+                    "case_id": command.case_id,
+                    "lease_owner": command.lease_owner,
+                    "lease_expires_at": _timestamp(command.lease_expires_at),
+                },
+                occurred_at=command.now,
+            )
 
     def _append_verifier_run(self, command: AppendVerifierRun) -> DiagnosisReviewCase:
         with self._transaction(write=True) as connection:
@@ -713,6 +803,21 @@ class SQLiteReviewRepository:
             )
             self._require_updated(cursor)
             self._insert_transition_event(connection, command)
+            self._record_audit(
+                connection,
+                project_id=_project_id_for_case(connection, command.case_id),
+                action="review.append_verifier_run",
+                resource_type="review_case",
+                resource_id=command.case_id,
+                result="recorded",
+                payload={
+                    "case_id": command.case_id,
+                    "verifier_kind": command.report.verifier_kind,
+                    "revision_number": command.report.revision_number,
+                    "verdict": command.composite_verdict.value,
+                },
+                occurred_at=command.occurred_at,
+            )
             return self._read_case(connection, command.case_id)
 
     def _append_revision(self, command: AppendDiagnosisRevision) -> DiagnosisReviewCase:
@@ -788,6 +893,21 @@ class SQLiteReviewRepository:
             )
             self._require_updated(cursor)
             self._insert_transition_event(connection, command)
+            self._record_audit(
+                connection,
+                project_id=_project_id_for_case(connection, command.case_id),
+                action="review.append_revision",
+                resource_type="review_case",
+                resource_id=command.case_id,
+                result="recorded",
+                payload={
+                    "case_id": command.case_id,
+                    "revision_id": command.revision.revision_id,
+                    "revision_number": command.revision.revision_number,
+                    "target_status": command.target_status.value,
+                },
+                occurred_at=command.occurred_at,
+            )
             return self._read_case(connection, command.case_id)
 
     def _finalize_semantic_failure(
@@ -876,6 +996,20 @@ class SQLiteReviewRepository:
             self._require_updated(cursor)
             self._insert_transition_event(connection, verifier)
             self._insert_transition_event(connection, route)
+            self._record_audit(
+                connection,
+                project_id=_project_id_for_case(connection, verifier.case_id),
+                action="review.finalize_semantic_failure",
+                resource_type="review_case",
+                resource_id=verifier.case_id,
+                result="finalized",
+                payload={
+                    "case_id": verifier.case_id,
+                    "verifier_run_id": verifier.report.verifier_run_id,
+                    "target_status": route.target_status.value,
+                },
+                occurred_at=route.occurred_at,
+            )
             return self._read_case(connection, verifier.case_id)
 
     def _route_to_human(self, command: RouteToHumanReview) -> DiagnosisReviewCase:
@@ -912,6 +1046,20 @@ class SQLiteReviewRepository:
             )
             self._require_updated(cursor)
             self._insert_transition_event(connection, command)
+            self._record_audit(
+                connection,
+                project_id=_project_id_for_case(connection, command.case_id),
+                action="review.route_to_human",
+                resource_type="review_case",
+                resource_id=command.case_id,
+                result="routed",
+                payload={
+                    "case_id": command.case_id,
+                    "prior_status": command.prior_status.value,
+                    "target_status": command.target_status.value,
+                },
+                occurred_at=command.occurred_at,
+            )
             return self._read_case(connection, command.case_id)
 
     def _route_capped_revision_to_human(
@@ -968,6 +1116,20 @@ class SQLiteReviewRepository:
             )
             self._require_updated(cursor)
             self._insert_transition_event(connection, command)
+            self._record_audit(
+                connection,
+                project_id=_project_id_for_case(connection, command.case_id),
+                action="review.route_capped_revision_to_human",
+                resource_type="review_case",
+                resource_id=command.case_id,
+                result="routed",
+                payload={
+                    "case_id": command.case_id,
+                    "prior_status": command.prior_status.value,
+                    "target_status": command.target_status.value,
+                },
+                occurred_at=command.occurred_at,
+            )
             return self._read_case(connection, command.case_id)
 
     def _route_revision_failure(
@@ -1012,6 +1174,20 @@ class SQLiteReviewRepository:
             )
             self._require_updated(cursor)
             self._insert_transition_event(connection, command)
+            self._record_audit(
+                connection,
+                project_id=_project_id_for_case(connection, command.case_id),
+                action="review.route_revision_failure",
+                resource_type="review_case",
+                resource_id=command.case_id,
+                result="routed",
+                payload={
+                    "case_id": command.case_id,
+                    "prior_status": command.prior_status.value,
+                    "target_status": command.target_status.value,
+                },
+                occurred_at=command.occurred_at,
+            )
             return self._read_case(connection, command.case_id)
 
     def _apply_human_decision(self, command: ApplyHumanDecision) -> DiagnosisReviewDetail:
@@ -1074,7 +1250,8 @@ class SQLiteReviewRepository:
             connection.execute(
                 "INSERT INTO human_decisions("
                 "decision_id, case_id, action, reviewer_label, reason, expected_version, "
-                "correction_revision_number, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "correction_revision_number, created_at, project_id"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     decision.decision_id,
                     command.case_id,
@@ -1084,6 +1261,7 @@ class SQLiteReviewRepository:
                     decision.expected_version,
                     correction_number,
                     _timestamp(decision.created_at),
+                    _project_id_for_case(connection, command.case_id),
                 ),
             )
             self._after_insert("human_decision")
@@ -1124,6 +1302,22 @@ class SQLiteReviewRepository:
                 created_at=command.occurred_at,
             )
             self._after_insert("idempotency_key")
+            self._record_audit(
+                connection,
+                project_id=_project_id_for_case(connection, command.case_id),
+                action="review.decide",
+                resource_type="review_case",
+                resource_id=command.case_id,
+                result=decision.action.value,
+                payload={
+                    "case_id": command.case_id,
+                    "decision_id": decision.decision_id,
+                    "action": decision.action.value,
+                    "reviewer_label": decision.reviewer_label,
+                    "reason": decision.reason,
+                },
+                occurred_at=command.occurred_at,
+            )
             return self._read_detail(connection, command.case_id)
 
     @staticmethod
@@ -1150,8 +1344,8 @@ class SQLiteReviewRepository:
             sqlite3.Row | None,
             connection.execute(
                 "SELECT * FROM idempotency_keys "
-                "WHERE scope = ? AND idempotency_key = ?",
-                (scope, key),
+                "WHERE scope = ? AND idempotency_key = ? AND project_id = ?",
+                (scope, key, _current_project_id()),
             ).fetchone(),
         )
 
@@ -1185,8 +1379,8 @@ class SQLiteReviewRepository:
         connection.execute(
             "INSERT INTO idempotency_keys("
             "scope, idempotency_key, request_sha256, result_type, result_id, "
-            "reservation_id, lease_expires_at, created_at, updated_at"
-            ") VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?)",
+            "reservation_id, lease_expires_at, created_at, updated_at, project_id"
+            ") VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
             (
                 scope,
                 key,
@@ -1195,13 +1389,15 @@ class SQLiteReviewRepository:
                 result_id,
                 _timestamp(created_at),
                 _timestamp(created_at),
+                _current_project_id(),
             ),
         )
 
     @staticmethod
     def _require_state(connection: sqlite3.Connection, case_id: str) -> sqlite3.Row:
         row = connection.execute(
-            "SELECT * FROM review_cases WHERE case_id = ?", (case_id,)
+            "SELECT * FROM review_cases WHERE case_id = ? AND project_id = ?",
+            (case_id, _current_project_id()),
         ).fetchone()
         if row is None:
             raise ReviewNotFoundError("review case not found")
@@ -1276,8 +1472,9 @@ class SQLiteReviewRepository:
         connection.execute(
             "INSERT INTO diagnosis_revisions("
             "revision_id, case_id, revision_number, origin, previous_report_sha256, "
-            "report_json, report_sha256, triggering_gap_ids_json, provenance_json, created_at"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "report_json, report_sha256, triggering_gap_ids_json, provenance_json, "
+            "created_at, project_id"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 revision.revision_id,
                 revision.case_id,
@@ -1289,6 +1486,7 @@ class SQLiteReviewRepository:
                 canonical_json(list(revision.triggering_gap_ids)),
                 canonical_json(revision.provenance),
                 _timestamp(revision.created_at),
+                _project_id_for_case(connection, revision.case_id),
             ),
         )
 
@@ -1299,8 +1497,8 @@ class SQLiteReviewRepository:
         connection.execute(
             "INSERT INTO verifier_runs("
             "verifier_run_id, case_id, revision_number, verifier_kind, report_json, verdict, "
-            "usage_json, operational_error_json, started_at, completed_at"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "usage_json, operational_error_json, started_at, completed_at, project_id"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 report.verifier_run_id,
                 case_id,
@@ -1314,6 +1512,7 @@ class SQLiteReviewRepository:
                 else None,
                 _timestamp(report.started_at),
                 _timestamp(report.completed_at),
+                _project_id_for_case(connection, case_id),
             ),
         )
 
@@ -1356,7 +1555,8 @@ class SQLiteReviewRepository:
         connection.execute(
             "INSERT INTO workflow_events("
             "event_id, case_id, event_sequence, event_type, from_status, to_status, "
-            "case_version, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "case_version, metadata_json, created_at, project_id"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 event_id,
                 case_id,
@@ -1367,6 +1567,7 @@ class SQLiteReviewRepository:
                 case_version,
                 metadata_json,
                 _timestamp(created_at),
+                _project_id_for_case(connection, case_id),
             ),
         )
 
@@ -1428,8 +1629,10 @@ class SQLiteReviewRepository:
     def _read_case(connection: sqlite3.Connection, case_id: str) -> DiagnosisReviewCase:
         row = connection.execute(
             "SELECT c.*, i.trace_id, i.run_id FROM review_cases AS c "
-            "JOIN review_inputs AS i ON i.case_id = c.case_id WHERE c.case_id = ?",
-            (case_id,),
+            "JOIN review_inputs AS i ON i.case_id = c.case_id "
+            "AND i.project_id = c.project_id "
+            "WHERE c.case_id = ? AND c.project_id = ?",
+            (case_id, _current_project_id()),
         ).fetchone()
         if row is None:
             raise ReviewNotFoundError("review case not found")
@@ -1634,3 +1837,24 @@ class SQLiteReviewRepository:
             confidence=revision.report.confidence,
             abstain_reason=revision.report.abstain_reason,
         )
+
+
+def _current_project_id() -> str:
+    context = current_project_context()
+    if context is not None:
+        return context.project_id
+    return "default"
+
+
+def _project_id_for_case(connection: sqlite3.Connection, case_id: str) -> str:
+    row = connection.execute(
+        "SELECT project_id FROM review_cases WHERE case_id = ?",
+        (case_id,),
+    ).fetchone()
+    if row is None or row["project_id"] is None:
+        raise ReviewPersistenceError("stored review data is invalid")
+    project_id = str(row["project_id"])
+    context = current_project_context()
+    if context is not None and context.project_id != project_id:
+        raise ReviewNotFoundError("review case not found")
+    return project_id

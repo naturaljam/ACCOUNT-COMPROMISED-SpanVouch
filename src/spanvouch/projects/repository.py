@@ -8,9 +8,14 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+from typing import cast
 from uuid import uuid4
 
+from pydantic import JsonValue
+
 from spanvouch.adapters.storage.sqlite_schema import connect_database, initialize_database
+from spanvouch.audit.chain import AuditChain, AuditEventInput
+from spanvouch.audit.context import current_audit_context
 from spanvouch.projects.models import Project
 from spanvouch.security.identity import (
     ApiKeyMaterial,
@@ -50,6 +55,7 @@ class ProjectRepository:
                 "SQLite memory databases and file: URIs are unsupported"
             )
         self._database = Path(value)
+        self._audit_chain = AuditChain()
 
     async def initialize(self) -> None:
         await asyncio.to_thread(initialize_database, self._database)
@@ -77,6 +83,16 @@ class ProjectRepository:
                 )
             except sqlite3.IntegrityError as error:
                 raise ProjectConflictError("project already exists") from error
+            self._record_audit(
+                connection,
+                project_id=project.project_id,
+                action="project.create",
+                resource_type="project",
+                resource_id=project.project_id,
+                result="created",
+                payload={"name": project.name},
+                occurred_at=now,
+            )
         return project
 
     def list_projects(self) -> tuple[Project, ...]:
@@ -105,6 +121,20 @@ class ProjectRepository:
             if project_id is not None:
                 _require_project(connection, project_id)
             _insert_key(connection, record)
+            self._record_audit(
+                connection,
+                project_id=record.project_id or "default",
+                action="api_key.create",
+                resource_type="api_key",
+                resource_id=record.key_id,
+                result="created",
+                payload={
+                    "project_id": record.project_id,
+                    "roles": [role.value for role in record.roles],
+                    "expires_at": _timestamp_optional(record.expires_at),
+                },
+                occurred_at=now,
+            )
         return record, plaintext
 
     def authenticate(self, presented: str, *, now: datetime) -> Principal:
@@ -149,6 +179,21 @@ class ProjectRepository:
             )
             if cursor.rowcount != 1:
                 raise ApiKeyConflictError("api key rotation conflict")
+            self._record_audit(
+                connection,
+                project_id=record.project_id or "default",
+                action="api_key.rotate",
+                resource_type="api_key",
+                resource_id=record.key_id,
+                result="rotated",
+                payload={
+                    "project_id": record.project_id,
+                    "old_key_id": record.key_id,
+                    "new_key_id": new_record.key_id,
+                    "roles": [role.value for role in record.roles],
+                },
+                occurred_at=now,
+            )
         return new_record, plaintext
 
     def revoke_key(self, key_id: str, *, now: datetime) -> None:
@@ -162,6 +207,20 @@ class ProjectRepository:
             )
             if cursor.rowcount != 1:
                 raise ApiKeyConflictError("api key revocation conflict")
+            self._record_audit(
+                connection,
+                project_id=record.project_id or "default",
+                action="api_key.revoke",
+                resource_type="api_key",
+                resource_id=key_id,
+                result="revoked",
+                payload={
+                    "project_id": record.project_id,
+                    "key_id": key_id,
+                    "roles": [role.value for role in record.roles],
+                },
+                occurred_at=now,
+            )
 
     @contextmanager
     def _transaction(self, *, write: bool) -> Iterator[sqlite3.Connection]:
@@ -185,6 +244,36 @@ class ProjectRepository:
             raise
         finally:
             connection.close()
+
+    def _record_audit(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        project_id: str,
+        action: str,
+        resource_type: str,
+        resource_id: str,
+        result: str,
+        payload: dict[str, object],
+        occurred_at: datetime,
+    ) -> None:
+        context = current_audit_context()
+        if context is None:
+            return
+        self._audit_chain.append(
+            connection,
+            AuditEventInput(
+                project_id=project_id,
+                actor_key_id=context.actor_key_id,
+                action=action,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                result=result,
+                payload=cast(JsonValue, payload),
+                occurred_at=occurred_at,
+                request_id=context.request_id,
+            ),
+        )
 
 
 def _project_from_row(row: sqlite3.Row) -> Project:

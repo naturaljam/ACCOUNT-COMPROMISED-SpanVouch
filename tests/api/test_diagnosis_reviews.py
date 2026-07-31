@@ -78,6 +78,7 @@ def _review_client(
         diagnosis_service=diagnosis_service,
         review_repository=review_repository,
         review_service=review_service,
+        project_name="Default project",
     )
     return context.client
 
