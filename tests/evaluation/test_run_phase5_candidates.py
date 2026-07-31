@@ -2,16 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import UTC, date, datetime
-from decimal import Decimal
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
 import pytest
 
-from spanvouch.contracts.versioning import canonical_bytes, canonical_sha256
+from spanvouch.contracts.versioning import canonical_sha256
 from spanvouch.evaluation.corpus import CorpusManifestMetadata, TraceReplayRepository
-from spanvouch.evaluation.experiments.budget import Pricing
 from spanvouch.evaluation.experiments.config import load_experiment_config
 from spanvouch.evaluation.experiments.provider import ProviderConfigurationError
 from spanvouch.evaluation.run_phase5_candidates import (
@@ -23,6 +21,7 @@ from spanvouch.evaluation.run_phase5_matrix import _load_candidates
 from tests.evaluation.corpus.conftest import make_record
 
 CONFIG = Path("evals/configs/phase5-pilot.json").resolve()
+DEEPSEEK_PRICING = CONFIG.with_name("phase5-deepseek-v4-flash-pricing.json")
 
 
 def _corpus(tmp_path: Path, *, config_sha256: str) -> TraceReplayRepository:
@@ -48,18 +47,7 @@ def _corpus(tmp_path: Path, *, config_sha256: str) -> TraceReplayRepository:
 
 
 def _pricing(path: Path) -> Path:
-    pricing = Pricing(
-        provider="deepseek",
-        model="deepseek-v4-flash",
-        currency="CNY",
-        effective_date=date(2026, 7, 20),
-        source_url="https://pricing.example.invalid/source",
-        input_per_million=Decimal("1"),
-        output_per_million=Decimal("2"),
-        gpu_hourly=Decimal("0"),
-        amounts="estimated",
-    )
-    path.write_bytes(canonical_bytes(json.loads(pricing.model_dump_json())))
+    path.write_bytes(DEEPSEEK_PRICING.read_bytes())
     return path
 
 
