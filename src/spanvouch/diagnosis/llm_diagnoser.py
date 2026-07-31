@@ -26,6 +26,10 @@ from spanvouch.diagnosis.protocols import (
     GenerationConfig,
     ModelProvider,
 )
+from spanvouch.diagnosis.response_content import (
+    JsonModelResponseContentPolicy,
+    ProviderResponseContentPolicy,
+)
 from spanvouch.failure_types import SUPPORTED_DIAGNOSIS_FAILURE_TYPES
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
 
@@ -50,6 +54,11 @@ class _DiagnosisDraft(BaseModel):
     causal_chain: tuple[_ClaimDraft, ...] = Field(default=(), max_length=3)
     confidence: float = Field(ge=0.0, le=1.0)
     abstain_reason: AbstainReason | None = None
+
+
+def diagnosis_response_content_policy() -> ProviderResponseContentPolicy:
+    """Return the exact persistence policy for diagnosis provider drafts."""
+    return JsonModelResponseContentPolicy(_DiagnosisDraft)
 
 
 class LlmDiagnoser:

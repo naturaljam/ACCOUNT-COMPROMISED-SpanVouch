@@ -1234,6 +1234,11 @@ class ArtifactSecretClassifier:
 _ARTIFACT_SECRET_CLASSIFIER = ArtifactSecretClassifier()
 
 
+def contains_credential_signature(value: str) -> bool:
+    """Return whether text contains a non-bypassable credential signature."""
+    return ArtifactSecretClassifier._has_credential_signature(value)
+
+
 def _require_safe(location: str, value: Any) -> None:
     _ARTIFACT_SECRET_CLASSIFIER.require_safe(value, path=(location,))
 

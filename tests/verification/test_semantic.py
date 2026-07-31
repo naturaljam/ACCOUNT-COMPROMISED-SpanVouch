@@ -25,6 +25,7 @@ from spanvouch.diagnosis.errors import (
     ProviderRequestError,
 )
 from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig, ProviderResponse
+from spanvouch.diagnosis.response_content import ProviderContentDisposition
 from spanvouch.verification.semantic import SemanticVerifier
 from tests.review.factories import (
     make_diagnosis_report,
@@ -34,6 +35,25 @@ from tests.review.factories import (
 
 SELECTOR = "span-tool::attributes.tool.error.type"
 VALUE_SECRET = "semantic-value-sentinel-credential"
+
+
+def test_semantic_response_policy_accepts_verified_schema() -> None:
+    from spanvouch.verification.semantic import semantic_response_content_policy
+
+    normalized = semantic_response_content_policy().normalize(
+        json.dumps(
+            {
+                "verdict": "verified",
+                "findings": [],
+                "evidence_gaps": [],
+                "alternative_failure_type": None,
+                "confidence": 0.9,
+            }
+        )
+    )
+
+    assert normalized.disposition is ProviderContentDisposition.ACCEPTED
+    assert json.loads(normalized.content)["verdict"] == "verified"
 
 
 class RecordingProvider:

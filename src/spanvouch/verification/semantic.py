@@ -30,6 +30,10 @@ from spanvouch.contracts.versioning import (
     canonical_sha256,
 )
 from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig, ModelProvider
+from spanvouch.diagnosis.response_content import (
+    JsonModelResponseContentPolicy,
+    ProviderResponseContentPolicy,
+)
 from spanvouch.failure_types import FailureType
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
 from spanvouch.verification.prompting import SemanticPromptBuilder
@@ -91,6 +95,11 @@ class _SemanticDraft(BaseModel):
         ):
             raise ValueError("alternative type requires an alternative finding")
         return self
+
+
+def semantic_response_content_policy() -> ProviderResponseContentPolicy:
+    """Return the exact persistence policy for semantic verifier drafts."""
+    return JsonModelResponseContentPolicy(_SemanticDraft)
 
 
 def _stable_id(prefix: str, payload: object) -> str:

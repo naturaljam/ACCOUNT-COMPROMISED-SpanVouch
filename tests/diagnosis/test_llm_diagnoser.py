@@ -16,6 +16,7 @@ from spanvouch.diagnosis.protocols import (
     GenerationConfig,
     ProviderResponse,
 )
+from spanvouch.diagnosis.response_content import ProviderContentDisposition
 from spanvouch.failure_types import FailureType
 from spanvouch.trace.diagnostic_view import TraceProjector
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
@@ -47,6 +48,36 @@ class RecordingProvider:
                 request_id="response-1",
             ),
         )
+
+
+def test_diagnosis_response_policy_accepts_schema_valid_long_statement() -> None:
+    from spanvouch.diagnosis.llm_diagnoser import diagnosis_response_content_policy
+
+    normalized = diagnosis_response_content_policy().normalize(
+        json.dumps(
+            {
+                "status": "diagnosed",
+                "failure_type": "invalid_final_state",
+                "critical_span_ids": ["span-tool"],
+                "causal_chain": [
+                    {
+                        "stage": "cause",
+                        "statement": (
+                            "degradation_result_remained_missing_after_dependency_call"
+                        ),
+                        "evidence_selectors": [
+                            "span-tool::attributes.tool.error.type"
+                        ],
+                    }
+                ],
+                "confidence": 0.8,
+                "abstain_reason": None,
+            }
+        )
+    )
+
+    assert normalized.disposition is ProviderContentDisposition.ACCEPTED
+    assert "degradation_result_remained_missing_after_dependency_call" in normalized.content
 
 
 def inputs() -> tuple[DiagnosticContext, EvidenceCatalog]:
