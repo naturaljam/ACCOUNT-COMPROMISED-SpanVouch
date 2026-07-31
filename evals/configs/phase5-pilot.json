@@ -41,7 +41,7 @@
   },
   "cross_model_verifier": {
     "provider": "qwen",
-    "model": "qwen3-14b",
+    "model": "qwen3.7-plus",
     "endpoint_class": "chat-completions",
     "prompt_version": "phase5-cross-model-verifier-v1",
     "max_tokens": 2048,
@@ -72,13 +72,13 @@
     "qwen": {
       "provider": "qwen",
       "service_operator": "alibaba-cloud-model-studio",
-      "model": "qwen3-14b",
+      "model": "qwen3.7-plus",
       "endpoint_class": "chat-completions",
       "deployment_type": "managed-api",
       "api_compatibility": "openai-compatible",
       "base_url_sha256": "5891aed827c4e67b2d7c0c73ea819327ce3f2b6ef72213cd79669486a26b1ead",
       "pricing": {
-        "canonical_sha256": "c791e46491354066269cd029ae4d67adc3897dc49ddf3f962e1d2f0b9add50a2",
+        "canonical_sha256": "6eb95af8d64ecea1c5b7dcd15dc0083462393c25620d99f7e4984bae4b4a9b51",
         "source_url": "https://pricing.example.invalid/source",
         "effective_date": "2026-07-20",
         "currency": "CNY"

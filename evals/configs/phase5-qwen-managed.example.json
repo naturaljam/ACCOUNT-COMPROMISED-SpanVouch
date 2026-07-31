@@ -1,6 +1,6 @@
 {
   "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-  "expected_model": "qwen3-14b",
+  "expected_model": "qwen3.7-plus",
   "endpoint_class": "chat-completions",
   "service_operator": "alibaba-cloud-model-studio",
   "deployment_type": "managed-api",
@@ -12,7 +12,7 @@
   "container_repo_digest": null,
   "hf_revision": null,
   "generation": {
-    "model": "qwen3-14b",
+    "model": "qwen3.7-plus",
     "max_tokens": 2048,
     "temperature": 0.0,
     "extra_body": {

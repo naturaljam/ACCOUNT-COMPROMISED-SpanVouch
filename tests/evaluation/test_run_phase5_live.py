@@ -56,7 +56,7 @@ def _environment(tmp_path: Path) -> dict[str, str]:
             _pricing(tmp_path / "deepseek-price.json", "deepseek", "deepseek-v4-flash")
         ),
         "SPANVOUCH_PHASE5_QWEN_PRICING_PATH": str(
-            _pricing(tmp_path / "qwen-price.json", "qwen", "qwen3-14b")
+            _pricing(tmp_path / "qwen-price.json", "qwen", "qwen3.7-plus")
         ),
     }
 
@@ -397,7 +397,7 @@ def test_live_composition_uses_one_absolute_ledger_across_manifests(
             gpu_hourly=Decimal("0"), amounts="estimated",
         ),
         "qwen": Pricing(
-            provider="qwen", model="qwen3-14b", currency="CNY",
+            provider="qwen", model="qwen3.7-plus", currency="CNY",
             effective_date=date(2026, 7, 20), source_url="https://example.invalid",
             input_per_million=Decimal("1"), output_per_million=Decimal("1"),
             gpu_hourly=Decimal("0"), amounts="estimated",

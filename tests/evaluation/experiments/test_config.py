@@ -72,7 +72,7 @@ def test_checked_in_pilot_configuration_is_complete() -> None:
     assert config.repetitions == 3
     assert config.conditions == tuple(ConditionId)
     assert config.generator.provider == "deepseek"
-    assert config.cross_model_verifier.model == "qwen3-14b"
+    assert config.cross_model_verifier.model == "qwen3.7-plus"
     assert config.cross_model_verifier.extra_body == {"enable_thinking": False}
     assert config.budget.monthly_cap_cny == Decimal("1000")
     assert config.budget.pilot_fraction == Decimal("0.10")

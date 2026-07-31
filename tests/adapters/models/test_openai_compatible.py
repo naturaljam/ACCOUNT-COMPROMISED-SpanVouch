@@ -18,7 +18,7 @@ from spanvouch.diagnosis.errors import (
 from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig
 
 
-def _success(*, model: str = "qwen3-14b") -> httpx.Response:
+def _success(*, model: str = "qwen3.7-plus") -> httpx.Response:
     return httpx.Response(
         200,
         json={
@@ -34,7 +34,7 @@ def _config(**updates: object) -> OpenAICompatibleConfig:
     values: dict[str, object] = {
         "api_key": "local-secret",
         "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/",
-        "expected_model": "qwen3-14b",
+        "expected_model": "qwen3.7-plus",
         "endpoint_class": "chat-completions",
         "service_operator": "alibaba-cloud-model-studio",
         "deployment_type": "managed-api",
@@ -54,7 +54,7 @@ async def test_provider_sends_exact_openai_request_and_parses_usage() -> None:
         return _success()
 
     generation = GenerationConfig(
-        model="qwen3-14b",
+        model="qwen3.7-plus",
         max_tokens=321,
         temperature=0.2,
         extra_body={"enable_thinking": False},
@@ -68,7 +68,7 @@ async def test_provider_sends_exact_openai_request_and_parses_usage() -> None:
         "url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
         "auth": "Bearer local-secret",
         "body": {
-            "model": "qwen3-14b",
+            "model": "qwen3.7-plus",
             "messages": [{"role": "user", "content": "Return JSON."}],
             "stream": False,
             "response_format": {"type": "json_object"},
@@ -78,7 +78,7 @@ async def test_provider_sends_exact_openai_request_and_parses_usage() -> None:
         },
     }
     assert "evaluator" not in json.dumps(seen["body"]).lower()
-    assert result.model == "qwen3-14b"
+    assert result.model == "qwen3.7-plus"
     assert result.content == '{"ok":true}'
     assert result.usage.input_tokens == 7
     assert result.usage.output_tokens == 3
@@ -94,7 +94,7 @@ async def test_provider_revalidates_generation_before_merging_extra_body() -> No
         calls += 1
         return _success()
 
-    forged = GenerationConfig(model="qwen3-14b").model_copy(
+    forged = GenerationConfig(model="qwen3.7-plus").model_copy(
         update={"extra_body": {"model": "attacker/model"}}
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -215,7 +215,7 @@ async def test_provider_retries_every_transient_status_once(status: int) -> None
             _config(backoff_seconds=0.01), client=client, sleeper=sleeper
         ).complete(
             (ChatMessage(role="user", content="json"),),
-            GenerationConfig(model="qwen3-14b"),
+            GenerationConfig(model="qwen3.7-plus"),
         )
     assert attempts == 2
     assert sleeps == [0.01]
@@ -235,7 +235,7 @@ async def test_provider_does_not_retry_other_4xx_or_leak_body(status: int) -> No
         with pytest.raises(ProviderRequestError) as raised:
             await OpenAICompatibleProvider(_config(), client=client).complete(
                 (ChatMessage(role="user", content="json"),),
-                GenerationConfig(model="qwen3-14b"),
+                GenerationConfig(model="qwen3.7-plus"),
             )
     assert attempts == 1
     assert raised.value.status_code == status
@@ -258,7 +258,7 @@ async def test_provider_retries_transport_once_then_raises_sanitized_error() -> 
                 _config(backoff_seconds=0), client=client
             ).complete(
                 (ChatMessage(role="user", content="json"),),
-                GenerationConfig(model="qwen3-14b"),
+                GenerationConfig(model="qwen3.7-plus"),
             )
     assert attempts == 2
     assert raised.value.retryable is True
@@ -274,7 +274,7 @@ async def test_provider_retries_transport_once_then_raises_sanitized_error() -> 
             200,
             json={
                 "id": "x",
-                "model": "qwen3-14b",
+                "model": "qwen3.7-plus",
                 "choices": [],
                 "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
             },
@@ -283,7 +283,7 @@ async def test_provider_retries_transport_once_then_raises_sanitized_error() -> 
             200,
             json={
                 "id": "x",
-                "model": "qwen3-14b",
+                "model": "qwen3.7-plus",
                 "choices": [{"finish_reason": "stop", "message": {"content": None}}],
                 "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
             },
@@ -301,7 +301,7 @@ async def test_provider_rejects_invalid_or_wrong_model_envelope(
         with pytest.raises(ProviderProtocolError):
             await OpenAICompatibleProvider(_config(), client=client).complete(
                 (ChatMessage(role="user", content="json"),),
-                GenerationConfig(model="qwen3-14b"),
+                GenerationConfig(model="qwen3.7-plus"),
             )
 
 
@@ -313,7 +313,7 @@ async def test_validate_served_model_returns_only_allowlisted_provenance() -> No
         return httpx.Response(
             200,
             headers={"x-vllm-version": "0.9.2", "x-secret": "must-not-persist"},
-            json={"object": "list", "data": [{"id": "qwen3-14b"}]},
+            json={"object": "list", "data": [{"id": "qwen3.7-plus"}]},
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -325,7 +325,7 @@ async def test_validate_served_model_returns_only_allowlisted_provenance() -> No
         "service_operator": "alibaba-cloud-model-studio",
         "deployment_type": "managed-api",
         "endpoint_class": "chat-completions",
-        "model": "qwen3-14b",
+        "model": "qwen3.7-plus",
         "server_version": None,
     }
     assert "must-not-persist" not in repr(provenance)
