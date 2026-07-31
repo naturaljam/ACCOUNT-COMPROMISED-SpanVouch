@@ -16,6 +16,7 @@ from spanvouch.evaluation.experiments.budget import (
     GpuLeaseConflictError,
     GpuLeaseRecord,
     Pricing,
+    ProviderChargeDisposition,
     ProviderRequestClaimError,
     UnknownPriceError,
 )
@@ -213,6 +214,176 @@ def test_commit_overrun_is_charged_and_stops_subsequent_work(tmp_path: Path) -> 
             mode=ExperimentMode.PILOT,
             at_utc=at,
         )
+
+
+def test_legacy_charges_gain_accepted_disposition_without_total_drift(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "legacy.sqlite3"
+    at = datetime(2026, 7, 20, tzinfo=UTC)
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """CREATE TABLE charges (
+                   charge_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   reservation_id TEXT,
+                   request_sha256 TEXT,
+                   experiment_id TEXT NOT NULL,
+                   month_key TEXT NOT NULL,
+                   amount TEXT NOT NULL,
+                   category TEXT NOT NULL CHECK(category IN ('provider','gpu')),
+                   created_at_utc TEXT NOT NULL
+               )"""
+        )
+        connection.execute(
+            """INSERT INTO charges
+               (reservation_id, request_sha256, experiment_id, month_key,
+                amount, category, created_at_utc)
+               VALUES (?, ?, ?, ?, ?, 'provider', ?)""",
+            ("legacy-reservation", "a" * 64, "phase5-pilot", "2026-07", "0.5", at.isoformat()),
+        )
+
+    ledger = BudgetLedger(path, policy())
+
+    with sqlite3.connect(path) as connection:
+        columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(charges)")
+        }
+        disposition = connection.execute(
+            "SELECT provider_disposition FROM charges"
+        ).fetchone()
+    assert "provider_disposition" in columns
+    assert disposition == (ProviderChargeDisposition.ACCEPTED.value,)
+    assert ledger.committed_total(at) == Decimal("0.5")
+
+
+def test_rejected_response_is_charged_but_semantic_request_can_retry(
+    tmp_path: Path,
+) -> None:
+    ledger = BudgetLedger(tmp_path / "phase5.sqlite3", policy())
+    at = datetime(2026, 7, 20, tzinfo=UTC)
+    request_sha256 = "a" * 64
+    reservation = ledger.reserve(
+        request_sha256=request_sha256,
+        experiment_id="phase5-pilot",
+        amount=Decimal("1.00"),
+        mode=ExperimentMode.PILOT,
+        at_utc=at,
+    )
+
+    ledger.commit_rejected(
+        reservation,
+        actual_amount=Decimal("0.25"),
+        at_utc=at,
+    )
+
+    assert ledger.committed_total(at) == Decimal("0.25")
+    assert ledger.active_reserved_total(at) == Decimal("0")
+    assert ledger.committed_request_cost(request_sha256) is None
+    reopened = BudgetLedger(ledger.path, policy())
+    retry = reopened.reserve(
+        request_sha256=request_sha256,
+        experiment_id="phase5-pilot",
+        amount=Decimal("0.30"),
+        mode=ExperimentMode.PILOT,
+        at_utc=at,
+    )
+    reopened.release(retry, at_utc=at)
+    with sqlite3.connect(ledger.path) as connection:
+        disposition = connection.execute(
+            "SELECT provider_disposition FROM charges"
+        ).fetchone()
+    assert disposition == (ProviderChargeDisposition.REJECTED.value,)
+
+
+def test_accepted_provider_charge_cannot_be_reconciled_again(tmp_path: Path) -> None:
+    ledger = BudgetLedger(tmp_path / "phase5.sqlite3", policy())
+    at = datetime(2026, 7, 20, tzinfo=UTC)
+    reservation = ledger.reserve(
+        request_sha256="a" * 64,
+        experiment_id="phase5-pilot",
+        amount=Decimal("1.00"),
+        mode=ExperimentMode.PILOT,
+        at_utc=at,
+    )
+    ledger.commit(reservation, actual_amount=Decimal("0.25"), at_utc=at)
+
+    with pytest.raises(ValueError):
+        ledger.reconcile_released_provider_charge(
+            reservation_id=reservation.reservation_id,
+            request_sha256=reservation.request_sha256,
+            amount=Decimal("0.25"),
+            at_utc=at,
+        )
+
+    assert ledger.committed_total(at) == Decimal("0.25")
+
+
+def test_released_provider_charge_reconciliation_is_exact_and_single_use(
+    tmp_path: Path,
+) -> None:
+    ledger = BudgetLedger(tmp_path / "phase5.sqlite3", policy())
+    at = datetime(2026, 7, 20, tzinfo=UTC)
+    request_sha256 = "a" * 64
+    released = ledger.reserve(
+        request_sha256=request_sha256,
+        experiment_id="phase5-pilot",
+        amount=Decimal("1.00"),
+        mode=ExperimentMode.PILOT,
+        at_utc=at,
+    )
+    ledger.release(released, at_utc=at)
+    active = ledger.reserve(
+        request_sha256="b" * 64,
+        experiment_id="phase5-pilot",
+        amount=Decimal("1.00"),
+        mode=ExperimentMode.PILOT,
+        at_utc=at,
+    )
+
+    with pytest.raises(ValueError):
+        ledger.reconcile_released_provider_charge(
+            reservation_id=active.reservation_id,
+            request_sha256=active.request_sha256,
+            amount=Decimal("0.50"),
+            at_utc=at,
+        )
+    with pytest.raises(ValueError):
+        ledger.reconcile_released_provider_charge(
+            reservation_id=released.reservation_id,
+            request_sha256="c" * 64,
+            amount=Decimal("0.50"),
+            at_utc=at,
+        )
+    with pytest.raises(ValueError):
+        ledger.reconcile_released_provider_charge(
+            reservation_id=released.reservation_id,
+            request_sha256=request_sha256,
+            amount=Decimal("1.01"),
+            at_utc=at,
+        )
+
+    ledger.reconcile_released_provider_charge(
+        reservation_id=released.reservation_id,
+        request_sha256=request_sha256,
+        amount=Decimal("0.50"),
+        at_utc=at,
+    )
+
+    assert ledger.committed_total(at) == Decimal("0.50")
+    assert ledger.committed_request_cost(request_sha256) is None
+    with pytest.raises(ValueError):
+        ledger.reconcile_released_provider_charge(
+            reservation_id=released.reservation_id,
+            request_sha256=request_sha256,
+            amount=Decimal("0.50"),
+            at_utc=at,
+        )
+    ledger.release(active, at_utc=at)
+    with sqlite3.connect(ledger.path) as connection:
+        disposition = connection.execute(
+            "SELECT provider_disposition FROM charges"
+        ).fetchone()
+    assert disposition == (ProviderChargeDisposition.REJECTED_ESTIMATE.value,)
 
 
 def test_gpu_lease_is_charged_and_participates_in_stop_rule(tmp_path: Path) -> None:

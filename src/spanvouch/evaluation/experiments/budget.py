@@ -6,6 +6,7 @@ import sqlite3
 import uuid
 from datetime import UTC, date, datetime
 from decimal import ROUND_CEILING, Decimal
+from enum import StrEnum
 from hashlib import sha256
 from pathlib import Path
 from typing import Literal, Self, cast
@@ -61,6 +62,12 @@ class UnknownPriceError(ValueError):
 
 class GpuLeaseConflictError(ValueError):
     """Raised when a lease ID is reused with different immutable provenance."""
+
+
+class ProviderChargeDisposition(StrEnum):
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    REJECTED_ESTIMATE = "rejected_estimate"
 
 
 class CurrencyConversion(BaseModel):
@@ -245,6 +252,9 @@ class BudgetLedger:
                     month_key TEXT NOT NULL,
                     amount TEXT NOT NULL,
                     category TEXT NOT NULL CHECK(category IN ('provider','gpu')),
+                    provider_disposition TEXT NOT NULL DEFAULT 'accepted'
+                        CHECK(provider_disposition IN
+                            ('accepted','rejected','rejected_estimate')),
                     created_at_utc TEXT NOT NULL
                 );
                 CREATE UNIQUE INDEX IF NOT EXISTS one_provider_charge
@@ -281,7 +291,21 @@ class BudgetLedger:
                     ON budget_stop_events(request_sha256, reason);
                 """
             )
+            self._migrate_charges(connection)
             self._migrate_provider_request_claims(connection)
+
+    @staticmethod
+    def _migrate_charges(connection: sqlite3.Connection) -> None:
+        columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(charges)")
+        }
+        if "provider_disposition" in columns:
+            return
+        connection.execute(
+            """ALTER TABLE charges ADD COLUMN provider_disposition TEXT NOT NULL
+               DEFAULT 'accepted' CHECK(provider_disposition IN
+                   ('accepted','rejected','rejected_estimate'))"""
+        )
 
     def _migrate_provider_request_claims(
         self, connection: sqlite3.Connection
@@ -306,6 +330,7 @@ class BudgetLedger:
                           month_key, 'committed', created_at_utc
                    FROM charges
                    WHERE category = 'provider'
+                     AND provider_disposition = 'accepted'
                      AND request_sha256 IS NOT NULL
                      AND reservation_id IS NOT NULL"""
             ).fetchall()
@@ -604,8 +629,8 @@ class BudgetLedger:
             connection.execute(
                 """INSERT INTO charges
                    (reservation_id, request_sha256, experiment_id, month_key,
-                    amount, category, created_at_utc)
-                   VALUES (?, ?, ?, ?, ?, 'provider', ?)""",
+                    amount, category, provider_disposition, created_at_utc)
+                   VALUES (?, ?, ?, ?, ?, 'provider', 'accepted', ?)""",
                 (
                     validated.reservation_id,
                     validated.request_sha256,
@@ -665,6 +690,139 @@ class BudgetLedger:
                 reserved_amount=validated.amount,
                 actual_amount=actual_amount,
             )
+
+    def commit_rejected(
+        self,
+        reservation: BudgetReservation,
+        *,
+        actual_amount: Decimal,
+        at_utc: datetime,
+    ) -> None:
+        """Charge a returned response while releasing its reusable request claim."""
+        if actual_amount < 0:
+            raise ValueError("actual charge must be non-negative")
+        validated = BudgetReservation.model_validate(
+            reservation.model_dump(mode="python")
+        )
+        _month_key(at_utc)
+        with self._connect() as connection:
+            self._begin(connection)
+            self._require_active(connection, validated)
+            overrun = actual_amount > validated.amount
+            connection.execute(
+                """INSERT INTO charges
+                   (reservation_id, request_sha256, experiment_id, month_key,
+                    amount, category, provider_disposition, created_at_utc)
+                   VALUES (?, ?, ?, ?, ?, 'provider', 'rejected', ?)""",
+                (
+                    validated.reservation_id,
+                    validated.request_sha256,
+                    validated.experiment_id,
+                    validated.month_key,
+                    str(actual_amount),
+                    at_utc.isoformat(),
+                ),
+            )
+            connection.execute(
+                """INSERT INTO reservation_events
+                   (reservation_id, request_sha256, experiment_id, month_key,
+                    amount, mode, action, created_at_utc)
+                   VALUES (?, ?, ?, ?, '0', ?, 'released', ?)""",
+                (
+                    validated.reservation_id,
+                    validated.request_sha256,
+                    validated.experiment_id,
+                    validated.month_key,
+                    validated.mode.value,
+                    at_utc.isoformat(),
+                ),
+            )
+            deleted = connection.execute(
+                """DELETE FROM provider_request_claims
+                   WHERE request_sha256 = ? AND reservation_id = ?
+                     AND state = 'active'""",
+                (validated.request_sha256, validated.reservation_id),
+            )
+            if deleted.rowcount != 1:
+                connection.rollback()
+                raise ValueError("global provider request claim is missing")
+            if overrun:
+                connection.execute(
+                    """INSERT INTO budget_stop_events
+                       (request_sha256, experiment_id, month_key, reason,
+                        reserved_amount, actual_amount, created_at_utc)
+                       VALUES (?, ?, ?, 'reservation_overrun', ?, ?, ?)""",
+                    (
+                        validated.request_sha256,
+                        validated.experiment_id,
+                        validated.month_key,
+                        str(validated.amount),
+                        str(actual_amount),
+                        at_utc.isoformat(),
+                    ),
+                )
+            connection.commit()
+        if overrun:
+            raise BudgetOverrunError(
+                reservation_id=validated.reservation_id,
+                reserved_amount=validated.amount,
+                actual_amount=actual_amount,
+            )
+
+    def reconcile_released_provider_charge(
+        self,
+        *,
+        reservation_id: str,
+        request_sha256: str,
+        amount: Decimal,
+        at_utc: datetime,
+    ) -> None:
+        """Conservatively charge one known returned response from a released event."""
+        if not reservation_id or amount < 0:
+            raise ValueError("reconciliation identity and amount must be valid")
+        _month_key(at_utc)
+        with self._connect() as connection:
+            self._begin(connection)
+            reserved = connection.execute(
+                """SELECT request_sha256, experiment_id, month_key, amount
+                   FROM reservation_events
+                   WHERE reservation_id = ? AND action = 'reserved'""",
+                (reservation_id,),
+            ).fetchone()
+            closed = connection.execute(
+                """SELECT action FROM reservation_events
+                   WHERE reservation_id = ? AND action IN ('released','committed')
+                   ORDER BY event_id DESC LIMIT 1""",
+                (reservation_id,),
+            ).fetchone()
+            existing_charge = connection.execute(
+                "SELECT 1 FROM charges WHERE reservation_id = ?",
+                (reservation_id,),
+            ).fetchone()
+            if (
+                reserved is None
+                or reserved[0] != request_sha256
+                or closed != ("released",)
+                or existing_charge is not None
+                or amount > Decimal(str(reserved[3]))
+            ):
+                connection.rollback()
+                raise ValueError("released provider charge reconciliation mismatch")
+            connection.execute(
+                """INSERT INTO charges
+                   (reservation_id, request_sha256, experiment_id, month_key,
+                    amount, category, provider_disposition, created_at_utc)
+                   VALUES (?, ?, ?, ?, ?, 'provider', 'rejected_estimate', ?)""",
+                (
+                    reservation_id,
+                    request_sha256,
+                    str(reserved[1]),
+                    str(reserved[2]),
+                    str(amount),
+                    at_utc.isoformat(),
+                ),
+            )
+            connection.commit()
 
     def record_gpu_lease(
         self,
@@ -815,7 +973,8 @@ class BudgetLedger:
         with self._connect() as connection:
             row = connection.execute(
                 """SELECT amount FROM charges
-                   WHERE request_sha256 = ? AND category = 'provider'""",
+                   WHERE request_sha256 = ? AND category = 'provider'
+                     AND provider_disposition = 'accepted'""",
                 (request_sha256,),
             ).fetchone()
         return None if row is None else Decimal(row[0])
