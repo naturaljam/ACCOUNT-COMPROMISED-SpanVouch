@@ -8,12 +8,12 @@ import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import Literal, Self, cast
 
 import httpx
-from pydantic import BaseModel, ConfigDict, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
-from spanvouch.contracts.versioning import canonical_sha256
+from spanvouch.contracts.versioning import SHA256_PATTERN, canonical_bytes, canonical_sha256
 from spanvouch.diagnosis.llm_diagnoser import diagnosis_response_content_policy
 from spanvouch.diagnosis.prompting import DiagnosisPromptBuilder
 from spanvouch.diagnosis.protocols import ChatMessage, GenerationConfig, ProviderResponse
@@ -25,7 +25,13 @@ from spanvouch.evaluation.experiments.config import (
 )
 from spanvouch.evaluation.experiments.diagnosis import (
     DiagnosisCandidateRepository,
+    DiagnosisExperimentFailure,
+    DiagnosisExperimentFailureCode,
     generate_and_freeze_diagnosis,
+)
+from spanvouch.evaluation.experiments.models import (
+    ExperimentFailureCategory,
+    IneligibleCell,
 )
 from spanvouch.evaluation.experiments.provider import (
     GuardedProvider,
@@ -41,6 +47,7 @@ from spanvouch.trace.diagnostic_view import TraceProjector
 from spanvouch.trace.evidence_catalog import EvidenceCatalog
 
 _VERIFIER_INSTRUCTION = "Critique evidence sufficiency only."
+_INELIGIBLE_FILENAME = "ineligible.json"
 
 
 @dataclass(frozen=True)
@@ -66,6 +73,68 @@ class CandidateGenerationManifest(BaseModel):
     generator: ModelEndpointConfig
     deployment_provenance_sha256: str
     entries: tuple[CorpusEntry, ...]
+
+
+class CandidateIneligibleManifest(BaseModel):
+    """Credential-free record of corpus cells excluded before matrix planning."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schema_name: Literal["spanvouch.phase5-candidate-ineligible"] = (
+        "spanvouch.phase5-candidate-ineligible"
+    )
+    schema_version: Literal["1.0"] = "1.0"
+    corpus_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
+    entries: tuple[IneligibleCell, ...]
+
+    @model_validator(mode="after")
+    def validate_unique_cells(self) -> Self:
+        cells = tuple(entry.cell for entry in self.entries)
+        if len(cells) != len(set(cells)):
+            raise ValueError("ineligible cells must be unique")
+        return self
+
+
+def load_candidate_ineligible_manifest(
+    root: Path,
+    *,
+    expected_corpus_manifest_sha256: str,
+    expected_cells: tuple[CorpusEntry, ...],
+) -> CandidateIneligibleManifest:
+    """Load and bind the optional ineligible sidecar to one verified corpus."""
+    path = root / _INELIGIBLE_FILENAME
+    if not path.exists():
+        return CandidateIneligibleManifest(
+            corpus_manifest_sha256=expected_corpus_manifest_sha256,
+            entries=(),
+        )
+    content = path.read_bytes()
+    manifest = CandidateIneligibleManifest.model_validate_json(content)
+    if canonical_bytes(manifest) != content:
+        raise ValueError("candidate ineligible manifest is not canonical JSON")
+    if manifest.corpus_manifest_sha256 != expected_corpus_manifest_sha256:
+        raise ValueError("candidate ineligible manifest corpus hash mismatch")
+    expected = {entry.cell for entry in expected_cells}
+    if not set(entry.cell for entry in manifest.entries) <= expected:
+        raise ValueError("candidate ineligible manifest contains unknown cells")
+    return manifest
+
+
+def _write_candidate_ineligible_manifest(
+    root: Path,
+    manifest: CandidateIneligibleManifest,
+) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / _INELIGIBLE_FILENAME
+    content = canonical_bytes(manifest)
+    if path.exists():
+        if path.read_bytes() != content:
+            raise ValueError("candidate ineligible manifest already differs")
+        return
+    with path.open("xb") as stream:
+        stream.write(content)
+        stream.flush()
+        os.fsync(stream.fileno())
 
 
 @dataclass(frozen=True)
@@ -195,7 +264,20 @@ async def run_candidate_generation(
         if request.resume
         else {}
     )
-    if len(existing) == len(prepared.entries):
+    ineligible_manifest = (
+        load_candidate_ineligible_manifest(
+            request.output_dir,
+            expected_corpus_manifest_sha256=prepared.corpus.manifest_sha256,
+            expected_cells=prepared.entries,
+        )
+        if request.resume
+        else CandidateIneligibleManifest(
+            corpus_manifest_sha256=prepared.corpus.manifest_sha256,
+            entries=(),
+        )
+    )
+    ineligible = {entry.cell: entry for entry in ineligible_manifest.entries}
+    if len(existing) + len(ineligible) == len(prepared.entries):
         return prepared.manifest_sha256
 
     authorization = PaidRunAuthorization(
@@ -218,19 +300,36 @@ async def run_candidate_generation(
         deepseek_client=deepseek_client,
     )
     for entry in prepared.entries:
-        if entry.cell in existing:
+        if entry.cell in existing or entry.cell in ineligible:
             continue
         provider, entry_generation = _guard_for_entry(prepared, entry, dependencies)
-        await generate_and_freeze_diagnosis(
-            corpus=prepared.corpus,
-            cell=entry.cell,
-            expected_corpus_manifest_sha256=prepared.corpus.manifest_sha256,
-            expected_record_sha256=entry.record_sha256,
-            expected_trace_sha256=entry.trace_sha256,
-            provider=provider,
-            generation=entry_generation,
-            repository=repository,
-            verifier_instruction=_VERIFIER_INSTRUCTION,
+        try:
+            await generate_and_freeze_diagnosis(
+                corpus=prepared.corpus,
+                cell=entry.cell,
+                expected_corpus_manifest_sha256=prepared.corpus.manifest_sha256,
+                expected_record_sha256=entry.record_sha256,
+                expected_trace_sha256=entry.trace_sha256,
+                provider=provider,
+                generation=entry_generation,
+                repository=repository,
+                verifier_instruction=_VERIFIER_INSTRUCTION,
+            )
+        except DiagnosisExperimentFailure as error:
+            if error.code != DiagnosisExperimentFailureCode.UNSAFE_ARTIFACT_CONTENT:
+                raise
+            ineligible[entry.cell] = IneligibleCell(
+                cell=entry.cell,
+                category=ExperimentFailureCategory.DIAGNOSIS,
+                reason_code="unsafe-artifact-content",
+            )
+    if ineligible:
+        _write_candidate_ineligible_manifest(
+            request.output_dir,
+            CandidateIneligibleManifest(
+                corpus_manifest_sha256=prepared.corpus.manifest_sha256,
+                entries=tuple(sorted(ineligible.values(), key=lambda item: item.cell.sort_key())),
+            ),
         )
     return prepared.manifest_sha256
 

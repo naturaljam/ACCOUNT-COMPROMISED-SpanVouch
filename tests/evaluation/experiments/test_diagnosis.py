@@ -469,7 +469,7 @@ async def test_model_derived_credential_text_is_rejected_before_freeze(
             repository=repository,
             verifier_instruction="Critique evidence sufficiency only.",
         )
-    assert caught.value.code == "contract_failure"
+    assert caught.value.code == "unsafe_artifact_content"
     assert str(caught.value) == "model-derived diagnosis content is unsafe"
     assert "stolen-provider-secret" not in str(caught.value)
     assert provider.calls == 1

@@ -48,6 +48,7 @@ class DiagnosisExperimentFailureCode(StrEnum):
     INPUT_INTEGRITY_FAILURE = "input_integrity_failure"
     PROVIDER_FAILURE = "provider_failure"
     CONTRACT_FAILURE = "contract_failure"
+    UNSAFE_ARTIFACT_CONTENT = "unsafe_artifact_content"
 
 
 class DiagnosisExperimentFailure(RuntimeError):
@@ -215,6 +216,8 @@ class DiagnosisCandidateRepository:
         candidates: dict[CorpusCell, FrozenDiagnosisCandidate] = {}
         populated_directories: set[str] = set()
         for relative, content in snapshot.files.items():
+            if relative == "ineligible.json":
+                continue
             parts = relative.split("/")
             if len(parts) != 3 or parts[0] != "cells":
                 raise ValueError("candidate repository contains unknown layout")
@@ -442,7 +445,7 @@ async def generate_and_freeze_diagnosis(
             require_safe_artifact_content("model_derived_text", item.description)
     except ValueError as error:
         raise DiagnosisExperimentFailure(
-            DiagnosisExperimentFailureCode.CONTRACT_FAILURE,
+            DiagnosisExperimentFailureCode.UNSAFE_ARTIFACT_CONTENT,
             "model-derived diagnosis content is unsafe",
         ) from error
     shared_messages = builder.shared_verifier_messages(prepared, report, verifier_instruction)

@@ -13,8 +13,10 @@ from spanvouch.evaluation.experiments.config import (
     freeze_formal_config,
     load_experiment_config,
 )
+from spanvouch.evaluation.experiments.models import ExperimentFailureCategory, IneligibleCell
 from spanvouch.evaluation.experiments.provider import ProviderConfigurationError
 from spanvouch.evaluation.experiments.runner import ProviderPhaseRepository
+from spanvouch.evaluation.run_phase5_candidates import CandidateIneligibleManifest
 from tests.evaluation.experiments.test_planner import _candidate_pair
 
 
@@ -218,3 +220,35 @@ def test_deepseek_only_is_allowed_for_explicit_formal_config() -> None:
         formal_run=True,
         deepseek_only=True,
     )
+
+
+def test_matrix_loads_candidate_ineligible_sidecar_without_treating_it_as_candidate(
+    tmp_path: Path,
+) -> None:
+    asyncio.run(_candidate_pair(tmp_path))
+    corpus = TraceReplayRepository(tmp_path / "corpus")
+    entries = corpus.verify().entries
+    sidecar = CandidateIneligibleManifest(
+        corpus_manifest_sha256=corpus.manifest_sha256,
+        entries=(
+            IneligibleCell(
+                cell=entries[0].cell,
+                category=ExperimentFailureCategory.DIAGNOSIS,
+                reason_code="unsafe-artifact-content",
+            ),
+        ),
+    )
+    (tmp_path / "candidates" / "ineligible.json").write_bytes(canonical_bytes(sidecar))
+
+    candidates = run_phase5_matrix._load_candidates(
+        tmp_path / "candidates",
+        entries,
+        corpus.manifest_sha256,
+    )
+    ineligible = run_phase5_matrix._load_ineligible(
+        tmp_path / "candidates",
+        entries,
+        corpus.manifest_sha256,
+    )
+    assert len(candidates) == 2
+    assert ineligible == sidecar.entries

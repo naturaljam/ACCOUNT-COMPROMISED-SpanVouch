@@ -15,11 +15,14 @@ from spanvouch.evaluation.corpus import CorpusManifestMetadata, TraceReplayRepos
 from spanvouch.evaluation.experiments.config import load_experiment_config
 from spanvouch.evaluation.experiments.diagnosis import (
     DiagnosisCandidateRepository,
+    DiagnosisExperimentFailure,
+    DiagnosisExperimentFailureCode,
     generate_and_freeze_diagnosis,
 )
 from spanvouch.evaluation.experiments.provider import ProviderConfigurationError
 from spanvouch.evaluation.run_phase5_candidates import (
     CandidateGenerationRequest,
+    CandidateIneligibleManifest,
     build_parser,
     candidate_generation_manifest_sha256,
     run_candidate_generation,
@@ -197,6 +200,52 @@ def test_candidate_cli_generates_guarded_repository_consumable_by_matrix(
     assert b"deepseek-candidate-test-sentinel" not in all_bytes
     assert b"raw-candidate-response-id" not in all_bytes
     asyncio.run(client.aclose())
+
+
+def test_unsafe_model_content_is_recorded_as_ineligible_and_does_not_freeze(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = load_experiment_config(CONFIG)
+    corpus = _corpus(
+        tmp_path,
+        config_sha256=canonical_sha256(config.model_dump(mode="json")),
+    )
+    approved = candidate_generation_manifest_sha256(CONFIG, corpus.root)
+
+    from spanvouch.evaluation import run_phase5_candidates as candidates_module
+
+    async def reject_unsafe(*args: object, **kwargs: object) -> object:
+        raise DiagnosisExperimentFailure(
+            DiagnosisExperimentFailureCode.UNSAFE_ARTIFACT_CONTENT,
+            "model-derived diagnosis content is unsafe",
+        )
+
+    monkeypatch.setattr(candidates_module, "generate_and_freeze_diagnosis", reject_unsafe)
+    monkeypatch.chdir(tmp_path)
+    output = tmp_path / "candidates"
+    request = CandidateGenerationRequest(
+        config=CONFIG,
+        corpus_dir=corpus.root,
+        output_dir=output,
+        allow_live_provider=True,
+        formal_run=False,
+        approved_manifest_sha256=approved,
+    )
+
+    assert asyncio.run(
+        run_candidate_generation(
+            request,
+            environ=_environment(tmp_path),
+        )
+    ) == approved
+
+    manifest = CandidateIneligibleManifest.model_validate_json(
+        (output / "ineligible.json").read_bytes()
+    )
+    assert len(manifest.entries) == 1
+    assert manifest.entries[0].reason_code == "unsafe-artifact-content"
+    assert not (output / "cells").exists()
 
 
 def test_candidate_generation_rejects_relative_global_ledger_before_provider(

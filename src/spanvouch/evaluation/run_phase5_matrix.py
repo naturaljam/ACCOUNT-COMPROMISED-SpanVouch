@@ -36,6 +36,7 @@ from spanvouch.evaluation.experiments.models import (
     ConditionStatus,
     ExperimentFailureCategory,
     ExperimentMatrixManifest,
+    IneligibleCell,
     SelectiveAction,
 )
 from spanvouch.evaluation.experiments.planner import VerificationMatrixPlanner
@@ -49,6 +50,7 @@ from spanvouch.evaluation.experiments.runner import (
     RunnerExecutionError,
 )
 from spanvouch.evaluation.phase5_live_composition import compose_live_executor
+from spanvouch.evaluation.run_phase5_candidates import load_candidate_ineligible_manifest
 
 
 @dataclass(frozen=True)
@@ -153,8 +155,24 @@ def _load_candidates(
             )
         )
     if set(snapshot.files) != expected_files:
-        raise ValueError("candidate repository contains cells outside the corpus")
+        allowed = expected_files | (
+            {"ineligible.json"} if "ineligible.json" in snapshot.files else set()
+        )
+        if set(snapshot.files) != allowed:
+            raise ValueError("candidate repository contains cells outside the corpus")
     return tuple(candidates)
+
+
+def _load_ineligible(
+    root: Path,
+    entries: tuple[CorpusEntry, ...],
+    corpus_manifest_sha256: str,
+) -> tuple[IneligibleCell, ...]:
+    return load_candidate_ineligible_manifest(
+        root,
+        expected_corpus_manifest_sha256=corpus_manifest_sha256,
+        expected_cells=entries,
+    ).entries
 
 
 def _default_command(request: ProviderRunRequest) -> None:
@@ -172,9 +190,17 @@ def _default_command(request: ProviderRunRequest) -> None:
     candidates = _load_candidates(
         request.candidate_dir, corpus_manifest.entries, corpus.manifest_sha256
     )
+    ineligible = _load_ineligible(
+        request.candidate_dir, corpus_manifest.entries, corpus.manifest_sha256
+    )
     expected_cells = tuple(entry.cell for entry in corpus_manifest.entries)
     planner = VerificationMatrixPlanner()
-    plans = planner.plan(candidates, config, expected_cells=expected_cells)
+    plans = planner.plan(
+        candidates,
+        config,
+        expected_cells=expected_cells,
+        ineligible=ineligible,
+    )
     candidate_manifest_sha256 = canonical_sha256(
         cast(JsonValue, [item.model_dump(mode="json") for item in candidates])
     )
@@ -183,7 +209,7 @@ def _default_command(request: ProviderRunRequest) -> None:
         candidates=candidates,
         config=config,
         candidate_manifest_sha256=candidate_manifest_sha256,
-        ineligible=(),
+        ineligible=ineligible,
         expected_cells=expected_cells,
     )
     if request.allow_live_provider or request.formal_run:
