@@ -141,6 +141,12 @@ uv run spanvouch evaluate diagnosis --output .cache/rules.json
 uv run spanvouch evaluate review --output .cache/review-rules.json
 ```
 
+Verify a release handoff entirely offline from the checkout:
+
+```bash
+uv run spanvouch release verify --repo-root . --expected-version 0.6.0
+```
+
 Start the API:
 
 ```bash

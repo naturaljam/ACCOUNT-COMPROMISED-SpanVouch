@@ -27,6 +27,8 @@ uv run mypy
 uv run pytest --cov=spanvouch --cov-report=term-missing --cov-fail-under=92
 uv build --wheel --build-constraints build-constraints.txt --require-hashes --no-cache
 docker compose config --quiet
+release_version="$(python -c 'import tomllib; from pathlib import Path; print(tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"])')"
+uv run spanvouch release verify --repo-root . --expected-version "$release_version"
 ```
 
 Changes to the API image or persistence path should also pass the Docker smoke workflow in

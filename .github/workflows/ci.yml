@@ -20,6 +20,11 @@ jobs:
       - run: uv sync --frozen --group dev --no-install-project
       - run: uv build --wheel --build-constraints build-constraints.txt --require-hashes --no-cache
       - run: uv pip install --python .venv/bin/python --no-deps --no-cache dist/*.whl
+      - name: Verify reproducible release handoff
+        shell: bash
+        run: |
+          version="$(python -c 'import tomllib; from pathlib import Path; print(tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"])')"
+          uv run --no-sync spanvouch release verify --repo-root . --expected-version "$version"
       - run: uv run --no-sync ruff check src tests
       - run: uv run --no-sync mypy
       - run: uv run --no-sync pytest --cov=spanvouch --cov-report=term-missing --cov-fail-under=92

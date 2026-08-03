@@ -77,6 +77,12 @@ uv run spanvouch evaluate diagnosis --output .cache/rules.json
 uv run spanvouch evaluate review --output .cache/review-rules.json
 ```
 
+从本地 checkout 离线验证发布交接：
+
+```bash
+uv run spanvouch release verify --repo-root . --expected-version 0.6.0
+```
+
 启动 API：
 
 ```bash

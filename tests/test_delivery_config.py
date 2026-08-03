@@ -105,6 +105,23 @@ def test_phase_1_delivery_configuration_is_reproducible() -> None:
     assert "docker compose config --quiet" in workflow
 
 
+def test_release_handoff_command_is_documented_and_gated_in_ci() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    readme_zh = (ROOT / "README.zh-CN.md").read_text(encoding="utf-8")
+    contributing = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    command = "spanvouch release verify --repo-root . --expected-version"
+
+    assert command in readme
+    assert command in readme_zh
+    assert command in contributing
+    assert "version=\"$(python -c" in workflow
+    assert "tomllib" in workflow
+    assert "uv run --no-sync spanvouch release verify --repo-root . --expected-version \"$version\"" in workflow
+    assert workflow.index("uv sync --frozen --group dev --no-install-project") < workflow.index(command)
+    assert workflow.index(command) < workflow.index("uv run --no-sync ruff check src tests")
+
+
 def test_api_image_is_immutable_unprivileged_and_minimal() -> None:
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     base_images = re.findall(r"^FROM\s+(\S+)", dockerfile, flags=re.MULTILINE)
