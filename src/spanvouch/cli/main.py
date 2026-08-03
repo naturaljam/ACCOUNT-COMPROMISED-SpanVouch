@@ -38,6 +38,7 @@ _HANDLER_IMPORTS = {
         "main",
     ),
     ("review", ""): ("spanvouch.cli.review", "main"),
+    ("release", "verify"): ("spanvouch.release.cli", "main"),
 }
 
 
@@ -45,7 +46,15 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="spanvouch")
     parser.add_argument(
         "command",
-        choices=("admin", "dataset", "evaluate", "experiments", "labs", "review"),
+        choices=(
+            "admin",
+            "dataset",
+            "evaluate",
+            "experiments",
+            "labs",
+            "release",
+            "review",
+        ),
     )
     parser.add_argument("rest", nargs=argparse.REMAINDER)
     return parser

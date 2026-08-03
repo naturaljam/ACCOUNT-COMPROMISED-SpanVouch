@@ -43,6 +43,11 @@ ROOT = Path(__file__).resolve().parents[2]
             ("--output-dir", "x"),
         ),
         (("review", "show", "--case-id", "c1"), "review", ("show", "--case-id", "c1")),
+        (
+            ("release", "verify", "--repo-root", "x", "--expected-version", "0.6.0"),
+            "release_verify",
+            ("--repo-root", "x", "--expected-version", "0.6.0"),
+        ),
         (("admin", "project", "list"), "admin", ("project", "list")),
     ],
 )
