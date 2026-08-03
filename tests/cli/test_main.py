@@ -37,6 +37,11 @@ ROOT = Path(__file__).resolve().parents[2]
             "analyze_experiment",
             ("--output-dir", "x"),
         ),
+        (
+            ("experiments", "prepare-analysis", "--output-dir", "x"),
+            "prepare_analysis",
+            ("--output-dir", "x"),
+        ),
         (("review", "show", "--case-id", "c1"), "review", ("show", "--case-id", "c1")),
         (("admin", "project", "list"), "admin", ("project", "list")),
     ],

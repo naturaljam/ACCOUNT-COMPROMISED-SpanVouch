@@ -175,7 +175,7 @@ def test_pilot_live_cli_routes_deepseek_and_qwen_without_persisting_secrets(
     assert b"raw-provider-response-id" not in all_bytes
     assert phase5_live_composition.BudgetLedger(
         (tmp_path / "global-budget.sqlite3").resolve(), config.budget
-    ).committed_total(datetime(2026, 7, 20, 1, tzinfo=UTC)) > Decimal("0")
+    ).committed_total(datetime.now(UTC)) > Decimal("0")
     asyncio.run(deepseek_client.aclose())
     asyncio.run(qwen_client.aclose())
 

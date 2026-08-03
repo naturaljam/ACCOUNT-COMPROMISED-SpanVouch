@@ -23,6 +23,7 @@ from spanvouch.evaluation.experiments.models import (
     ConditionStatus,
     ExperimentFailureCategory,
     ExperimentMatrixManifest,
+    IneligibleCell,
     ProviderPlanStatus,
     SelectiveAction,
     VerifierEvaluationEvidence,
@@ -35,6 +36,7 @@ from spanvouch.evaluation.experiments.runner import (
     PolicyNotInvoked,
     ProviderPhaseRepository,
     RunnerExecutionError,
+    _execution_groups,
 )
 from spanvouch.labs.runtime import FrameworkId
 
@@ -107,6 +109,25 @@ def _plans_and_matrix() -> tuple[tuple[ConditionPlan, ...], ExperimentMatrixMani
         condition_counts={condition: 2 for condition in ConditionId},
     )
     return ordered, matrix
+
+
+def test_execution_groups_allow_only_explicitly_ineligible_partial_pairs() -> None:
+    plans, _ = _plans_and_matrix()
+    eligible_plans = tuple(
+        plan for plan in plans if plan.cell.framework_id is FrameworkId.AUTOGEN
+    )
+    excluded = IneligibleCell(
+        cell=_cell(FrameworkId.LANGGRAPH),
+        category=ExperimentFailureCategory.DIAGNOSIS,
+        reason_code="unsafe-artifact-content",
+    )
+
+    groups = _execution_groups(eligible_plans, ineligible_cells={excluded.cell})
+
+    assert len(groups) == len(ConditionId)
+    assert all(len(group) == 1 for group in groups)
+    with pytest.raises(ValueError, match="complete framework pairs"):
+        _execution_groups(eligible_plans)
 
 
 def _result(plan: ConditionPlan, *, failed: bool = False) -> ConditionResult:

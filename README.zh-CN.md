@@ -11,7 +11,7 @@
   <a href="https://www.python.org/">Python 3.12</a> &middot;
   <a href="LICENSE">MIT License</a> &middot;
   <a href="paper/IVAD.pdf">IVAD 论文</a> &middot;
-  <a href="https://github.com/naturaljam/SpanVouch/releases/tag/v0.4.0">v0.4.0</a>
+  <a href="https://github.com/naturaljam/SpanVouch/releases/tag/v0.5.0">v0.5.0</a>
 </p>
 
 <p align="center">
@@ -28,7 +28,7 @@ SpanVouch 将 Agent 执行轨迹转换为可审计、可恢复、可复现的诊
            -> 持久状态 + 签名审计导出
 ```
 
-[阅读 IVAD 预印本](paper/IVAD.pdf) | [查看 LaTeX 源码](paper/source/) | [下载 v0.4.0](https://github.com/naturaljam/SpanVouch/releases/tag/v0.4.0)
+[阅读 IVAD 预印本](paper/IVAD.pdf) | [查看 LaTeX 源码](paper/source/) | [下载 v0.5.0](https://github.com/naturaljam/SpanVouch/releases/tag/v0.5.0)
 
 ## 为什么需要证据层
 

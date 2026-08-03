@@ -136,10 +136,18 @@ def _load_candidates(
     corpus_manifest_sha256: str,
 ) -> tuple[FrozenDiagnosisCandidate, ...]:
     snapshot = read_verified_directory_tree(root)
+    ineligible = load_candidate_ineligible_manifest(
+        root,
+        expected_corpus_manifest_sha256=corpus_manifest_sha256,
+        expected_cells=entries,
+    )
+    ineligible_cells = {entry.cell for entry in ineligible.entries}
     expected_files: set[str] = set()
     repository = DiagnosisCandidateRepository(root)
     candidates: list[FrozenDiagnosisCandidate] = []
     for entry in entries:
+        if entry.cell in ineligible_cells:
+            continue
         identity = canonical_sha256(entry.cell)[:16]
         prefix = f"cells/{identity}/"
         matches = [path for path in snapshot.files if path.startswith(prefix)]
@@ -184,9 +192,6 @@ def _default_command(request: ProviderRunRequest) -> None:
     )
     corpus = TraceReplayRepository(request.corpus_dir)
     corpus_manifest = corpus.verify()
-    for entry in corpus_manifest.entries:
-        if CorpusEntry.from_record(corpus.load(entry.cell)) != entry:
-            raise ValueError("corpus entry failed reconstructive verification")
     candidates = _load_candidates(
         request.candidate_dir, corpus_manifest.entries, corpus.manifest_sha256
     )

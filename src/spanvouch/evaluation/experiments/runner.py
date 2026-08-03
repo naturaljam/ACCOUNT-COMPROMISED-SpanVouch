@@ -530,7 +530,10 @@ class ExperimentRunner:
             supersedes_manifest_sha256 = repository.manifest_sha256
             repository.reopen_incomplete_manifest(supersedes_manifest_sha256)
 
-        groups = _execution_groups(validated_plans)
+        groups = _execution_groups(
+            validated_plans,
+            ineligible_cells={item.cell for item in validated_matrix.ineligible},
+        )
         outcomes: dict[str, ProviderPlanOutcome] = {}
         superseded: dict[str, str] = {}
         for group in groups:
@@ -736,7 +739,11 @@ class ExperimentRunner:
         )
 
 
-def _execution_groups(plans: tuple[ConditionPlan, ...]) -> tuple[tuple[ConditionPlan, ...], ...]:
+def _execution_groups(
+    plans: tuple[ConditionPlan, ...],
+    *,
+    ineligible_cells: set[CorpusCell] | frozenset[CorpusCell] = frozenset(),
+) -> tuple[tuple[ConditionPlan, ...], ...]:
     provider_pairs: dict[tuple[str, ConditionId], list[ConditionPlan]] = defaultdict(list)
     indexed_groups: list[tuple[int, tuple[ConditionPlan, ...]]] = []
     for index, plan in enumerate(plans):
@@ -745,6 +752,11 @@ def _execution_groups(plans: tuple[ConditionPlan, ...]) -> tuple[tuple[Condition
         else:
             provider_pairs[(plan.cell.pair_identity, plan.condition_id)].append(plan)
     for pair in provider_pairs.values():
+        if len(pair) == 1 and pair[0].cell.pair_identity in {
+            cell.pair_identity for cell in ineligible_cells
+        }:
+            indexed_groups.append((plans.index(pair[0]), tuple(pair)))
+            continue
         if len(pair) != 2 or {item.cell.framework_id for item in pair} != {
             FrameworkId.AUTOGEN,
             FrameworkId.LANGGRAPH,

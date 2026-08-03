@@ -54,7 +54,7 @@ class VerificationMatrixPlanner:
             IneligibleCell.model_validate(item.model_dump(mode="python"))
             for item in ineligible
         )
-        self._validate_candidate_set(validated_candidates)
+        self._validate_candidate_set(validated_candidates, validated_ineligible)
         self._validate_expected_partition(
             validated_candidates, validated_ineligible, validated_expected
         )
@@ -176,7 +176,10 @@ class VerificationMatrixPlanner:
         return config.cross_model_verifier
 
     @staticmethod
-    def _validate_candidate_set(candidates: tuple[FrozenDiagnosisCandidate, ...]) -> None:
+    def _validate_candidate_set(
+        candidates: tuple[FrozenDiagnosisCandidate, ...],
+        ineligible: tuple[IneligibleCell, ...] = (),
+    ) -> None:
         if not candidates:
             raise ValueError("matrix requires at least one eligible candidate")
         cells = tuple(candidate.cell for candidate in candidates)
@@ -190,6 +193,9 @@ class VerificationMatrixPlanner:
         for cell in cells:
             pairs[cell.pair_identity].add(cell.framework_id)
             pair_counts[cell.pair_identity] += 1
+        for item in ineligible:
+            pairs[item.cell.pair_identity].add(item.cell.framework_id)
+            pair_counts[item.cell.pair_identity] += 1
         required = {FrameworkId.LANGGRAPH, FrameworkId.AUTOGEN}
         if any(frameworks != required for frameworks in pairs.values()) or any(
             count != 2 for count in pair_counts.values()

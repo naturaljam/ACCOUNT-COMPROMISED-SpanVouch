@@ -1,6 +1,6 @@
 [project]
 name = "spanvouch"
-version = "0.4.0"
+version = "0.5.0"
 description = "Trace diagnosis and regression infrastructure for tool-using agents"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"

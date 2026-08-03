@@ -389,7 +389,7 @@ def test_phase_4_release_candidate_documents_delivery_and_six_contract_roots() -
     legacy_environment = "AF" + "C_DB_PATH"
 
     assert project["project"]["name"] == "spanvouch"
-    assert project["project"]["version"] == "0.4.0"
+    assert project["project"]["version"] == "0.5.0"
     assert project["project"]["scripts"] == {"spanvouch": "spanvouch.cli.main:main"}
     assert "SPANVOUCH_DB_PATH" in compose
     assert "SPANVOUCH_AUDIT_SIGNING_KEY_PATH" in compose

@@ -22,7 +22,9 @@ from spanvouch.evaluation.experiments.diagnosis import (
 )
 from spanvouch.evaluation.experiments.models import (
     ConditionPlan,
+    ExperimentFailureCategory,
     ExperimentMatrixManifest,
+    IneligibleCell,
     ProviderPlanStatus,
 )
 from spanvouch.evaluation.experiments.planner import VerificationMatrixPlanner
@@ -133,6 +135,29 @@ async def test_planner_emits_exactly_six_ordered_conditions_per_candidate(
             assert plan.provider == "deepseek"
         else:
             assert plan.provider == "qwen"
+
+
+@pytest.mark.asyncio
+async def test_planner_allows_an_ineligible_member_of_a_pair(
+    tmp_path: Path,
+) -> None:
+    candidates = await _candidate_pair(tmp_path)
+    config = load_experiment_config(Path("evals/configs/phase5-pilot.json"))
+    excluded = IneligibleCell(
+        cell=candidates[0].cell,
+        category=ExperimentFailureCategory.DIAGNOSIS,
+        reason_code="unsafe-artifact-content",
+    )
+
+    plans = VerificationMatrixPlanner().plan(
+        candidates[1:],
+        config,
+        expected_cells=_expected_cells(candidates),
+        ineligible=(excluded,),
+    )
+
+    assert len(plans) == 6
+    assert {plan.cell for plan in plans} == {candidates[1].cell}
 
 
 @pytest.mark.asyncio

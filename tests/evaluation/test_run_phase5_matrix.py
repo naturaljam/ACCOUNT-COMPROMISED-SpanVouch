@@ -148,6 +148,26 @@ def test_default_clis_run_verified_cache_only_matrix_and_offline_join(
     ) == 0
 
 
+def test_default_run_reuses_verified_corpus_without_reloading_each_entry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asyncio.run(_candidate_pair(tmp_path))
+
+    def fail_load(*args: object, **kwargs: object) -> object:
+        raise AssertionError("default matrix run must not reverify each corpus entry")
+
+    monkeypatch.setattr(TraceReplayRepository, "load", fail_load)
+    assert run_phase5_matrix.main(
+        [
+            "--config", "evals/configs/phase5-pilot.json",
+            "--corpus-dir", str(tmp_path / "corpus"),
+            "--candidate-dir", str(tmp_path / "candidates"),
+            "--output-dir", str(tmp_path / "provider"),
+        ]
+    ) == 0
+
+
 def test_default_run_rejects_tampered_candidate_parent(tmp_path: Path) -> None:
     asyncio.run(_candidate_pair(tmp_path))
     candidate = next((tmp_path / "candidates/cells").rglob("*.json"))
@@ -238,6 +258,8 @@ def test_matrix_loads_candidate_ineligible_sidecar_without_treating_it_as_candid
             ),
         ),
     )
+    ineligible_identity = canonical_sha256(entries[0].cell)[:16]
+    next((tmp_path / "candidates" / "cells" / ineligible_identity).glob("*.json")).unlink()
     (tmp_path / "candidates" / "ineligible.json").write_bytes(canonical_bytes(sidecar))
 
     candidates = run_phase5_matrix._load_candidates(
@@ -250,5 +272,5 @@ def test_matrix_loads_candidate_ineligible_sidecar_without_treating_it_as_candid
         entries,
         corpus.manifest_sha256,
     )
-    assert len(candidates) == 2
+    assert len(candidates) == 1
     assert ineligible == sidecar.entries

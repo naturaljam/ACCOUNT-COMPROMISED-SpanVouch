@@ -11,7 +11,7 @@
   <a href="https://www.python.org/">Python 3.12</a> &middot;
   <a href="LICENSE">MIT License</a> &middot;
   <a href="paper/IVAD.pdf">IVAD paper</a> &middot;
-  <a href="https://github.com/naturaljam/SpanVouch/releases/tag/v0.4.0">v0.4.0</a>
+  <a href="https://github.com/naturaljam/SpanVouch/releases/tag/v0.5.0">v0.5.0</a>
 </p>
 
 <p align="center">
@@ -28,7 +28,7 @@ immutable trace -> sanitized evidence -> structured diagnosis
                 -> durable state + reproducible artifact
 ```
 
-[Read the IVAD preprint](paper/IVAD.pdf) | [Browse the LaTeX source](paper/source/) | [Download release v0.4.0](https://github.com/naturaljam/SpanVouch/releases/tag/v0.4.0)
+[Read the IVAD preprint](paper/IVAD.pdf) | [Browse the LaTeX source](paper/source/) | [Download release v0.5.0](https://github.com/naturaljam/SpanVouch/releases/tag/v0.5.0)
 
 ## Why agent diagnosis needs an evidence layer
 
@@ -87,7 +87,7 @@ The formal statement assumes a frozen loss and pipeline, independently sampled p
 - [Read the 8-page preprint](paper/IVAD.pdf)
 - [Build from the reproducible LaTeX source](paper/source/)
 - [Review paper construction and CC BY 4.0 licensing](paper/README.md)
-- [Download the versioned PDF and source archive](https://github.com/naturaljam/SpanVouch/releases/tag/v0.4.0)
+- [Download the versioned PDF and source archive](https://github.com/naturaljam/SpanVouch/releases/tag/v0.5.0)
 
 ## Validated engineering evidence
 
@@ -151,7 +151,7 @@ OpenAPI is available at `http://127.0.0.1:8000/docs` while the service runs.
 
 ## Production security workflow
 
-SpanVouch v0.4 adds the operating boundary expected from a self-hosted production service: mandatory API-key authentication, project-scoped data access, fixed role-based authorization, append-only audit chains, and signed offline audit exports.
+SpanVouch v0.5 adds the reproducible evidence handoff expected from a self-hosted production service: manifest-bound analysis preparation, DeepSeek-only formal execution accounting, explicit policy skips, and fail-closed claim gates.
 
 All routes except `/health` and `/ready` require `Authorization: Bearer <api-key>`. API keys are shown once, stored only as salted `scrypt` digests, and can be rotated or revoked without changing project data. System administrators use the management API or CLI to create isolated projects and project-bound operator, reviewer, or viewer keys.
 
