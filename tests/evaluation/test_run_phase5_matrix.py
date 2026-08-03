@@ -1,4 +1,5 @@
 import asyncio
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,11 @@ from spanvouch.contracts.versioning import canonical_bytes, canonical_sha256
 from spanvouch.evaluation import evaluate_phase5_matrix, run_phase5_matrix
 from spanvouch.evaluation.corpus import TraceReplayRepository
 from spanvouch.evaluation.corpus.labels import GoldLabel, GoldLabelManifest
+from spanvouch.evaluation.experiments.config import (
+    FormalFreezePolicy,
+    freeze_formal_config,
+    load_experiment_config,
+)
 from spanvouch.evaluation.experiments.provider import ProviderConfigurationError
 from spanvouch.evaluation.experiments.runner import ProviderPhaseRepository
 from tests.evaluation.experiments.test_planner import _candidate_pair
@@ -182,3 +188,33 @@ def test_pilot_records_and_checks_an_explicit_approved_identity_when_supplied() 
         run_phase5_matrix._require_approved_manifest(
             request, matrix_manifest_sha256="a" * 64
         )
+
+
+def test_deepseek_only_is_rejected_for_formal_runs() -> None:
+    request = _request(
+        config=Path("evals/configs/phase5-pilot.json"),
+        formal_run=True,
+        deepseek_only=True,
+    )
+    with pytest.raises(ProviderConfigurationError, match="configuration mode"):
+        run_phase5_matrix._default_command(request)
+
+
+def test_deepseek_only_is_allowed_for_explicit_formal_config() -> None:
+    pilot = load_experiment_config(Path("evals/configs/phase5-pilot.json"))
+    policy = FormalFreezePolicy.model_validate_json(
+        Path("evals/configs/phase5-formal-policy.json").read_text(encoding="utf-8")
+    )
+    formal = freeze_formal_config(
+        pilot,
+        policy,
+        repetitions=5,
+        coverage_loss_tolerance=0.05,
+        frozen_at_utc=datetime(2026, 8, 3, tzinfo=UTC),
+    )
+
+    run_phase5_matrix._require_deepseek_only_scope(
+        formal,
+        formal_run=True,
+        deepseek_only=True,
+    )

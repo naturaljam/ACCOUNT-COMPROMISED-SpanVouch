@@ -180,6 +180,28 @@ def test_pilot_live_cli_routes_deepseek_and_qwen_without_persisting_secrets(
     asyncio.run(qwen_client.aclose())
 
 
+def test_deepseek_only_composition_does_not_require_qwen_runtime(
+    tmp_path: Path,
+) -> None:
+    config = load_experiment_config(Path("evals/configs/phase5-pilot.json"))
+    environ = _environment(tmp_path)
+    for name in (
+        "SPANVOUCH_QWEN_API_KEY",
+        "SPANVOUCH_QWEN_BASE_URL",
+        "SPANVOUCH_PHASE5_QWEN_PRICING_PATH",
+    ):
+        environ.pop(name)
+
+    composition = phase5_live_composition._compose_live_providers(
+        config,
+        environ=environ,
+        deepseek_only=True,
+    )
+
+    assert composition.qwen is None
+    assert set(composition.pricing) == {"deepseek"}
+
+
 @pytest.mark.parametrize(
     "change",
     [

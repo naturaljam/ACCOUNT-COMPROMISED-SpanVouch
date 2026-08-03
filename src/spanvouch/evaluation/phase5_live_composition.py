@@ -52,6 +52,7 @@ from spanvouch.evaluation.experiments.provider import (
     ProviderResultCache,
     RequestIdentity,
 )
+from spanvouch.evaluation.experiments.runner import PolicyNotInvoked
 from spanvouch.labs.opslab.invariants import opslab_rules
 from spanvouch.labs.supportlab.invariants import supportlab_rules
 from spanvouch.verification.deterministic import DeterministicVerifier
@@ -161,7 +162,7 @@ def _load_pricing(path: str, provenance: EndpointDeploymentProvenance) -> Pricin
 @dataclass(frozen=True)
 class _LiveProviderComposition:
     deepseek: ModelProvider
-    qwen: ModelProvider
+    qwen: ModelProvider | None
     pricing: Mapping[str, Pricing]
 
 
@@ -243,6 +244,7 @@ def _compose_live_providers(
     environ: Mapping[str, str],
     deepseek_client: httpx.AsyncClient | None = None,
     qwen_client: httpx.AsyncClient | None = None,
+    deepseek_only: bool = False,
 ) -> _LiveProviderComposition:
     deepseek_endpoint = config.shared_verifier
     qwen_endpoint = config.cross_model_verifier
@@ -252,6 +254,15 @@ def _compose_live_providers(
         or qwen_endpoint.provider != "qwen"
     ):
         raise ProviderConfigurationError("experiment provider endpoints are unsupported")
+    deepseek_provider, deepseek_pricing = _compose_deepseek_endpoint(
+        config, environ=environ, client=deepseek_client
+    )
+    if deepseek_only:
+        return _LiveProviderComposition(
+            deepseek=deepseek_provider,
+            qwen=None,
+            pricing={"deepseek": deepseek_pricing},
+        )
     qwen_provenance = config.live_provenance.qwen
     qwen_base_url, qwen_base_url_sha256 = _normalized_base_url(
         _required_environment(environ, "SPANVOUCH_QWEN_BASE_URL")
@@ -263,9 +274,6 @@ def _compose_live_providers(
         or qwen_provenance.api_compatibility != "openai-compatible"
     ):
         raise ProviderConfigurationError("provider provenance mismatch")
-    deepseek_provider, deepseek_pricing = _compose_deepseek_endpoint(
-        config, environ=environ, client=deepseek_client
-    )
     qwen_pricing = _load_pricing(
         _required_environment(environ, "SPANVOUCH_PHASE5_QWEN_PRICING_PATH"),
         qwen_provenance,
@@ -298,6 +306,7 @@ class _LiveConditionExecutor:
         cache_path: Path,
         ledger_path: Path,
         condition_executor: ConditionExecutor | None = None,
+        deepseek_only: bool = False,
     ) -> None:
         self._candidates = {candidate.cell: candidate for candidate in candidates}
         self._config = config
@@ -306,6 +315,7 @@ class _LiveConditionExecutor:
         self._cache = ProviderResultCache(cache_path)
         self._ledger = BudgetLedger(ledger_path, config.budget)
         self._conditions = condition_executor or ConditionExecutor()
+        self._deepseek_only = deepseek_only
 
     @staticmethod
     def _verification_input(candidate: FrozenDiagnosisCandidate) -> VerificationInput:
@@ -374,6 +384,8 @@ class _LiveConditionExecutor:
             pricing = self._providers.pricing[plan.provider]
         except KeyError as error:
             raise ProviderConfigurationError("provider composition is missing") from error
+        if delegate is None:
+            raise ProviderConfigurationError("provider composition is missing")
         return GuardedProvider(
             delegate=delegate,
             cache=self._cache,
@@ -389,6 +401,8 @@ class _LiveConditionExecutor:
         candidate = self._candidates.get(plan.cell)
         if candidate is None or candidate.report_sha256 != plan.diagnosis_sha256:
             raise ValueError("condition plan has no verified diagnosis candidate")
+        if self._deepseek_only and plan.condition_id in {ConditionId.B4, ConditionId.B5}:
+            raise PolicyNotInvoked("deepseek-only")
         verification_input = self._verification_input(candidate)
         shared_verifier_messages = reconstruct_shared_verifier_messages(
             candidate, _VERIFIER_INSTRUCTION
@@ -425,6 +439,7 @@ def compose_live_executor(
     environ: Mapping[str, str] | None = None,
     deepseek_client: httpx.AsyncClient | None = None,
     qwen_client: httpx.AsyncClient | None = None,
+    deepseek_only: bool = False,
 ) -> _LiveConditionExecutor:
     """Build the only live provider executor from validated experiment parents."""
     config, authorization = _require_live_composition_authorization(
@@ -439,6 +454,7 @@ def compose_live_executor(
         environ=runtime_environ,
         deepseek_client=deepseek_client,
         qwen_client=qwen_client,
+        deepseek_only=deepseek_only,
     )
     state_path = (
         Path(".cache/phase5")
@@ -451,4 +467,5 @@ def compose_live_executor(
         authorization=authorization,
         cache_path=state_path,
         ledger_path=ledger_path,
+        deepseek_only=deepseek_only,
     )

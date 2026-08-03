@@ -22,6 +22,8 @@ from spanvouch.evaluation.corpus import CorpusEntry
 from spanvouch.evaluation.corpus.repository import TraceReplayRepository
 from spanvouch.evaluation.experiments.config import (
     ConditionId,
+    ExperimentMode,
+    Phase5ExperimentConfig,
     load_experiment_config,
 )
 from spanvouch.evaluation.experiments.diagnosis import (
@@ -58,6 +60,7 @@ class ProviderRunRequest:
     allow_live_provider: bool
     formal_run: bool
     approved_manifest_sha256: str | None
+    deepseek_only: bool = False
 
 
 ProviderRunCommand = Callable[[ProviderRunRequest], None]
@@ -80,6 +83,19 @@ def _require_approved_manifest(
     if approved is not None and approved != matrix_manifest_sha256:
         raise ProviderConfigurationError("approved manifest hash does not match matrix")
     return matrix_manifest_sha256
+
+
+def _require_deepseek_only_scope(
+    config: Phase5ExperimentConfig,
+    *,
+    formal_run: bool,
+    deepseek_only: bool,
+) -> None:
+    """Require the explicit provider scope to match the frozen run mode."""
+    if deepseek_only and formal_run != (config.mode is ExperimentMode.FORMAL):
+        raise ProviderConfigurationError(
+            "--deepseek-only formal_run flag must match configuration mode"
+        )
 
 
 class _OfflineExecutor:
@@ -143,6 +159,11 @@ def _load_candidates(
 
 def _default_command(request: ProviderRunRequest) -> None:
     config = load_experiment_config(request.config)
+    _require_deepseek_only_scope(
+        config,
+        formal_run=request.formal_run,
+        deepseek_only=request.deepseek_only,
+    )
     corpus = TraceReplayRepository(request.corpus_dir)
     corpus_manifest = corpus.verify()
     for entry in corpus_manifest.entries:
@@ -182,6 +203,7 @@ def _default_command(request: ProviderRunRequest) -> None:
             config=config,
             authorization=authorization,
             matrix_manifest_sha256=matrix_manifest_sha256,
+            deepseek_only=request.deepseek_only,
         )
         asyncio.run(
             ExperimentRunner(executor=executor).run_provider_phase(
@@ -209,6 +231,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--allow-live-provider", action="store_true")
     parser.add_argument("--formal-run", action="store_true")
     parser.add_argument("--approved-manifest-sha256")
+    parser.add_argument(
+        "--deepseek-only",
+        action="store_true",
+        help="run B2/B3 with DeepSeek and record B4/B5 as policy-skipped",
+    )
     return parser
 
 
@@ -226,6 +253,7 @@ def main(
         allow_live_provider=arguments.allow_live_provider,
         formal_run=arguments.formal_run,
         approved_manifest_sha256=arguments.approved_manifest_sha256,
+        deepseek_only=arguments.deepseek_only,
     )
     (command or _default_command)(request)
     return 0
