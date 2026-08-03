@@ -94,7 +94,7 @@ def _check_pyproject(repo_root: Path, expected_version: str) -> ReleaseCheck:
 def _check_package_version(repo_root: Path, expected_version: str) -> ReleaseCheck:
     name = "src/spanvouch/__init__.py"
     raw = _read_text(repo_root / name)
-    match = _PACKAGE_VERSION_PATTERN.fullmatch(raw.strip()) if raw is not None else None
+    match = _PACKAGE_VERSION_PATTERN.search(raw) if raw is not None else None
     version = None if match is None else (match.group("double") or match.group("single"))
     passed = version == expected_version
     return ReleaseCheck(

@@ -102,6 +102,18 @@ def test_verify_release_reports_missing_required_file(tmp_path: Path) -> None:
     assert str(tmp_path) not in check.detail
 
 
+def test_verify_release_accepts_version_assignment_with_other_init_content(
+    tmp_path: Path,
+) -> None:
+    _write_checkout(tmp_path)
+    (tmp_path / "src" / "spanvouch" / "__init__.py").write_text(
+        '"""Package identity."""\n\n__version__ = "0.6.0"\n',
+        encoding="utf-8",
+    )
+
+    assert verify_release(tmp_path, "0.6.0").passed is True
+
+
 def test_verify_release_rejects_invalid_expected_version(tmp_path: Path) -> None:
     _write_checkout(tmp_path)
 

@@ -117,8 +117,13 @@ def test_release_handoff_command_is_documented_and_gated_in_ci() -> None:
     assert command in contributing
     assert "version=\"$(python -c" in workflow
     assert "tomllib" in workflow
-    assert "uv run --no-sync spanvouch release verify --repo-root . --expected-version \"$version\"" in workflow
-    assert workflow.index("uv sync --frozen --group dev --no-install-project") < workflow.index(command)
+    assert (
+        "uv run --no-sync spanvouch release verify --repo-root . "
+        '--expected-version "$version"'
+    ) in workflow
+    assert workflow.index("uv sync --frozen --group dev --no-install-project") < workflow.index(
+        command
+    )
     assert workflow.index(command) < workflow.index("uv run --no-sync ruff check src tests")
 
 
@@ -406,7 +411,7 @@ def test_phase_4_release_candidate_documents_delivery_and_six_contract_roots() -
     legacy_environment = "AF" + "C_DB_PATH"
 
     assert project["project"]["name"] == "spanvouch"
-    assert project["project"]["version"] == "0.5.0"
+    assert project["project"]["version"] == "0.6.0"
     assert project["project"]["scripts"] == {"spanvouch": "spanvouch.cli.main:main"}
     assert "SPANVOUCH_DB_PATH" in compose
     assert "SPANVOUCH_AUDIT_SIGNING_KEY_PATH" in compose
